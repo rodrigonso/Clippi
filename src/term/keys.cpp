@@ -170,8 +170,8 @@ static bool ParseMouse(KeyDecoder* d, Key* out) {
     return true;
 
   u32 cb = p[0];
-  out->MouseX = (u16)MaMin(p[1] - 1, (u32)0xffff);
-  out->MouseY = (u16)MaMin(p[2] - 1, (u32)0xffff);
+  out->MouseX = (u16)ClippiMin(p[1] - 1, (u32)0xffff);
+  out->MouseY = (u16)ClippiMin(p[2] - 1, (u32)0xffff);
   out->Shift = (cb & 0x04) != 0;
   out->Alt = (cb & 0x08) != 0;
   out->Ctrl = (cb & 0x10) != 0;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mini_agent CXX)
+project(Clippi CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,40 +26,40 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # ---- base ----------------------------------------------------------------
 if(WIN32)
-  set(MA_THREAD_SRC src/base/thread_win.cpp)
+  set(CLIPPI_THREAD_SRC src/base/thread_win.cpp)
 else()
-  set(MA_THREAD_SRC src/base/thread_posix.cpp)
+  set(CLIPPI_THREAD_SRC src/base/thread_posix.cpp)
 endif()
-add_library(ma_base STATIC
+add_library(clippi_base STATIC
   src/base/arena.cpp
   src/base/sysinfo.cpp
-  ${MA_THREAD_SRC})
-target_include_directories(ma_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  ${CLIPPI_THREAD_SRC})
+target_include_directories(clippi_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 if(WIN32)
-  target_link_libraries(ma_base PUBLIC psapi)
+  target_link_libraries(clippi_base PUBLIC psapi)
 else()
-  target_link_libraries(ma_base PUBLIC pthread)
+  target_link_libraries(clippi_base PUBLIC pthread)
 endif()
 
 # ---- json ----------------------------------------------------------------
-add_library(ma_json STATIC
+add_library(clippi_json STATIC
   src/json/json.cpp)
-target_link_libraries(ma_json PUBLIC ma_base)
+target_link_libraries(clippi_json PUBLIC clippi_base)
 
 # ---- crypto --------------------------------------------------------------
-add_library(ma_crypto STATIC
+add_library(clippi_crypto STATIC
   src/crypto/sha256.cpp
   src/crypto/random.cpp)
-target_link_libraries(ma_crypto PUBLIC ma_base)
+target_link_libraries(clippi_crypto PUBLIC clippi_base)
 if(WIN32)
-  target_link_libraries(ma_crypto PUBLIC bcrypt)
+  target_link_libraries(clippi_crypto PUBLIC bcrypt)
 endif()
 
 # ---- agent ---------------------------------------------------------------
-add_library(ma_agent STATIC
+add_library(clippi_agent STATIC
   src/agent/agent.cpp
   src/llm/retry.cpp)
-target_link_libraries(ma_agent PUBLIC ma_base)
+target_link_libraries(clippi_agent PUBLIC clippi_base)
 
 # ---- libcurl (vendored via FetchContent) ---------------------------------
 include(FetchContent)
@@ -87,25 +87,25 @@ FetchContent_Declare(curl
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(curl)
 
-add_library(ma_http STATIC src/net/http_curl.cpp)
-target_link_libraries(ma_http PUBLIC ma_base CURL::libcurl)
+add_library(clippi_http STATIC src/net/http_curl.cpp)
+target_link_libraries(clippi_http PUBLIC clippi_base CURL::libcurl)
 
 # ---- loopback (OAuth callback server + browser opener) -------------------
-add_library(ma_loopback STATIC
+add_library(clippi_loopback STATIC
   src/net/loopback.cpp
   src/net/browser.cpp)
-target_link_libraries(ma_loopback PUBLIC ma_base)
+target_link_libraries(clippi_loopback PUBLIC clippi_base)
 if(WIN32)
-  target_link_libraries(ma_loopback PUBLIC ws2_32 shell32)
+  target_link_libraries(clippi_loopback PUBLIC ws2_32 shell32)
 endif()
 
 # ---- term (full-screen TUI) ----------------------------------------------
 if(WIN32)
-  set(MA_TERM_PLATFORM src/term/term_win.cpp)
+  set(CLIPPI_TERM_PLATFORM src/term/term_win.cpp)
 else()
-  set(MA_TERM_PLATFORM src/term/term_posix.cpp)
+  set(CLIPPI_TERM_PLATFORM src/term/term_posix.cpp)
 endif()
-add_library(ma_term STATIC
+add_library(clippi_term STATIC
   src/term/term.cpp
   src/term/keys.cpp
   src/term/cell.cpp
@@ -116,25 +116,25 @@ add_library(ma_term STATIC
   src/term/toolview.cpp
   src/term/lineedit.cpp
   src/term/tui.cpp
-  ${MA_TERM_PLATFORM})
-target_link_libraries(ma_term PUBLIC ma_base ma_agent ma_json)
+  ${CLIPPI_TERM_PLATFORM})
+target_link_libraries(clippi_term PUBLIC clippi_base clippi_agent clippi_json)
 
 # ---- llm providers -------------------------------------------------------
-add_library(ma_proto STATIC src/llm/anthropic_proto.cpp)
-target_link_libraries(ma_proto PUBLIC ma_json)
+add_library(clippi_proto STATIC src/llm/anthropic_proto.cpp)
+target_link_libraries(clippi_proto PUBLIC clippi_json)
 
-add_library(ma_anthropic STATIC src/llm/anthropic.cpp)
-target_link_libraries(ma_anthropic PUBLIC ma_proto ma_http)
+add_library(clippi_anthropic STATIC src/llm/anthropic.cpp)
+target_link_libraries(clippi_anthropic PUBLIC clippi_proto clippi_http)
 
 # ---- auth (api keys + OAuth) ---------------------------------------------
-add_library(ma_auth STATIC
+add_library(clippi_auth STATIC
   src/auth/store.cpp
   src/auth/oauth.cpp
   src/auth/resolve.cpp)
-target_link_libraries(ma_auth PUBLIC ma_json ma_crypto ma_http ma_loopback)
+target_link_libraries(clippi_auth PUBLIC clippi_json clippi_crypto clippi_http clippi_loopback)
 
 # ---- tools ---------------------------------------------------------------
-add_library(ma_tools STATIC
+add_library(clippi_tools STATIC
   src/tools/exec.cpp
   src/tools/fs.cpp
   src/tools/truncate.cpp
@@ -149,18 +149,18 @@ add_library(ma_tools STATIC
   src/tools/find.cpp
   src/tools/grep.cpp
   src/tools/bash.cpp)
-target_link_libraries(ma_tools PUBLIC ma_json ma_agent)
+target_link_libraries(clippi_tools PUBLIC clippi_json clippi_agent)
 
 # ---- executables ---------------------------------------------------------
-add_executable(mini-agent src/app/main.cpp)
-target_link_libraries(mini-agent PRIVATE ma_anthropic ma_tools ma_agent ma_auth ma_term)
+add_executable(clippi src/app/main.cpp)
+target_link_libraries(clippi PRIVATE clippi_anthropic clippi_tools clippi_agent clippi_auth clippi_term)
 
-add_executable(ma_http_smoke src/app/http_smoke.cpp)
-target_link_libraries(ma_http_smoke PRIVATE ma_http)
+add_executable(clippi_http_smoke src/app/http_smoke.cpp)
+target_link_libraries(clippi_http_smoke PRIVATE clippi_http)
 
 # ---- tests ---------------------------------------------------------------
 enable_testing()
-add_executable(ma_tests
+add_executable(clippi_tests
   tests/test_main.cpp
   tests/test_base.cpp
   tests/test_types.cpp
@@ -180,5 +180,5 @@ add_executable(ma_tests
   tests/test_linemodel.cpp
   tests/test_lineedit.cpp
   tests/test_tui.cpp)
-target_link_libraries(ma_tests PRIVATE ma_proto ma_agent ma_tools ma_crypto ma_auth ma_loopback ma_term)
-add_test(NAME unit COMMAND ma_tests)
+target_link_libraries(clippi_tests PRIVATE clippi_proto clippi_agent clippi_tools clippi_crypto clippi_auth clippi_loopback clippi_term)
+add_test(NAME unit COMMAND clippi_tests)
