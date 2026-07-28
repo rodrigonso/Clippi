@@ -188,10 +188,9 @@ target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_auth clippi_term
 add_executable(clippi src/app/main.cpp)
 target_link_libraries(clippi PRIVATE clippi_app clippi_anthropic clippi_tools clippi_agent clippi_auth clippi_term)
 
-add_executable(clippi_http_smoke EXCLUDE_FROM_ALL src/app/http_smoke.cpp)
-target_link_libraries(clippi_http_smoke PRIVATE clippi_http)
-
 # ---- tests ---------------------------------------------------------------
+# One harness for everything: tests/test_main.cpp is a CLI that selects suites
+# by name, --filter, or --all. There are deliberately no other test binaries.
 enable_testing()
 add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_main.cpp
@@ -217,6 +216,11 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_stream_reveal.cpp
   tests/test_linemodel.cpp
   tests/test_lineedit.cpp
-  tests/test_tui.cpp)
-target_link_libraries(clippi_tests PRIVATE clippi_app clippi_proto clippi_agent clippi_session clippi_tools clippi_crypto clippi_auth clippi_loopback clippi_term)
+  tests/test_tui.cpp
+  tests/test_http.cpp)
+target_link_libraries(clippi_tests PRIVATE clippi_app clippi_proto clippi_agent clippi_session clippi_tools clippi_crypto clippi_auth clippi_loopback clippi_term clippi_http)
+
+# Default ctest run stays offline; the network suite is opt-in.
 add_test(NAME unit COMMAND clippi_tests)
+add_test(NAME network COMMAND clippi_tests http)
+set_tests_properties(network PROPERTIES LABELS network DISABLED TRUE)
