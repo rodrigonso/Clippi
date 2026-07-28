@@ -93,7 +93,38 @@ run the unit tests.
 ./build/clippi --continue             # most recent session for this project
 ./build/clippi --resume SESSION_ID     # a specific project session
 ./build/clippi --no-session            # no session filesystem writes
+./build/clippi --system-prompt SYSTEM.md -p "review this project"
+./build/clippi --append-system-prompt "Prefer minimal changes"
+./build/clippi --no-context-files       # skip AGENTS.md / CLAUDE.md discovery
+./build/clippi --approve                # trust project prompt files for this run
 ```
+
+## Project context and system prompts
+
+Clippi builds the system prompt from the active tool catalog, project
+instructions, and cwd. It loads the first regular file named `AGENTS.md`,
+`AGENTS.MD`, `CLAUDE.md`, or `CLAUDE.MD` from `~/.clippi` and each directory
+from the filesystem root through cwd. Global context is applied first, followed
+by broad-to-specific project context. Use `--no-context-files` (`-nc`) to
+disable this discovery.
+
+`~/.clippi/SYSTEM.md` replaces the built-in prompt globally, and
+`~/.clippi/APPEND_SYSTEM.md` appends instructions. Trusted projects can override
+those files with `<cwd>/.clippi/SYSTEM.md` and
+`<cwd>/.clippi/APPEND_SYSTEM.md`. `--system-prompt` and repeatable
+`--append-system-prompt` values have highest precedence; each value is read as
+a file when it names an existing regular file, otherwise it is treated as
+literal text. Custom prompts still receive project context and cwd.
+
+Project prompt overrides require trust. Decisions are stored hierarchically in
+`~/.clippi/trust.json`; the nearest saved ancestor wins. Set
+`defaultProjectTrust` in `~/.clippi/settings.json` to `ask` (default), `always`,
+or `never`. `--approve` (`-a`) and `--no-approve` (`-na`) override trust for one
+run. `/trust` saves a decision for the current or parent folder and requires a
+restart; `/reload` reloads settings and prompt/context files while preserving
+the current process's resolved trust. If gated project prompt files first
+appear after startup, `/reload` fails closed and requires a restart unless an
+explicit CLI trust override covers the run.
 
 ## TUI
 
@@ -146,6 +177,8 @@ Interactive commands:
 - `/fork [entry-id]` — fork and switch to a new session.
 - `/compact` — durably summarize the active branch.
 - `/recover ...` — resume, abort, or reconcile an interrupted operation.
+- `/trust` — save project trust for a future Clippi process.
+- `/reload` — transactionally reload settings and prompt context while idle.
 - `/clear` — create a fresh session while preserving provider/model selection.
 - `/exit` (or `/quit`) — close Clippi and return to the shell.
 
@@ -159,7 +192,8 @@ Commands entered during a TUI turn run afterward; ordinary text still steers the
 active turn. In `--faux` mode, session commands work while `/login` and `/model`
 are unavailable.
 
-The selected provider/model is written atomically to `~/.clippi/settings.json`.
+The selected provider/model and `defaultProjectTrust` policy are written
+atomically to `~/.clippi/settings.json`.
 New sessions use built-in defaults, then settings, then the runtime-only `-m`
 override. Resumed sessions restore their durable provider/model ancestry; `-m`
 adds a new durable model selection. Sessions live under
