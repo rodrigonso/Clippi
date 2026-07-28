@@ -174,10 +174,10 @@ target_link_libraries(clippi_auth PUBLIC clippi_json clippi_crypto clippi_http c
 # ---- tools ---------------------------------------------------------------
 add_library(clippi_tools STATIC
   src/tools/exec.cpp
+  src/tools/tools_manager.cpp
   src/tools/fs.cpp
   src/tools/truncate.cpp
   src/tools/glob.cpp
-  src/tools/regex.cpp
   src/tools/diff.cpp
   src/tools/filelock.cpp
   src/tools/read.cpp
@@ -187,7 +187,7 @@ add_library(clippi_tools STATIC
   src/tools/find.cpp
   src/tools/grep.cpp
   src/tools/shell.cpp)
-target_link_libraries(clippi_tools PUBLIC clippi_json clippi_agent)
+target_link_libraries(clippi_tools PUBLIC clippi_json clippi_agent clippi_http)
 
 # ---- app support (settings, provider registry, interactive commands) ------
 add_library(clippi_app STATIC

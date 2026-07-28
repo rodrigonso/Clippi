@@ -69,7 +69,7 @@ equivalents by default and names its command tool `shell`.
 | `bash` | 🟡 | Clippi's equivalent is named `shell`; timeout in seconds, process-tree kill, tail truncation, and full-output temp log match, but live output updates do not |
 | `write` | ✅ | creates parent dirs, overwrites, serialized per-file |
 | `edit` | ✅ | exact + whitespace-tolerant fuzzy multi-edit, mutation lock, unified diff; NFKC omitted |
-| `grep` | ✅ | native regex engine (not `rg`), context / literal / ignore-case, gitignore-lite; always enabled in Clippi |
+| `grep` | ✅ | invokes ripgrep `--json`, with Pi-compatible context / literal / ignore-case / glob behavior, limits, cancellation, hidden-file + `.gitignore` semantics, and local/PATH/download discovery; always enabled in Clippi |
 | `find` | ✅ | native glob walk (not `fd`), gitignore-lite; always enabled in Clippi |
 | `ls` | ✅ | case-insensitive sorted listings, dotfiles included; always enabled in Clippi |
 | Tool allow/deny lists · default/read-only bundles | ❌ | Clippi always registers all seven tools |
