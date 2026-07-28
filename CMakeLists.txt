@@ -33,6 +33,7 @@ endif()
 add_library(clippi_base STATIC
   src/base/arena.cpp
   src/base/config_file.cpp
+  src/base/process_file_lock.cpp
   src/base/sysinfo.cpp
   ${CLIPPI_THREAD_SRC})
 target_include_directories(clippi_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -56,11 +57,22 @@ if(WIN32)
   target_link_libraries(clippi_crypto PUBLIC bcrypt)
 endif()
 
+# ---- durable sessions ---------------------------------------------------
+add_library(clippi_session STATIC
+  src/session/id.cpp
+  src/session/entry.cpp
+  src/session/reducer.cpp
+  src/session/memory_repository.cpp
+  src/session/jsonl_repository.cpp)
+target_link_libraries(clippi_session PUBLIC clippi_base clippi_json clippi_crypto)
+
 # ---- agent ---------------------------------------------------------------
 add_library(clippi_agent STATIC
-  src/agent/agent.cpp
+  src/agent/harness.cpp
+  src/agent/driver.cpp
+  src/agent/primitives.cpp
   src/llm/retry.cpp)
-target_link_libraries(clippi_agent PUBLIC clippi_base)
+target_link_libraries(clippi_agent PUBLIC clippi_base clippi_session)
 
 # ---- libcurl (vendored via FetchContent) ---------------------------------
 include(FetchContent)
@@ -175,7 +187,8 @@ add_executable(clippi_tests
   tests/test_base.cpp
   tests/test_types.cpp
   tests/test_json.cpp
-  tests/test_agent.cpp
+  tests/test_session.cpp
+  tests/test_harness.cpp
   tests/test_anthropic.cpp
   tests/test_tools.cpp
   tests/test_infra.cpp
@@ -194,5 +207,5 @@ add_executable(clippi_tests
   tests/test_linemodel.cpp
   tests/test_lineedit.cpp
   tests/test_tui.cpp)
-target_link_libraries(clippi_tests PRIVATE clippi_app clippi_proto clippi_agent clippi_tools clippi_crypto clippi_auth clippi_loopback clippi_term)
+target_link_libraries(clippi_tests PRIVATE clippi_app clippi_proto clippi_agent clippi_session clippi_tools clippi_crypto clippi_auth clippi_loopback clippi_term)
 add_test(NAME unit COMMAND clippi_tests)
