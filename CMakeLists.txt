@@ -123,7 +123,7 @@ if(WIN32)
   target_link_libraries(clippi_loopback PUBLIC ws2_32 shell32)
 endif()
 
-# ---- term (full-screen TUI) ----------------------------------------------
+# ---- term (terminal I/O + cell renderer) ---------------------------------
 if(WIN32)
   set(CLIPPI_TERM_PLATFORM src/term/term_win.cpp)
 else()
@@ -134,15 +134,28 @@ add_library(clippi_term STATIC
   src/term/keys.cpp
   src/term/cell.cpp
   src/term/screen.cpp
-  src/term/markdown.cpp
   src/term/sanitize.cpp
-  src/term/stream_reveal.cpp
-  src/term/linemodel.cpp
-  src/term/toolview.cpp
-  src/term/lineedit.cpp
-  src/term/tui.cpp
   ${CLIPPI_TERM_PLATFORM})
-target_link_libraries(clippi_term PUBLIC clippi_base clippi_agent clippi_json)
+target_link_libraries(clippi_term PUBLIC clippi_base)
+
+# ---- ui (reusable terminal component library) ----------------------------
+add_library(clippi_ui STATIC
+  src/ui/lineedit.cpp
+  src/ui/ui.cpp
+  src/ui/layout.cpp
+  src/ui/canvas.cpp
+  src/ui/event.cpp
+  src/ui/widgets.cpp)
+target_link_libraries(clippi_ui PUBLIC clippi_base clippi_term)
+
+# ---- tui (Clippi-specific full-screen application) ------------------------
+add_library(clippi_tui STATIC
+  src/tui/markdown.cpp
+  src/tui/stream_reveal.cpp
+  src/tui/linemodel.cpp
+  src/tui/toolview.cpp
+  src/tui/tui.cpp)
+target_link_libraries(clippi_tui PUBLIC clippi_ui clippi_term clippi_agent clippi_json)
 
 # ---- llm providers -------------------------------------------------------
 add_library(clippi_proto STATIC src/llm/anthropic_proto.cpp)
@@ -182,11 +195,11 @@ add_library(clippi_app STATIC
   src/app/plain_select.cpp
   src/app/provider_registry.cpp
   src/app/settings.cpp)
-target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_auth clippi_term)
+target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_auth clippi_tui)
 
 # ---- executables ---------------------------------------------------------
 add_executable(clippi src/app/main.cpp)
-target_link_libraries(clippi PRIVATE clippi_app clippi_anthropic clippi_tools clippi_agent clippi_auth clippi_term)
+target_link_libraries(clippi PRIVATE clippi_app clippi_anthropic clippi_tools clippi_agent clippi_auth clippi_tui)
 
 # ---- tests ---------------------------------------------------------------
 # One harness for everything: tests/test_main.cpp is a CLI that selects suites
@@ -216,9 +229,12 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_stream_reveal.cpp
   tests/test_linemodel.cpp
   tests/test_lineedit.cpp
+  tests/test_ui.cpp
+  tests/test_ui_widgets.cpp
+  tests/test_ui_demo.cpp
   tests/test_tui.cpp
   tests/test_http.cpp)
-target_link_libraries(clippi_tests PRIVATE clippi_app clippi_proto clippi_agent clippi_session clippi_tools clippi_crypto clippi_auth clippi_loopback clippi_term clippi_http)
+target_link_libraries(clippi_tests PRIVATE clippi_app clippi_proto clippi_agent clippi_session clippi_tools clippi_crypto clippi_auth clippi_loopback clippi_tui clippi_ui clippi_term clippi_http)
 
 # Default ctest run stays offline; the network suite is opt-in.
 add_test(NAME unit COMMAND clippi_tests)
