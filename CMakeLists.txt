@@ -45,7 +45,8 @@ endif()
 
 # ---- json ----------------------------------------------------------------
 add_library(clippi_json STATIC
-  src/json/json.cpp)
+  src/json/json.cpp
+  src/json/schema.cpp)
 target_link_libraries(clippi_json PUBLIC clippi_base)
 
 # ---- crypto --------------------------------------------------------------
