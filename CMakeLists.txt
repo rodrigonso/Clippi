@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if(NOT CMAKE_BUILD_TYPE)
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
@@ -204,6 +204,9 @@ target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_auth clippi_tui 
 # ---- executables ---------------------------------------------------------
 add_executable(clippi src/app/main.cpp)
 target_link_libraries(clippi PRIVATE clippi_app clippi_anthropic clippi_tools clippi_agent clippi_auth clippi_tui)
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT clippi)
+set_target_properties(clippi PROPERTIES
+  VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # ---- tests ---------------------------------------------------------------
 # One harness for everything: tests/test_main.cpp is a CLI that selects suites
