@@ -214,6 +214,7 @@ set_target_properties(clippi PROPERTIES
 enable_testing()
 add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_main.cpp
+  tests/benchmark_agent.cpp
   tests/test_base.cpp
   tests/test_types.cpp
   tests/test_json.cpp
@@ -247,5 +248,5 @@ target_link_libraries(clippi_tests PRIVATE clippi_app clippi_proto clippi_agent 
 
 # Default ctest run stays offline; the network suite is opt-in.
 add_test(NAME unit COMMAND clippi_tests)
-add_test(NAME network COMMAND clippi_tests http)
+add_test(NAME network COMMAND clippi_tests http_live)
 set_tests_properties(network PROPERTIES LABELS network DISABLED TRUE)
