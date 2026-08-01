@@ -160,11 +160,16 @@ add_library(clippi_tui STATIC
 target_link_libraries(clippi_tui PUBLIC clippi_ui clippi_term clippi_agent clippi_json)
 
 # ---- llm providers -------------------------------------------------------
-add_library(clippi_proto STATIC src/llm/anthropic_proto.cpp)
+add_library(clippi_proto STATIC
+  src/llm/anthropic_proto.cpp
+  src/llm/openai_proto.cpp)
 target_link_libraries(clippi_proto PUBLIC clippi_json)
 
 add_library(clippi_anthropic STATIC src/llm/anthropic.cpp)
 target_link_libraries(clippi_anthropic PUBLIC clippi_proto clippi_http)
+
+add_library(clippi_openai STATIC src/llm/openai.cpp)
+target_link_libraries(clippi_openai PUBLIC clippi_proto clippi_http clippi_auth)
 
 # ---- auth (api keys + OAuth) ---------------------------------------------
 add_library(clippi_auth STATIC
@@ -199,11 +204,11 @@ add_library(clippi_app STATIC
   src/app/prompt_context.cpp
   src/app/provider_registry.cpp
   src/app/settings.cpp)
-target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_auth clippi_tui clippi_tools)
+target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_openai clippi_auth clippi_tui clippi_tools)
 
 # ---- executables ---------------------------------------------------------
 add_executable(clippi src/app/main.cpp)
-target_link_libraries(clippi PRIVATE clippi_app clippi_anthropic clippi_tools clippi_agent clippi_auth clippi_tui)
+target_link_libraries(clippi PRIVATE clippi_app clippi_anthropic clippi_openai clippi_tools clippi_agent clippi_auth clippi_tui)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT clippi)
 set_target_properties(clippi PROPERTIES
   VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -221,6 +226,7 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_session.cpp
   tests/test_harness.cpp
   tests/test_anthropic.cpp
+  tests/test_openai.cpp
   tests/test_tools.cpp
   tests/test_infra.cpp
   tests/test_crypto.cpp
