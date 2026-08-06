@@ -74,6 +74,7 @@ add_library(clippi_agent STATIC
   src/agent/driver.cpp
   src/agent/primitives.cpp
   src/agent/compaction.cpp
+  src/agent/event_json.cpp
   src/llm/retry.cpp)
 target_link_libraries(clippi_agent PUBLIC clippi_base clippi_session)
 
@@ -239,6 +240,7 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_provider_registry.cpp
   tests/test_settings.cpp
   tests/test_compaction.cpp
+  tests/test_event_json.cpp
   tests/test_thread.cpp
   tests/test_keys.cpp
   tests/test_screen.cpp
