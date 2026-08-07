@@ -200,13 +200,19 @@ target_link_libraries(clippi_tools PUBLIC clippi_json clippi_agent clippi_http)
 
 # ---- app support (settings, provider registry, interactive commands) ------
 add_library(clippi_app STATIC
+  src/app/auth_flow.cpp
   src/app/command.cpp
+  src/app/commands.cpp
+  src/app/config_paths.cpp
+  src/app/event_pump.cpp
   src/app/hook_config.cpp
   src/app/hook_runner.cpp
   src/app/plain_select.cpp
   src/app/project_trust.cpp
   src/app/prompt_context.cpp
   src/app/provider_registry.cpp
+  src/app/runtime.cpp
+  src/app/session_switch.cpp
   src/app/settings.cpp)
 target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_openai clippi_auth clippi_tui clippi_tools)
 
@@ -236,6 +242,7 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_crypto.cpp
   tests/test_auth.cpp
   tests/test_command.cpp
+  tests/test_app.cpp
   tests/test_hooks.cpp
   tests/test_prompt_context.cpp
   tests/test_project_trust.cpp
