@@ -155,6 +155,8 @@ target_link_libraries(clippi_ui PUBLIC clippi_base clippi_term)
 # ---- tui (Clippi-specific full-screen application) ------------------------
 add_library(clippi_tui STATIC
   src/tui/markdown.cpp
+  src/tui/session.cpp
+  src/tui/status.cpp
   src/tui/stream_reveal.cpp
   src/tui/linemodel.cpp
   src/tui/toolview.cpp
