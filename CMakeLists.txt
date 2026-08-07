@@ -159,7 +159,10 @@ add_library(clippi_tui STATIC
   src/tui/linemodel.cpp
   src/tui/toolview.cpp
   src/tui/tui.cpp)
-target_link_libraries(clippi_tui PUBLIC clippi_ui clippi_term clippi_agent clippi_json)
+# The TUI is a terminal component layer: it takes progress as ordinary calls and
+# asks for steer/cancel through TuiAgentHooks, so it does not link clippi_agent.
+# src/app/tui_bridge.cpp is the only place that knows about both.
+target_link_libraries(clippi_tui PUBLIC clippi_ui clippi_term clippi_json clippi_proto)
 
 # ---- llm providers -------------------------------------------------------
 add_library(clippi_proto STATIC
@@ -213,7 +216,8 @@ add_library(clippi_app STATIC
   src/app/provider_registry.cpp
   src/app/runtime.cpp
   src/app/session_switch.cpp
-  src/app/settings.cpp)
+  src/app/settings.cpp
+  src/app/tui_bridge.cpp)
 target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_openai clippi_auth clippi_tui clippi_tools)
 
 # ---- executables ---------------------------------------------------------
