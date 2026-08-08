@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Launch coding agents side by side with a live memory readout.
 #
-#   ./demo.sh                     clippi, pi and claude
-#   ./demo.sh clippi claude        pick your own, any two or three
+#   ./demo.sh                     clippi, pi, claude and opencode
+#   ./demo.sh clippi claude        pick your own, any two to four
 #   ./demo.sh --monitor [tools]   just the monitor, against what is running
 #
 # Memory is Pss from /proc/<pid>/smaps_rollup, summed per tool over every
@@ -16,25 +16,28 @@ SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]
 CLIPPI_BIN="${CLIPPI_BIN:-$HOME/clippi-src/build-linux/clippi}"
 PI_BIN="${PI_BIN:-$HOME/.local/npm/bin/pi}"
 CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/npm/bin/claude}"
+OPENCODE_BIN="${OPENCODE_BIN:-$HOME/.local/npm/bin/opencode}"
 SSL_LIB="${SSL_LIB:-$HOME/.local/ssl/lib}"
 NODE_BIN="${NODE_BIN:-$HOME/.local/node/bin}"
 
-DEFAULT_TOOLS=(clippi pi claude)
+DEFAULT_TOOLS=(clippi pi claude opencode)
 
 bin_for() {
   case "$1" in
-    clippi)  echo "$CLIPPI_BIN" ;;
-    pi)     echo "$PI_BIN" ;;
-    claude) echo "$CLAUDE_BIN" ;;
-    *)      echo "" ;;
+    clippi)    echo "$CLIPPI_BIN" ;;
+    pi)       echo "$PI_BIN" ;;
+    claude)   echo "$CLAUDE_BIN" ;;
+    opencode) echo "$OPENCODE_BIN" ;;
+    *)        echo "" ;;
   esac
 }
 
 cmd_for() {
   case "$1" in
-    clippi)  echo "LD_LIBRARY_PATH='$SSL_LIB' '$CLIPPI_BIN'" ;;
-    pi)     echo "'$PI_BIN'" ;;
-    claude) echo "'$CLAUDE_BIN'" ;;
+    clippi)    echo "LD_LIBRARY_PATH='$SSL_LIB' '$CLIPPI_BIN'" ;;
+    pi)       echo "'$PI_BIN'" ;;
+    claude)   echo "'$CLAUDE_BIN'" ;;
+    opencode) echo "'$OPENCODE_BIN'" ;;
   esac
 }
 
@@ -87,10 +90,12 @@ def classify(exe, cmd):
     # never counts itself or a shell that merely mentions the tool.
     if "clippi" in TOOLS and exe and exe == REAL["clippi"]:
         return "clippi"
-    # Claude Code ships a native ELF binary (named claude.exe on every
-    # platform), so it matches by path like clippi does rather than via node.
+    # Claude Code and opencode both ship native ELF binaries (named .exe on
+    # every platform), so they match by path like clippi rather than via node.
     if "claude" in TOOLS and exe and exe == REAL["claude"]:
         return "claude"
+    if "opencode" in TOOLS and exe and exe == REAL["opencode"]:
+        return "opencode"
     # pi is a node script: exe is node and argv is rewritten to "pi", so
     # neither signal alone is enough.
     if exe and os.path.basename(exe) in ("node", "nodejs"):
@@ -150,7 +155,7 @@ missing=0
 for t in "${TOOLS[@]}"; do
   path="$(bin_for "$t")"
   if [[ -z "$path" ]]; then
-    echo "!! unknown tool '$t' (known: clippi pi claude)" >&2
+    echo "!! unknown tool '$t' (known: clippi pi claude opencode)" >&2
     missing=1
   elif [[ ! -x "$path" ]]; then
     echo "!! $t not found at $path" >&2
@@ -159,7 +164,7 @@ for t in "${TOOLS[@]}"; do
 done
 if [[ $missing -eq 1 ]]; then
   echo >&2
-  echo "Override with CLIPPI_BIN / PI_BIN / CLAUDE_BIN, or build clippi:" >&2
+  echo "Override with CLIPPI_BIN / PI_BIN / CLAUDE_BIN / OPENCODE_BIN, or build clippi:" >&2
   echo "  cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release" >&2
   echo "  cmake --build build-linux --target clippi" >&2
   exit 1
