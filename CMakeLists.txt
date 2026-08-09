@@ -156,6 +156,7 @@ target_link_libraries(clippi_ui PUBLIC clippi_base clippi_term)
 add_library(clippi_tui STATIC
   src/tui/markdown.cpp
   src/tui/modal.cpp
+  src/tui/perf.cpp
   src/tui/selection.cpp
   src/tui/session.cpp
   src/tui/status.cpp
