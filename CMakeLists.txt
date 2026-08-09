@@ -192,6 +192,7 @@ target_link_libraries(clippi_auth PUBLIC clippi_json clippi_crypto clippi_http c
 add_library(clippi_tools STATIC
   src/tools/exec.cpp
   src/tools/tools_manager.cpp
+  src/tools/tool_select.cpp
   src/tools/fs.cpp
   src/tools/truncate.cpp
   src/tools/glob.cpp
@@ -213,15 +214,18 @@ add_library(clippi_app STATIC
   src/app/commands.cpp
   src/app/config_paths.cpp
   src/app/event_pump.cpp
+  src/app/frontmatter.cpp
   src/app/hook_config.cpp
   src/app/hook_runner.cpp
   src/app/plain_select.cpp
   src/app/project_trust.cpp
   src/app/prompt_context.cpp
+  src/app/prompt_templates.cpp
   src/app/provider_registry.cpp
   src/app/runtime.cpp
   src/app/session_switch.cpp
   src/app/settings.cpp
+  src/app/skills.cpp
   src/app/tui_bridge.cpp)
 target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_openai clippi_auth clippi_tui clippi_tools)
 
@@ -247,6 +251,7 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_anthropic.cpp
   tests/test_openai.cpp
   tests/test_tools.cpp
+  tests/test_tool_select.cpp
   tests/test_infra.cpp
   tests/test_crypto.cpp
   tests/test_auth.cpp
@@ -258,6 +263,8 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_loopback.cpp
   tests/test_provider_registry.cpp
   tests/test_settings.cpp
+  tests/test_skills.cpp
+  tests/test_prompt_templates.cpp
   tests/test_compaction.cpp
   tests/test_event_json.cpp
   tests/test_thread.cpp
