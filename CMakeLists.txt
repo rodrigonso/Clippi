@@ -142,7 +142,7 @@ add_library(clippi_ui STATIC
   src/ui/widgets.cpp)
 target_link_libraries(clippi_ui PUBLIC clippi_base clippi_term)
 
-# ---- tui (Clippi-specific full-screen application) ------------------------
+# ---- tui (Clippi-specific full-screen application) ----------------------
 add_library(clippi_tui STATIC
   src/tui/markdown.cpp
   src/tui/modal.cpp

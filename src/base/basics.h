@@ -25,8 +25,8 @@ using usize = size_t;
 
 // Fastfail when the (invalid) condition holds. Mirrors the caboose FFI macro:
 // FFI(x) traps if x is true, i.e. x describes the disallowed state.
-#define FFI(cond)           \
-  do {                      \
+#define FFI(cond)             \
+  do {                        \
     if (cond) CLIPPI_TRAP(); \
   } while (0)
 
