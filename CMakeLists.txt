@@ -51,7 +51,6 @@ target_link_libraries(clippi_json PUBLIC clippi_base)
 
 # ---- crypto --------------------------------------------------------------
 add_library(clippi_crypto STATIC
-  src/crypto/sha256.cpp
   src/crypto/random.cpp)
 target_link_libraries(clippi_crypto PUBLIC clippi_base)
 if(WIN32)
@@ -118,15 +117,6 @@ FetchContent_MakeAvailable(curl)
 add_library(clippi_http STATIC src/net/http_curl.cpp)
 target_link_libraries(clippi_http PUBLIC clippi_base CURL::libcurl)
 
-# ---- loopback (OAuth callback server + browser opener) -------------------
-add_library(clippi_loopback STATIC
-  src/net/loopback.cpp
-  src/net/browser.cpp)
-target_link_libraries(clippi_loopback PUBLIC clippi_base)
-if(WIN32)
-  target_link_libraries(clippi_loopback PUBLIC ws2_32 shell32)
-endif()
-
 # ---- term (terminal I/O + cell renderer) ---------------------------------
 if(WIN32)
   set(CLIPPI_TERM_PLATFORM src/term/term_win.cpp)
@@ -171,22 +161,17 @@ target_link_libraries(clippi_tui PUBLIC clippi_ui clippi_term clippi_json clippi
 
 # ---- llm providers -------------------------------------------------------
 add_library(clippi_proto STATIC
-  src/llm/anthropic_proto.cpp
-  src/llm/openai_proto.cpp)
+  src/llm/chat_completions_proto.cpp)
 target_link_libraries(clippi_proto PUBLIC clippi_json)
 
-add_library(clippi_anthropic STATIC src/llm/anthropic.cpp)
-target_link_libraries(clippi_anthropic PUBLIC clippi_proto clippi_http)
+add_library(clippi_chat STATIC src/llm/chat_completions.cpp)
+target_link_libraries(clippi_chat PUBLIC clippi_proto clippi_http clippi_auth)
 
-add_library(clippi_openai STATIC src/llm/openai.cpp)
-target_link_libraries(clippi_openai PUBLIC clippi_proto clippi_http clippi_auth)
-
-# ---- auth (api keys + OAuth) ---------------------------------------------
+# ---- auth (api keys) -----------------------------------------------------
 add_library(clippi_auth STATIC
   src/auth/store.cpp
-  src/auth/oauth.cpp
   src/auth/resolve.cpp)
-target_link_libraries(clippi_auth PUBLIC clippi_json clippi_crypto clippi_http clippi_loopback)
+target_link_libraries(clippi_auth PUBLIC clippi_json)
 
 # ---- tools ---------------------------------------------------------------
 add_library(clippi_tools STATIC
@@ -229,11 +214,11 @@ add_library(clippi_app STATIC
   src/app/settings.cpp
   src/app/skills.cpp
   src/app/tui_bridge.cpp)
-target_link_libraries(clippi_app PUBLIC clippi_anthropic clippi_openai clippi_auth clippi_tui clippi_tools)
+target_link_libraries(clippi_app PUBLIC clippi_chat clippi_auth clippi_tui clippi_tools)
 
 # ---- executables ---------------------------------------------------------
 add_executable(clippi src/app/main.cpp)
-target_link_libraries(clippi PRIVATE clippi_app clippi_anthropic clippi_openai clippi_tools clippi_agent clippi_auth clippi_tui)
+target_link_libraries(clippi PRIVATE clippi_app clippi_chat clippi_tools clippi_agent clippi_auth clippi_tui)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT clippi)
 set_target_properties(clippi PROPERTIES
   VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -250,8 +235,7 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_json.cpp
   tests/test_session.cpp
   tests/test_harness.cpp
-  tests/test_anthropic.cpp
-  tests/test_openai.cpp
+  tests/test_chat_completions.cpp
   tests/test_tools.cpp
   tests/test_tool_select.cpp
   tests/test_infra.cpp
@@ -262,7 +246,6 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_hooks.cpp
   tests/test_prompt_context.cpp
   tests/test_project_trust.cpp
-  tests/test_loopback.cpp
   tests/test_provider_registry.cpp
   tests/test_settings.cpp
   tests/test_skills.cpp
@@ -282,7 +265,7 @@ add_executable(clippi_tests EXCLUDE_FROM_ALL
   tests/test_ui_demo.cpp
   tests/test_tui.cpp
   tests/test_http.cpp)
-target_link_libraries(clippi_tests PRIVATE clippi_app clippi_proto clippi_agent clippi_session clippi_tools clippi_crypto clippi_auth clippi_loopback clippi_tui clippi_ui clippi_term clippi_http)
+target_link_libraries(clippi_tests PRIVATE clippi_app clippi_chat clippi_proto clippi_agent clippi_session clippi_tools clippi_crypto clippi_auth clippi_tui clippi_ui clippi_term clippi_http)
 
 # Default ctest run stays offline; the network suite is opt-in.
 add_test(NAME unit COMMAND clippi_tests)
