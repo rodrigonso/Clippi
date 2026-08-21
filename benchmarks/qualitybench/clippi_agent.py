@@ -42,13 +42,12 @@ CONTAINER_BIN = "/usr/local/bin/clippi"
 CONTAINER_LIB_DIR = "/opt/clippi/lib"
 CONTAINER_HOME = "/tmp/clippi-home"
 
-#              api domain           key env              base-url overrides
+#                api domain        key env                base-url overrides
 PROVIDERS = {
-    "anthropic": ("api.anthropic.com", "ANTHROPIC_API_KEY", ("ANTHROPIC_BASE_URL",)),
-    "openai": (
-        "api.openai.com",
-        "OPENAI_API_KEY",
-        ("OPENAI_BASE_URL", "OPENAI_API_BASE"),
+    "openrouter": (
+        "openrouter.ai",
+        "OPENROUTER_API_KEY",
+        ("OPENROUTER_BASE_URL",),
     ),
 }
 BASE_URL_ENV = tuple(url for _, _, urls in PROVIDERS.values() for url in urls)
@@ -244,22 +243,13 @@ class ClippiAgent(BaseInstalledAgent):
     def _parsed_provider_model(self) -> tuple[str, str]:
         if not self.model_name or "/" not in self.model_name:
             raise ValueError(
-                "model_name must be 'provider/model', e.g. openai/gpt-5.6-sol"
+                "model_name must be an OpenRouter model id, "
+                "e.g. anthropic/claude-sonnet-4.5"
             )
-        provider, model = self.model_name.split("/", 1)
-        # Pier uses gateway-qualified providers like 'openai-api'; clippi knows
-        # only the bare provider id.
-        provider = provider.split("-")[0].lower()
-        if provider not in PROVIDERS:
-            raise ValueError(f"clippi has no provider '{provider}'")
-        return provider, model
+        return "openrouter", self.model_name
 
     def _settings_json(self) -> str:
-        """Clippi takes provider and effort from settings.json, not from argv.
-
-        ``-m`` overrides only the model id, so a provider mismatch would leave
-        an OpenAI model id pointed at the Anthropic provider.
-        """
+        """Clippi takes its OpenRouter model and effort from settings.json."""
         provider, model = self._parsed_provider_model()
         settings: dict[str, Any] = {
             "provider": provider,
