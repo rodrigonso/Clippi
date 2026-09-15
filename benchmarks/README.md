@@ -1,29 +1,37 @@
 # Benchmarks
 
-[`agentbench/`](agentbench/) — compares coding-agent CLIs on **memory**: Clippi
-against jcode, pi, Claude Code and opencode. It launches each tool's real
-interactive TUI and measures process-tree PSS at an idle prompt.
+Clippi's native in-process benchmark works on **macOS and Windows**. After
+building the tests through the repository scripts, run `clippi_tests
+--benchmark` to measure agent-loop latency and peak RSS on a scripted workload,
+with no second runtime involved.
+
+[`agentbench/`](agentbench/) compares coding-agent CLIs on **memory** on macOS:
+Clippi against jcode, pi, Claude Code and opencode. It launches each tool's
+interactive TUI and measures process-tree **RSS** at an idle prompt.
 
 ```bash
 cd benchmarks
-python3 -m agentbench doctor      # check the setup
+python3 -m agentbench doctor      # check the macOS setup
 python3 -m agentbench measure     # the numbers
 python3 -m agentbench demo        # side by side in tmux
 ```
 
-Linux only (PSS has no Windows analogue); on Windows, run it under WSL.
+The interactive comparison needs macOS PTYs and process inspection; use the
+native in-process benchmark on Windows. RSS totals count shared pages in each
+process and are not interchangeable with the historical PSS measurements.
 
-[`qualitybench/`](qualitybench/) — compares them on **task success** instead, by
-exposing Clippi as an agent to the Pier and Harbor harnesses so it can be run
-against DeepSWE v1.1 with the model held fixed.
+[`qualitybench/`](qualitybench/) retains external DeepSWE reference results,
+an oracle-only task verifier, and a local auditor for historical job artifacts.
+Its Clippi container adapter and binary bootstrap have been removed: Clippi
+supports macOS and Windows, not the task containers' operating system.
 
-```bash
-cd benchmarks/qualitybench
-python3 test_clippi_agent.py       # adapter checks, no harness needed
-python3 test_benchmark_flow.py    # safe runner and job-audit checks
-python3 run_benchmark.py canary   # 10-task integration gate
+```powershell
+Set-Location benchmarks\qualitybench
+python test_benchmark_flow.py
+python audit_job.py <existing-job-directory>
+python run_benchmark.py oracle --dry-run
 ```
 
-For Clippi's own in-process numbers — agent-loop latency and peak RSS on a
-scripted workload, with no second runtime involved — use `clippi_tests
---benchmark` from the repository root.
+On macOS, use `cd benchmarks/qualitybench` and `python3` for the same commands.
+The oracle runs only external reference solutions, not Clippi; a real oracle
+run requires Pier and its chosen environment backend.

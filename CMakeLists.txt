@@ -1,16 +1,21 @@
 cmake_minimum_required(VERSION 3.24)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" CLIPPI_VERSION LIMIT_COUNT 1)
-project(Clippi VERSION "${CLIPPI_VERSION}" LANGUAGES C CXX)
+project(Clippi VERSION "${CLIPPI_VERSION}" LANGUAGES NONE)
+if(NOT CMAKE_HOST_SYSTEM_NAME MATCHES "^(Windows|Darwin)$" OR
+   NOT CMAKE_SYSTEM_NAME MATCHES "^(Windows|Darwin)$")
+  message(FATAL_ERROR "Clippi supports only Windows and macOS (host: ${CMAKE_HOST_SYSTEM_NAME}, target: ${CMAKE_SYSTEM_NAME}).")
+endif()
+enable_language(C CXX)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS VERSION)
 
 option(CLIPPI_BUILD_CLI "Build the CLI and its networking dependencies" ON)
 option(CLIPPI_BUILD_TESTS "Build the offline-by-default test runner" OFF)
 option(CLIPPI_BUILD_EXAMPLES "Build the offline core example" OFF)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:DebugDLL>")
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build configuration" FORCE)
 endif()
@@ -47,6 +52,7 @@ add_library(clippi_core STATIC
   src/json/json.cpp
   src/json/schema.cpp
   src/tools/fs.cpp
+  src/tools/glob.cpp
   src/crypto/random.cpp
   src/session/id.cpp
   src/session/entry.cpp
@@ -63,7 +69,7 @@ add_library(clippi_core STATIC
   src/agent/event_json.cpp)
 clippi_target(clippi_core)
 set_target_properties(clippi_core PROPERTIES DEBUG_POSTFIX d)
-target_compile_features(clippi_core PUBLIC cxx_std_17)
+target_compile_features(clippi_core PUBLIC cxx_std_23)
 target_include_directories(clippi_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(WIN32)
   target_sources(clippi_core PRIVATE src/base/thread_win.cpp)
@@ -76,6 +82,7 @@ endif()
 
 if(CLIPPI_BUILD_CLI)
   include(cmake/curl.cmake)
+  include(cmake/pcre2.cmake)
   # Compile CLI implementation once, shared by the executable and its tests.
   add_library(clippi_cli OBJECT
     src/net/http_curl.cpp
@@ -105,10 +112,9 @@ if(CLIPPI_BUILD_CLI)
     src/auth/store.cpp
     src/auth/resolve.cpp
     src/tools/exec.cpp
-    src/tools/tools_manager.cpp
+    src/tools/search_regex.cpp
     src/tools/tool_select.cpp
     src/tools/truncate.cpp
-    src/tools/glob.cpp
     src/tools/diff.cpp
     src/tools/filelock.cpp
     src/tools/read.cpp
@@ -139,7 +145,7 @@ if(CLIPPI_BUILD_CLI)
     src/app/skills.cpp
     src/app/tui_bridge.cpp)
   clippi_target(clippi_cli)
-  target_link_libraries(clippi_cli PUBLIC clippi_core CURL::libcurl)
+  target_link_libraries(clippi_cli PUBLIC clippi_core CURL::libcurl ${CLIPPI_PCRE2_TARGET})
   if(WIN32)
     target_sources(clippi_cli PRIVATE src/term/term_win.cpp)
     target_link_libraries(clippi_cli PUBLIC ws2_32 crypt32 advapi32)
@@ -155,6 +161,8 @@ if(CLIPPI_BUILD_CLI)
   install(TARGETS clippi RUNTIME DESTINATION bin COMPONENT runtime)
   install(FILES "${curl_SOURCE_DIR}/COPYING"
     DESTINATION share/clippi/licenses/curl COMPONENT runtime)
+  install(FILES "${pcre2_SOURCE_DIR}/LICENCE.md"
+    DESTINATION share/clippi/licenses/pcre2 COMPONENT runtime)
 endif()
 
 if(CLIPPI_BUILD_TESTS)
@@ -199,6 +207,9 @@ if(CLIPPI_BUILD_TESTS)
   endif()
   enable_testing()
   add_test(NAME offline COMMAND clippi_tests)
+  configure_file(tests/test_platform.cmake generated/test_platform.cmake @ONLY)
+  add_test(NAME platform_policy COMMAND "${CMAKE_COMMAND}"
+    -P "${CMAKE_CURRENT_BINARY_DIR}/generated/test_platform.cmake")
 endif()
 
 if(CLIPPI_BUILD_EXAMPLES)
@@ -213,12 +224,23 @@ install(TARGETS clippi_core ARCHIVE DESTINATION lib COMPONENT sdk)
 install(DIRECTORY src/base src/json src/crypto src/session src/agent
   DESTINATION include/clippi COMPONENT sdk FILES_MATCHING PATTERN "*.h")
 install(FILES src/llm/types.h src/llm/retry.h DESTINATION include/clippi/llm COMPONENT sdk)
-install(FILES src/tools/fs.h DESTINATION include/clippi/tools COMPONENT sdk)
+install(FILES src/tools/fs.h src/tools/glob.h DESTINATION include/clippi/tools COMPONENT sdk)
 if(WIN32)
-  set(linking "Link lib/$<TARGET_FILE_NAME:clippi_core>, psapi.lib and bcrypt.lib.\nUse /MD for Release, RelWithDebInfo and MinSizeRel; /MDd for Debug.")
+  set(linking "Link lib/$<TARGET_FILE_NAME:clippi_core>, psapi.lib and bcrypt.lib.\nCompile with /std:c++latest for MSVC's C++23 support.\nUse /MT for Release, RelWithDebInfo and MinSizeRel; /MDd for Debug.")
 else()
-  set(linking "Link lib/$<TARGET_FILE_NAME:clippi_core> with -pthread -lm.\nCompile C++17 sources with c++, then link objects and the archive with cc.")
+  set(linking "Link lib/$<TARGET_FILE_NAME:clippi_core> with -pthread -lm.\nCompile C++23 sources with c++ -std=c++23, then link objects and the archive with cc.")
 endif()
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/LINKING-$<CONFIG>.txt" CONTENT
-  "Clippi core SDK ($<CONFIG>, ${CMAKE_SYSTEM_NAME})\nUse include/clippi as your include directory and a matching C++17 toolchain.\n${linking}\nNo C++ standard library or networking libraries are required by the SDK.\nAll text ownership follows the arena API.\n")
+  "Clippi core SDK ($<CONFIG>, ${CMAKE_SYSTEM_NAME})\nUse include/clippi as your include directory and a matching C++23 toolchain.\n${linking}\nNo C++ standard library or networking libraries are required by the SDK.\nAll text ownership follows the arena API.\n")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/LINKING-$<CONFIG>.txt" DESTINATION . COMPONENT sdk)
+
+set(notice_components sdk)
+if(CLIPPI_BUILD_CLI)
+  list(APPEND notice_components runtime)
+endif()
+foreach(component IN LISTS notice_components)
+  install(FILES LICENSE DESTINATION share/clippi/licenses/clippi COMPONENT ${component})
+  install(FILES THIRD_PARTY_NOTICES.md DESTINATION share/clippi COMPONENT ${component})
+  install(DIRECTORY licenses/ DESTINATION share/clippi/licenses COMPONENT ${component}
+    FILES_MATCHING PATTERN LICENSE)
+endforeach()
