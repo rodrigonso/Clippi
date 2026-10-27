@@ -42,8 +42,10 @@ function Install-Runtime([string]$Prefix) {
     Write-Changed (Join-Path $Prefix 'share\clippi\DISTRIBUTION.txt') @"
 Clippi $version - Windows x86_64
 
-Extract the archive and run bin\clippi.exe directly; adding bin to PATH is
-optional. License notices accompany the executable. The core SDK is separate.
+tools/install/install.ps1 installs this archive after verifying its checksum,
+adds bin to your user PATH, and enables "clippi upgrade". You can instead
+extract it anywhere and run bin\clippi.exe directly. License notices
+accompany the executable. The core SDK is separate.
 
 The grep tool searches in-process and requires no external search executable.
 Normal use does not download or install helper tools, libraries, or runtimes.

@@ -36,8 +36,10 @@ Clippi $version - $os $arch
 Built with: $compiler
 Build host: $(uname -sr)
 
-Extract the archive and run bin/clippi directly; adding bin to PATH is
-optional. License notices accompany the executable. The core SDK is separate.
+tools/install/install.sh installs this archive after verifying its checksum,
+links bin/clippi into ~/.local/bin, and enables "clippi upgrade". You can
+instead extract it anywhere and run bin/clippi directly. License notices
+accompany the executable. The core SDK is separate.
 
 The grep tool searches in-process and requires no external search executable.
 Normal use does not download or install helper tools, libraries, or runtimes.

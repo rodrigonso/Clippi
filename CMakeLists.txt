@@ -130,6 +130,7 @@ if(CLIPPI_BUILD_CLI)
     src/tools/shell.cpp
     src/app/auth_flow.cpp
     src/app/browser.cpp
+    src/app/update.cpp
     src/app/command.cpp
     src/app/commands.cpp
     src/app/config_paths.cpp
@@ -149,6 +150,7 @@ if(CLIPPI_BUILD_CLI)
     src/app/skills.cpp
     src/app/tui_bridge.cpp)
   clippi_target(clippi_cli)
+  target_compile_definitions(clippi_cli PUBLIC CLIPPI_VERSION="${PROJECT_VERSION}")
   target_link_libraries(clippi_cli PUBLIC clippi_core CURL::libcurl ${CLIPPI_PCRE2_TARGET})
   if(WIN32)
     target_sources(clippi_cli PRIVATE src/term/term_win.cpp)
