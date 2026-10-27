@@ -54,6 +54,7 @@ add_library(clippi_core STATIC
   src/tools/fs.cpp
   src/tools/glob.cpp
   src/crypto/random.cpp
+  src/crypto/sha256.cpp
   src/session/id.cpp
   src/session/entry.cpp
   src/session/metadata.cpp
@@ -86,6 +87,7 @@ if(CLIPPI_BUILD_CLI)
   # Compile CLI implementation once, shared by the executable and its tests.
   add_library(clippi_cli OBJECT
     src/net/http_curl.cpp
+    src/net/loopback.cpp
     src/term/term.cpp
     src/term/keys.cpp
     src/term/cell.cpp
@@ -111,6 +113,7 @@ if(CLIPPI_BUILD_CLI)
     src/llm/responses.cpp
     src/auth/store.cpp
     src/auth/resolve.cpp
+    src/auth/openrouter_oauth.cpp
     src/tools/exec.cpp
     src/tools/search_regex.cpp
     src/tools/tool_select.cpp
@@ -126,6 +129,7 @@ if(CLIPPI_BUILD_CLI)
     src/tools/ask_user.cpp
     src/tools/shell.cpp
     src/app/auth_flow.cpp
+    src/app/browser.cpp
     src/app/command.cpp
     src/app/commands.cpp
     src/app/config_paths.cpp
@@ -148,7 +152,7 @@ if(CLIPPI_BUILD_CLI)
   target_link_libraries(clippi_cli PUBLIC clippi_core CURL::libcurl ${CLIPPI_PCRE2_TARGET})
   if(WIN32)
     target_sources(clippi_cli PRIVATE src/term/term_win.cpp)
-    target_link_libraries(clippi_cli PUBLIC ws2_32 crypt32 advapi32)
+    target_link_libraries(clippi_cli PUBLIC ws2_32 crypt32 advapi32 shell32)
   else()
     target_sources(clippi_cli PRIVATE src/term/term_posix.cpp)
   endif()
