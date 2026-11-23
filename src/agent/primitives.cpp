@@ -216,11 +216,8 @@ void FinalizeOne(Arena* arena, AgentPreparedTool* prepared,
                  const AgentHarnessHooks* hooks,
                  const AgentToolEventSink* events,
                  AgentToolCallResult* out) {
-  Array<Content> content =
-      prepared->HasWorker ? Content_CloneArray(arena, prepared->Result)
-                          : prepared->Result;
   ToolOutcome outcome = {};
-  outcome.Content = content;
+  outcome.Content = prepared->Result;
   outcome.IsError = prepared->IsError;
   outcome.Terminate = prepared->Terminate;
   if (hooks && hooks->AfterTool)
@@ -243,13 +240,19 @@ void FinalizeOne(Arena* arena, AgentPreparedTool* prepared,
     events->OnEnd(events->User, call.ToolCallId, call.ToolName, &result,
                   call.IsError);
   }
-  if (prepared->HasWorker) {
+}
+
+}  // namespace
+
+void AgentToolBatch_ReleaseWorkers(AgentToolBatchPlan* plan) {
+  if (!plan) return;
+  for (u32 i = 0; i < plan->Calls.Count; i++) {
+    AgentPreparedTool* prepared = &plan->Calls.Data[i];
+    if (!prepared->HasWorker) continue;
     ArenaRelease(&prepared->Worker);
     prepared->HasWorker = false;
   }
 }
-
-}  // namespace
 
 void AgentProvider_BuildRequest(Arena* arena, StrView systemPrompt,
                                 const Message* messages, u32 messageCount,

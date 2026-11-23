@@ -156,6 +156,11 @@ struct AgentToolBatchResult {
 // hooks' before-tool gate. Run is the external-effect boundary; it finalizes
 // each call, including the after-tool hook, on the coordinator thread as soon
 // as that call completes.
+//
+// A parallel call's result stays in the worker arena it was produced in, so
+// `out` borrows from `plan` until AgentToolBatch_ReleaseWorkers. Commit the
+// results first (AgentHarness_Append takes its own copy): copying each one
+// into the batch arena on the way would double the cost of a large result.
 void AgentToolBatch_Prepare(Arena* arena, const ToolRuntime* tools, u32 toolCount,
                             const Message* assistant, ToolExecution execution,
                             volatile i32* abort, const AgentHarnessHooks* hooks,
@@ -166,6 +171,7 @@ void AgentToolBatch_Run(Arena* arena, AgentToolBatchPlan* plan,
                         const AgentToolDispatchGate* dispatch,
                         const AgentToolEventSink* events,
                         AgentToolBatchResult* out);
+void AgentToolBatch_ReleaseWorkers(AgentToolBatchPlan* plan);
 
 Message AgentToolResult_Materialize(const AgentToolCallResult* result);
 

@@ -566,6 +566,9 @@ SessionResult RunToolBatch(AgentHarness* harness, DurableId* ioHead, const Messa
     head = message.EntryId;
   }
   SessionResult committed = AgentHarness_Append(harness, messages.Data, messages.Count);
+  // Committed records now point at the harness's own copies; a failed commit
+  // is returned without reading them.
+  AgentToolBatch_ReleaseWorkers(&plan);
   if (SessionResult_IsOk(committed)) {
     *ioHead = head;
     *outAnyTool = results.AnyTool;
