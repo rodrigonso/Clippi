@@ -97,6 +97,18 @@ struct FsEntry {
 
 Array<FsEntry> Fs_ListDir(Arena* arena, StrView dir, bool* ok);
 
+// Calls `visit` for each entry of `dir` other than "." and "..", in directory
+// order, without collecting them: memory does not grow with the directory.
+// The entry's name is borrowed until `visit` returns. `visit` returning false
+// stops early and still succeeds. False means cancellation or an I/O error,
+// described in `err` when it is non-null. One directory handle stays open for
+// the call, including while `visit` runs. A few KiB of enumeration buffers are
+// taken from `scratch` before the first visit and left there, since `visit`
+// may allocate retained output from the same arena.
+typedef bool (*FsEntryVisitor)(void* user, const FsEntry& entry);
+bool Fs_ForEachEntry(Arena* scratch, StrView dir, volatile i32* abort, StrBuf* err,
+                     FsEntryVisitor visit, void* user);
+
 // One parsed ignore-file rule. `BaseRel` is the ignore file's directory
 // relative to the scan root, so a nested rule only applies below its own
 // directory. Patterns are gitignore-flavored: a leading '/' anchors to
@@ -138,6 +150,9 @@ struct FsWalkOptions {
 typedef bool (*FsWalkVisitor)(void* user, StrView absPath, StrView relPath, const FsEntry& e);
 // False means I/O failure, cancellation, or a traversal/glob resource limit.
 // A visitor returning false requests a successful early stop.
+// Entries are visited as each directory streams them, descending inline, so
+// memory grows with depth rather than with directory size; one directory
+// handle stays open per level being walked.
 // Parent ignores stop at the nearest .git marker or filesystem root. .ignore
 // outranks .gitignore, including across scopes. Limits: 128 directory levels,
 // 4095-byte paths, 64 MiB scratch budget, 1 MiB/4096 rules per ignore file.

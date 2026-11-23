@@ -742,80 +742,81 @@ static bool Fs_Cancelled(volatile i32* abort, StrBuf* err) {
   return true;
 }
 
-static Array<FsEntry> Fs_ListDirChecked(Arena* arena, StrView dir, bool* ok,
-                                       volatile i32* abort, StrBuf* err, usize memoryLimit = 0) {
-  Array<FsEntry> entries = Array_Make<FsEntry>(arena, 16);
-  *ok = false;
-  if (dir.Length > 4090 || Fs_PathHasNul(dir)) {
-    Fs_Error(err, "Invalid or overlong directory path", dir);
-    return entries;
-  }
-  if (Fs_Cancelled(abort, err)) return entries;
+bool Fs_ForEachEntry(Arena* scratch, StrView dir, volatile i32* abort, StrBuf* err,
+                     FsEntryVisitor visit, void* user) {
+  if (dir.Length > 4090 || Fs_PathHasNul(dir))
+    return Fs_Error(err, "Invalid or overlong directory path", dir);
+  if (Fs_Cancelled(abort, err)) return false;
+  bool ok = true;
 #if defined(_WIN32)
-  StrBuf pattern = StrBuf_Make(arena, dir.Length + 3);
+  // Off the stack: a walk nests one enumeration per directory level.
+  usize mark = scratch->Used;
+  StrBuf pattern = StrBuf_Make(scratch, dir.Length + 3);
   StrBuf_Append(&pattern, dir);
   if (pattern.Length == 0 || !Fs_IsSep(pattern.Data[pattern.Length - 1])) StrBuf_AppendChar(&pattern, '\\');
   StrBuf_AppendChar(&pattern, '*');
-  wchar_t native[4096];
+  wchar_t* native = ArenaPushArray(scratch, wchar_t, 4096);
   if (!Win32_Path(StrBuf_View(&pattern), native, 4096)) {
-    Fs_Error(err, "Invalid UTF-8 directory path", dir, GetLastError());
-    return entries;
+    u32 code = GetLastError();
+    ArenaRestore(scratch, mark);
+    return Fs_Error(err, "Invalid UTF-8 directory path", dir, code);
   }
   WIN32_FIND_DATAW fd = {};
   HANDLE h = FindFirstFileW(native, &fd);
   if (h == INVALID_HANDLE_VALUE) {
     DWORD code = GetLastError();
-    if (code == ERROR_FILE_NOT_FOUND && Fs_IsDir(dir)) *ok = true;
-    else Fs_Error(err, "Cannot list directory", dir, code);
-    return entries;
+    ArenaRestore(scratch, mark);
+    if (code == ERROR_FILE_NOT_FOUND && Fs_IsDir(dir)) return true;
+    return Fs_Error(err, "Cannot list directory", dir, code);
   }
-  *ok = true;
+  // cFileName holds at most MAX_PATH UTF-16 units, at most three bytes each.
+  const u32 nameCapacity = MAX_PATH * 3 + 1;
+  char* name = ArenaPushArray(scratch, char, nameCapacity);
   for (;;) {
-    if (Fs_Cancelled(abort, err)) { *ok = false; break; }
-    StrView name = {};
-    if (!Win32_Utf8(arena, fd.cFileName, (u32)lstrlenW(fd.cFileName), &name)) {
-      *ok = Fs_Error(err, "Cannot encode directory entry as UTF-8", dir, GetLastError());
+    if (Fs_Cancelled(abort, err)) { ok = false; break; }
+    int units = lstrlenW(fd.cFileName);
+    int bytes = units ? WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, fd.cFileName, units,
+                                            name, (int)nameCapacity - 1, nullptr, nullptr)
+                      : 0;
+    if (bytes <= 0) {
+      ok = Fs_Error(err, "Cannot encode directory entry as UTF-8", dir, GetLastError());
       break;
     }
-    if (!StrView_Eq(name, SVL(".")) && !StrView_Eq(name, SVL(".."))) {
+    name[bytes] = 0;
+    StrView entryName = {name, (u32)bytes};
+    if (!StrView_Eq(entryName, SVL(".")) && !StrView_Eq(entryName, SVL(".."))) {
       ULARGE_INTEGER sz;
       sz.LowPart = fd.nFileSizeLow;
       sz.HighPart = fd.nFileSizeHigh;
       FsEntry e = {};
-      e.Name = name;
+      e.Name = entryName;
       e.IsDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
       e.Size = sz.QuadPart;
       e.IsSymlink = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
       e.IsRegular = !e.IsDir && !e.IsSymlink &&
                     !(fd.dwFileAttributes & FILE_ATTRIBUTE_DEVICE);
-      Array_Push(&entries, e);
-    }
-    if (entries.Count >= 1000000 || (memoryLimit && arena->Used > memoryLimit)) {
-      *ok = Fs_Error(err, "Directory entry/memory limit exceeded", dir);
-      break;
+      if (!visit(user, e)) break;
     }
     if (!FindNextFileW(h, &fd)) {
       DWORD code = GetLastError();
       if (code != ERROR_NO_MORE_FILES)
-        *ok = Fs_Error(err, "Cannot read directory", dir, code);
+        ok = Fs_Error(err, "Cannot read directory", dir, code);
       break;
     }
   }
-  if (!FindClose(h) && *ok)
-    *ok = Fs_Error(err, "Cannot close directory", dir, GetLastError());
+  if (!FindClose(h) && ok)
+    ok = Fs_Error(err, "Cannot close directory", dir, GetLastError());
 #else
-  DIR* d = opendir(StrView_DupCStr(arena, dir));
-  if (!d) {
-    Fs_Error(err, "Cannot list directory", dir, (u32)errno);
-    return entries;
-  }
-  *ok = true;
+  usize mark = scratch->Used;
+  DIR* d = opendir(StrView_DupCStr(scratch, dir));
+  ArenaRestore(scratch, mark);
+  if (!d) return Fs_Error(err, "Cannot list directory", dir, (u32)errno);
   for (;;) {
-    if (Fs_Cancelled(abort, err)) { *ok = false; break; }
+    if (Fs_Cancelled(abort, err)) { ok = false; break; }
     errno = 0;
     struct dirent* de = readdir(d);
     if (!de) {
-      if (errno) *ok = Fs_Error(err, "Cannot read directory", dir, (u32)errno);
+      if (errno) ok = Fs_Error(err, "Cannot read directory", dir, (u32)errno);
       break;
     }
     StrView name = SV(de->d_name);
@@ -823,32 +824,48 @@ static Array<FsEntry> Fs_ListDirChecked(Arena* arena, StrView dir, bool* ok,
     struct stat st = {};
     if (fstatat(dirfd(d), de->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
       u32 code = (u32)errno;
-      *ok = Fs_Error(err, "Cannot stat directory entry", Fs_Join(arena, dir, name), code);
+      ok = Fs_Error(err, "Cannot stat directory entry", Fs_Join(scratch, dir, name), code);
       break;
     }
     FsEntry e = {};
-    e.Name = StrView_Dup(arena, name);
+    e.Name = name;
     e.IsDir = S_ISDIR(st.st_mode) != 0;
     e.Size = st.st_size > 0 ? (u64)st.st_size : 0;
     e.IsSymlink = S_ISLNK(st.st_mode) != 0;
     e.IsRegular = S_ISREG(st.st_mode) != 0;
-    Array_Push(&entries, e);
-    if (entries.Count >= 1000000 || (memoryLimit && arena->Used > memoryLimit)) {
-      *ok = Fs_Error(err, "Directory entry/memory limit exceeded", dir);
-      break;
-    }
+    if (!visit(user, e)) break;
   }
-  if (closedir(d) != 0 && *ok)
-    *ok = Fs_Error(err, "Cannot close directory", dir, (u32)errno);
+  if (closedir(d) != 0 && ok)
+    ok = Fs_Error(err, "Cannot close directory", dir, (u32)errno);
 #endif
-  return entries;
+  return ok;
+}
+
+struct FsListState {
+  Arena* Arena;
+  Array<FsEntry>* Entries;
+  bool Overflow;
+};
+
+static bool Fs_ListVisit(void* user, const FsEntry& entry) {
+  FsListState* state = (FsListState*)user;
+  if (state->Entries->Count >= 1000000) {
+    state->Overflow = true;
+    return false;
+  }
+  FsEntry copy = entry;
+  copy.Name = StrView_Dup(state->Arena, entry.Name);
+  Array_Push(state->Entries, copy);
+  return true;
 }
 
 Array<FsEntry> Fs_ListDir(Arena* arena, StrView dir, bool* ok) {
-  bool listed = false;
-  Array<FsEntry> result = Fs_ListDirChecked(arena, dir, &listed, nullptr, nullptr);
+  Array<FsEntry> entries = Array_Make<FsEntry>(arena, 16);
+  FsListState state = {arena, &entries, false};
+  bool listed = Fs_ForEachEntry(arena, dir, nullptr, nullptr, Fs_ListVisit, &state) &&
+                !state.Overflow;
   if (ok) *ok = listed;
-  return result;
+  return entries;
 }
 
 static bool Fs_HasSlash(StrView s) {
@@ -1102,6 +1119,65 @@ struct FsWalkState {
 static bool Fs_WalkDir(FsWalkState* state, StrView absDir, StrView relDir,
                        const FsIgnoreScope* inherited, u32 depth);
 
+struct FsWalkDir {
+  FsWalkState* State;
+  StrView AbsDir;
+  StrView RelDir;
+  const FsIgnoreScope* Scope;
+  u32 Depth;
+  bool Failed;
+};
+
+// Entries are handled as the directory streams them, descending inline, so a
+// walk holds one entry per level rather than every listing on its path.
+static bool Fs_WalkEntry(void* user, const FsEntry& e) {
+  FsWalkDir* dir = (FsWalkDir*)user;
+  FsWalkState* state = dir->State;
+  const FsWalkOptions& opts = *state->Options;
+  Arena* arena = state->Scratch;
+  if (Fs_Cancelled(opts.Abort, state->Error)) {
+    dir->Failed = true;
+    return false;
+  }
+  if (Fs_PathEquals(e.Name, SVL(".git")) || (opts.SkipLinks && e.IsSymlink)) return true;
+  usize mark = arena->Used;
+  StrView abs = Fs_Join(arena, dir->AbsDir, e.Name);
+  StrView rel = Fs_AppendRel(arena, dir->RelDir, e.Name);
+  bool ignored = false;
+  if (abs.Length >= 4096) {
+    Fs_Error(state->Error, "Filesystem traversal path limit exceeded", abs);
+    dir->Failed = true;
+    return false;
+  }
+  if (!Fs_ScopeIgnored(dir->Scope, Fs_ToPosix(arena, abs), e.IsDir, &ignored, state->Error)) {
+    dir->Failed = true;
+    return false;
+  }
+  if (!ignored && opts.Filter) {
+    bool include = true;
+    if (!opts.Filter(opts.FilterUser, rel, e, &include, state->Error)) {
+      dir->Failed = true;
+      return false;
+    }
+    ignored = !include;
+  }
+  if (!ignored) {
+    if ((!e.IsDir || opts.IncludeDirs) && !state->Visit(state->User, abs, rel, e)) {
+      dir->Failed = Fs_Cancelled(opts.Abort, state->Error);
+      state->Stopped = !dir->Failed;
+      return false;
+    }
+    if (e.IsDir && !e.IsSymlink &&
+        !Fs_WalkDir(state, abs, rel, dir->Scope, dir->Depth + 1)) {
+      dir->Failed = true;
+      return false;
+    }
+    if (state->Stopped) return false;
+  }
+  ArenaRestore(arena, mark);
+  return true;
+}
+
 static bool Fs_WalkDirBody(FsWalkState* state, StrView absDir, StrView relDir,
                            const FsIgnoreScope* inherited, u32 depth) {
   const FsWalkOptions& opts = *state->Options;
@@ -1116,40 +1192,11 @@ static bool Fs_WalkDirBody(FsWalkState* state, StrView absDir, StrView relDir,
   FsIgnoreScope scope = {};
   scope.Parent = inherited;
   if (!Fs_LoadScope(arena, &scope, absDir, opts, state->Error)) return false;
-  bool ok = false;
-  Array<FsEntry> entries =
-      Fs_ListDirChecked(arena, absDir, &ok, opts.Abort, state->Error, FS_WALK_MAX_SCRATCH);
-  if (!ok) return false;
-  for (u32 i = 0; i < entries.Count; i++) {
-    if (Fs_Cancelled(opts.Abort, state->Error)) return false;
-    const FsEntry& e = entries.Data[i];
-    if (Fs_PathEquals(e.Name, SVL(".git")) || (opts.SkipLinks && e.IsSymlink)) continue;
-    usize mark = arena->Used;
-    StrView abs = Fs_Join(arena, absDir, e.Name);
-    StrView rel = Fs_AppendRel(arena, relDir, e.Name);
-    if (abs.Length >= 4096)
-      return Fs_Error(state->Error, "Filesystem traversal path limit exceeded", abs);
-    bool ignored = false;
-    if (!Fs_ScopeIgnored(&scope, Fs_ToPosix(arena, abs), e.IsDir, &ignored, state->Error))
-      return false;
-    if (!ignored && opts.Filter) {
-      bool include = true;
-      if (!opts.Filter(opts.FilterUser, rel, e, &include, state->Error)) return false;
-      ignored = !include;
-    }
-    if (!ignored) {
-      if ((!e.IsDir || opts.IncludeDirs) && !state->Visit(state->User, abs, rel, e)) {
-        if (Fs_Cancelled(opts.Abort, state->Error)) return false;
-        state->Stopped = true;
-        return true;
-      }
-      if (e.IsDir && !e.IsSymlink &&
-          !Fs_WalkDir(state, abs, rel, &scope, depth + 1)) return false;
-      if (state->Stopped) return true;
-    }
-    ArenaRestore(arena, mark);
-  }
-  return !Fs_Cancelled(opts.Abort, state->Error);
+  FsWalkDir dir = {state, absDir, relDir, &scope, depth, false};
+  if (!Fs_ForEachEntry(arena, absDir, opts.Abort, state->Error, Fs_WalkEntry, &dir) ||
+      dir.Failed)
+    return false;
+  return state->Stopped || !Fs_Cancelled(opts.Abort, state->Error);
 }
 
 static bool Fs_WalkDir(FsWalkState* state, StrView absDir, StrView relDir,

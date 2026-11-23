@@ -1469,6 +1469,54 @@ static void TestEdit(Arena* a) {
 
 // ---- ls / find / grep (share a temp tree) --------------------------------
 
+// ls keeps only the `limit` first names while streaming the directory. Names
+// over {'_', 'a'} sort in opposite directions under ls's lower-case folding and
+// NTFS's upper-case one, so on Windows every entry arrives smaller than all the
+// kept ones and evicts one: the selection, and the compaction of evicted names,
+// must still yield exactly the first entries.
+static void TestLsSelection(Arena* a) {
+  StrView dir = SVL("clippi_tools_ls_select");
+  Fs_RemoveTree(a, dir);
+  CHECK(Fs_MkdirP(a, dir));
+  const u32 bits = 10;
+  StrBuf suffix = StrBuf_Make(a, 160);
+  for (u32 i = 0; i < 140; i++) StrBuf_AppendChar(&suffix, 'x');
+  auto nameFor = [&](u32 value) {
+    StrBuf name = StrBuf_Make(a, 160);
+    for (u32 bit = bits; bit > 0; bit--)
+      StrBuf_AppendChar(&name, (value >> (bit - 1)) & 1 ? 'a' : '_');
+    StrBuf_Append(&name, StrBuf_View(&suffix));
+    return StrBuf_View(&name);
+  };
+  bool created = true;
+  for (u32 value = 0; value < (1u << bits); value++)
+    created = File_WriteAll(a, Fs_Join(a, dir, nameFor(value)), SVL("")) ==
+                  FileIoResult::Success && created;
+  CHECK(created);
+
+  StrBuf expected = StrBuf_Make(a, 8192);
+  for (u32 value = 0; value < 50; value++) {
+    StrBuf_Append(&expected, nameFor(value));
+    StrBuf_AppendChar(&expected, '\n');
+  }
+  StrBuf_AppendCStr(&expected, "[50 entries limit reached. Use limit=100 for more.]");
+  Tool lt = LsTool();
+  ToolResult listed = {};
+  StrBuf listedErr = StrBuf_Make(a, 64);
+  CHECK(RunTool(lt, a, SV("{\"path\":\"clippi_tools_ls_select\",\"limit\":50}"), &listed,
+                &listedErr));
+  CHECK(listed.Content.Count == 1 &&
+        StrView_Eq(listed.Content.Data[0].Text, StrBuf_View(&expected)));
+
+  volatile i32 cancelled = 1;
+  ToolResult partial = {};
+  StrBuf partialErr = StrBuf_Make(a, 64);
+  CHECK(!RunTool(lt, a, SV("{\"path\":\"clippi_tools_ls_select\"}"), &partial, &partialErr,
+                 nullptr, &cancelled));
+  CHECK_ALL(partial.Content.Count == 0, StrView_Contains(StrBuf_View(&partialErr), "aborted"));
+  CHECK(Fs_RemoveTree(a, dir));
+}
+
 static void TestTreeTools(Arena* a) {
   Fs_MkdirP(a, SV("clippi_tools_it/sub"));
   MakeFile("clippi_tools_it/a.txt", "alpha\nbeta\ngamma\n");
@@ -2022,6 +2070,7 @@ void TestTools() {
   TestWrite(&a);
   TestEdit(&a);
   TestTreeTools(&a);
+  TestLsSelection(&a);
   TestNativeGrep(&a);
   TestUnicodeGrep(&a);
   TestAskUser(&a);
