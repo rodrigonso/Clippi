@@ -1,6 +1,13 @@
-# Clippi
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/clippi-dark.png">
+    <img src="docs/assets/clippi-light.png" alt="Clippi, a pixel-art paper clip with big eyes" width="110">
+  </picture>
+</p>
 
-A tiny, native coding agent for Windows and macOS.
+<h1 align="center">Clippi</h1>
+
+<p align="center">A tiny, native coding agent for Windows and macOS.</p>
 
 Clippi is a C++23 reimplementation of the core of
 [pi](https://github.com/earendil-works/pi) with no JavaScript runtime. A
