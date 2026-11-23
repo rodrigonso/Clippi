@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "base/arena.h"
 #include "check.h"
 #include "tui/linemodel.h"
@@ -85,7 +88,392 @@ StrView SpansWithFg(Arena* a, const SpanLine* row, u8 fg, u32 from = 0) {
 // gap after it, which shares the marker's style.
 constexpr u32 TOOL_TEXT_SPAN = 3;
 
+// ---- differential fuzzing ------------------------------------------------
+//
+// Random operation sequences, laid out incrementally at random points, must
+// render exactly what a full re-render of the same entries renders. Uncapped
+// runs are also replayed into a fresh model with no intermediate layouts, so a
+// mutation whose result depends on when layout ran is caught too.
+
+enum class FuzzOp : u8 {
+  User, Notice, Error, Footer, Thinking, EndThinking, BeginAssistant, Append, EndAssistant,
+  AddTool, UpdateTool, FinishTool, Tick, Settle, Toggle, ToggleAll, SetWidth, FitsAtWidth,
+  Layout,
+};
+
+struct FuzzStep {
+  FuzzOp Op;
+  StrView Text;
+  StrView Text2;
+  StrView Id;
+  u64 A;
+  u64 B;
+  bool Flag;
+};
+
+struct FuzzRng {
+  u64 State;
+  u64 Next() {
+    State ^= State << 13;
+    State ^= State >> 7;
+    State ^= State << 17;
+    return State;
+  }
+  u32 Below(u32 n) { return (u32)(Next() % n); }
+  bool Chance(u32 percent) { return Below(100) < percent; }
+};
+
+const char* const kFuzzWords[] = {
+    "alpha", "beta", "gamma", "\xce\xb4\xce\xad\xce\xbb\xcf\x84\xce\xb1", "\xe4\xb8\xad\xe6\x96\x87",
+    "e\xcc\x81t\xc3\xa9", "\xf0\x9f\x98\x80", "a_very_long_identifier_without_any_breaks_at_all",
+    "`code`", "**bold**", "*it*", "[link](http://x.example/path)", "x", "", "\t", "  "};
+
+const char* const kFuzzBlocks[] = {
+    "# Heading\n", "## Sub\n", "- item\n", "  - nested item\n", "1. first\n", "> quoted\n",
+    "```\ncode line\n```\n", "```cpp\nint x;\n", "| a | b |\n|---|---|\n| 1 | 2 |\n", "\n\n",
+    "---\n", "plain paragraph line\n", "\n"};
+
+const char* const kFuzzPreviewLines[] = {
+    "+added line", "-removed line", "@@ -1,2 +1,3 @@", "plain output", "", "\t\tindented",
+    "\xe4\xb8\xad\xe6\x96\x87 wide", "very long output line that will certainly need wrapping "
+    "at most terminal widths used here"};
+
+StrView FuzzText(Arena* a, FuzzRng* rng, u32 maxWords, bool blocks) {
+  StrBuf out = StrBuf_Make(a, 64);
+  u32 words = 1 + rng->Below(maxWords);
+  for (u32 i = 0; i < words; i++) {
+    if (blocks && rng->Chance(25)) {
+      StrBuf_AppendCStr(&out, kFuzzBlocks[rng->Below(sizeof(kFuzzBlocks) / sizeof(*kFuzzBlocks))]);
+      continue;
+    }
+    if (out.Length) StrBuf_AppendChar(&out, rng->Chance(10) ? '\n' : ' ');
+    StrBuf_AppendCStr(&out, kFuzzWords[rng->Below(sizeof(kFuzzWords) / sizeof(*kFuzzWords))]);
+  }
+  return StrBuf_View(&out);
+}
+
+StrView FuzzPreview(Arena* a, FuzzRng* rng) {
+  StrBuf out = StrBuf_Make(a, 128);
+  u32 lines = rng->Below(30);
+  for (u32 i = 0; i < lines; i++) {
+    if (i) StrBuf_AppendChar(&out, '\n');
+    StrBuf_AppendCStr(
+        &out, kFuzzPreviewLines[rng->Below(sizeof(kFuzzPreviewLines) / sizeof(*kFuzzPreviewLines))]);
+  }
+  return StrBuf_View(&out);
+}
+
+void FuzzApply(LineModel* m, const FuzzStep& s) {
+  switch (s.Op) {
+    case FuzzOp::User: LineModel_AddUser(m, s.Text, s.A, s.Flag); break;
+    case FuzzOp::Notice: LineModel_AddNotice(m, EntryKind::Info, s.Text); break;
+    case FuzzOp::Error: LineModel_AddNotice(m, EntryKind::Error, s.Text); break;
+    case FuzzOp::Footer:
+      LineModel_AddFooter(m, TurnStats{s.A, s.B, s.A / 3, (u32)(s.B % 5)});
+      break;
+    case FuzzOp::Thinking: LineModel_SetThinking(m, s.A, s.B); break;
+    case FuzzOp::EndThinking: LineModel_EndThinking(m); break;
+    case FuzzOp::BeginAssistant: LineModel_BeginAssistant(m); break;
+    case FuzzOp::Append: LineModel_AppendAssistant(m, s.Text); break;
+    case FuzzOp::EndAssistant: LineModel_EndAssistant(m); break;
+    case FuzzOp::AddTool: LineModel_AddTool(m, s.Id, s.Text, s.Text2, s.A); break;
+    case FuzzOp::UpdateTool: LineModel_UpdateTool(m, s.Id, s.Text); break;
+    case FuzzOp::FinishTool:
+      LineModel_FinishTool(m, s.Id, s.Text, s.Text2, s.Flag, s.A);
+      break;
+    case FuzzOp::Tick: LineModel_TickTools(m, s.A); break;
+    case FuzzOp::Settle: LineModel_SettleTools(m); break;
+    case FuzzOp::Toggle: LineModel_ToggleEntry(m, s.A); break;
+    case FuzzOp::ToggleAll: LineModel_ToggleAllTools(m); break;
+    case FuzzOp::SetWidth: LineModel_SetWidth(m, (u16)s.A); break;
+    case FuzzOp::FitsAtWidth: LineModel_FitsAtWidth(m, (u16)s.A, (u32)s.B); break;
+    case FuzzOp::Layout: LineModel_Layout(m); break;
+  }
+}
+
+u64 FuzzMix(u64 hash, u64 value) {
+  for (u32 i = 0; i < 8; i++) {
+    hash ^= (u8)(value >> (i * 8));
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+// Everything a row paints, plus the entry it belongs to.
+u64 FuzzRowSignature(const LineModel* m, u32 row) {
+  const SpanLine* line = LineModel_At(m, row);
+  u64 hash = FuzzMix(1469598103934665603ull, LineModel_RowEntryId(m, row));
+  hash = FuzzMix(hash, line->IsEntryStart);
+  DisplayRowLayout layout = LineModel_LayoutDisplayRow(line, m->Width);
+  hash = FuzzMix(hash, layout.ContentEnd);
+  DisplayRowIterator iterator = {};
+  DisplayRowRun run;
+  while (LineModel_NextDisplayRowRun(&layout, &iterator, &run)) {
+    hash = FuzzMix(hash, ((u64)run.Column << 32) | run.CellWidth);
+    hash = FuzzMix(hash, ((u64)run.St.Fg << 16) | ((u64)run.St.Bg << 8) | run.St.Attr);
+    for (u32 i = 0; i < run.Text.Length; i++) {
+      hash ^= (u8)run.Text.Data[i];
+      hash *= 1099511628211ull;
+    }
+  }
+  return hash;
+}
+
+Array<u64> FuzzCapture(Arena* a, const LineModel* m) {
+  u32 count = LineModel_Count(m);
+  Array<u64> rows = Array_Make<u64>(a, count ? count : 1);
+  for (u32 i = 0; i < count; i++) Array_Push(&rows, FuzzRowSignature(m, i));
+  return rows;
+}
+
+// Index of the first differing row, or UINT32_MAX when equal.
+u32 FuzzDiff(const Array<u64>& expected, const Array<u64>& actual) {
+  u32 n = ClippiMin(expected.Count, actual.Count);
+  for (u32 i = 0; i < n; i++)
+    if (expected.Data[i] != actual.Data[i]) return i;
+  return expected.Count == actual.Count ? 0xffffffffu : n;
+}
+
+void FuzzReport(Arena* a, const char* what, u64 seed, u32 step, const LineModel* m, u32 row,
+                const Array<u64>& expected, const Array<u64>& actual) {
+  printf("linemodel fuzz: %s differs (seed %llu, step %u, row %u, rows %u vs %u, width %u)\n",
+         what, (unsigned long long)seed, step, row, expected.Count, actual.Count, m->Width);
+  if (row < LineModel_Count(m)) {
+    DisplayRowLayout layout = LineModel_LayoutDisplayRow(LineModel_At(m, row), m->Width);
+    StrView text = LineModel_ExtractDisplayRow(a, &layout, 0, m->Width);
+    printf("  row now: entry %llu \"%.*s\"\n", (unsigned long long)LineModel_RowEntryId(m, row),
+           (int)text.Length, text.Data);
+  }
+}
+
+// Cheap invariants that hold after every layout.
+bool FuzzInvariants(const LineModel* m, u64 seed, u32 step) {
+  u32 count = LineModel_Count(m);
+  bool ok = count <= m->Cap;
+  u64 previous = 0;
+  for (u32 i = 0; i < count; i++) {
+    u64 id = LineModel_RowEntryId(m, i);
+    if (id && id < previous) ok = false;
+    if (id) previous = id;
+  }
+  usize live = 0;
+  for (u32 i = 0; i < m->Entries.Count; i++) {
+    const Entry* entry = &m->Entries.Data[i];
+    live += entry->RowsBytes;
+    u32 first = 0, rows = 0;
+    if (!LineModel_FindEntryRows(m, entry->Id, &first, &rows)) continue;
+    for (u32 r = first; r < first + rows; r++)
+      if (LineModel_RowEntryId(m, r) != entry->Id) ok = false;
+  }
+  if (live != m->LiveRowsBytes) ok = false;
+  if (!m->HasAssistant && m->RowsMem.Used > (usize)64 * 1024 &&
+      m->RowsMem.Used > m->LiveRowsBytes * 2)
+    ok = false;
+  if (!ok)
+    printf("linemodel fuzz: invariant broken (seed %llu, step %u, rows %u, cap %u, live %llu/%llu, "
+           "rows arena %llu)\n",
+           (unsigned long long)seed, step, count, m->Cap, (unsigned long long)live,
+           (unsigned long long)m->LiveRowsBytes, (unsigned long long)m->RowsMem.Used);
+  return ok;
+}
+
+bool FuzzOne(u64 seed, u32 steps) {
+  Arena scratch = ArenaCreate();
+  Arena modelMem = ArenaCreate();
+  FuzzRng rng = {seed * 0x9E3779B97F4A7C15ull + 1};
+  const u16 widths[] = {1, 2, 5, 9, 20, 37, 40, 80, 120};
+  const u32 caps[] = {8, 30, 200, 1u << 20};
+  u32 cap = caps[rng.Below(4)];
+  u16 width = widths[rng.Below(sizeof(widths) / sizeof(*widths))];
+  LineModel model;
+  LineModel_Init(&model, &modelMem, width, cap, rng.Chance(80), rng.Chance(50));
+  Array<FuzzStep> log = Array_Make<FuzzStep>(&scratch, steps);
+  Array<StrView> openTools = Array_Make<StrView>(&scratch, 8);
+  Array<StrView> allTools = Array_Make<StrView>(&scratch, 8);
+  u64 now = 1000000;
+  u32 nextTool = 0;
+  bool ok = true;
+
+  for (u32 step = 0; step < steps && ok; step++) {
+    now += rng.Below(2500);
+    FuzzStep s = {};
+    bool streaming = model.HasAssistant;
+    u32 roll = rng.Below(100);
+    if (streaming) {
+      if (roll < 45) {
+        s.Op = FuzzOp::Append;
+        s.Text = FuzzText(&scratch, &rng, 6, true);
+        // Deltas can end inside a scalar; the remainder arrives with the next.
+        if (s.Text.Length > 1 && rng.Chance(20)) s.Text.Length = 1 + rng.Below(s.Text.Length);
+      } else if (roll < 55) {
+        s.Op = FuzzOp::EndAssistant;
+      } else if (roll < 70) {
+        s.Op = FuzzOp::Layout;
+      } else if (roll < 75 && openTools.Count) {
+        s.Op = FuzzOp::UpdateTool;
+        s.Id = openTools.Data[rng.Below(openTools.Count)];
+        s.Text = FuzzPreview(&scratch, &rng);
+      } else if (roll < 80) {
+        s.Op = FuzzOp::Tick;
+        s.A = now;
+      } else if (roll < 85 && model.Entries.Count) {
+        s.Op = FuzzOp::Toggle;
+        s.A = model.Entries.Data[rng.Below(model.Entries.Count)].Id;
+      } else if (roll < 90) {
+        s.Op = FuzzOp::SetWidth;
+        s.A = widths[rng.Below(sizeof(widths) / sizeof(*widths))];
+      } else {
+        s.Op = FuzzOp::FitsAtWidth;
+        s.A = widths[rng.Below(sizeof(widths) / sizeof(*widths))];
+        s.B = 1 + rng.Below(100);
+      }
+    } else if (roll < 10) {
+      s.Op = FuzzOp::User;
+      s.Text = FuzzText(&scratch, &rng, 12, false);
+      s.A = rng.Chance(30) ? 0 : now;
+      s.Flag = rng.Chance(20);
+    } else if (roll < 14) {
+      s.Op = rng.Chance(50) ? FuzzOp::Notice : FuzzOp::Error;
+      s.Text = FuzzText(&scratch, &rng, 10, false);
+    } else if (roll < 17) {
+      s.Op = FuzzOp::Footer;
+      s.A = rng.Below(200000);
+      s.B = rng.Below(3000000);
+    } else if (roll < 22) {
+      s.Op = FuzzOp::Thinking;
+      s.A = now - rng.Below(20000);
+      s.B = now;
+    } else if (roll < 24) {
+      s.Op = FuzzOp::EndThinking;
+    } else if (roll < 34) {
+      s.Op = FuzzOp::BeginAssistant;
+    } else if (roll < 44) {
+      static const char* const names[] = {"shell", "read", "edit", "write", "grep", "find", "ls",
+                                          "unknown_tool"};
+      static const char* const args[] = {
+          "{\"command\":\"echo hi && ls -la\"}", "{\"path\":\"src/app/main.cpp\"}",
+          "{\"path\":\"a.txt\",\"edits\":[{\"oldText\":\"a\",\"newText\":\"b\"}]}",
+          "{\"path\":\"b.txt\",\"content\":\"x\\ny\"}", "{\"pattern\":\"TODO\",\"path\":\"src\"}",
+          "{\"pattern\":\"*.h\"}", "{}", "not json at all"};
+      s.Op = FuzzOp::AddTool;
+      StrBuf id = StrBuf_Make(&scratch, 16);
+      StrBuf_AppendCStr(&id, "t");
+      StrBuf_AppendU64(&id, nextTool++);
+      s.Id = StrBuf_View(&id);
+      u32 kind = rng.Below(8);
+      s.Text = SV(names[kind]);
+      s.Text2 = SV(args[rng.Chance(85) ? kind : rng.Below(8)]);
+      s.A = rng.Chance(70) ? now : 0;
+      Array_Push(&openTools, s.Id);
+      Array_Push(&allTools, s.Id);
+    } else if (roll < 50 && openTools.Count) {
+      s.Op = FuzzOp::UpdateTool;
+      s.Id = openTools.Data[rng.Below(openTools.Count)];
+      s.Text = FuzzPreview(&scratch, &rng);
+    } else if (roll < 57 && allTools.Count) {
+      s.Op = FuzzOp::FinishTool;
+      u32 pick = rng.Below(allTools.Count);
+      s.Id = allTools.Data[pick];
+      s.Text = FuzzText(&scratch, &rng, 4, false);
+      s.Text2 = FuzzPreview(&scratch, &rng);
+      s.Flag = rng.Chance(25);
+      s.A = rng.Chance(70) ? now : 0;
+      for (u32 i = 0; i < openTools.Count; i++)
+        if (StrView_Eq(openTools.Data[i], s.Id)) {
+          openTools.Data[i] = openTools.Data[--openTools.Count];
+          break;
+        }
+    } else if (roll < 61) {
+      s.Op = FuzzOp::Tick;
+      s.A = now;
+    } else if (roll < 62) {
+      s.Op = FuzzOp::Settle;
+    } else if (roll < 70 && model.Entries.Count) {
+      s.Op = FuzzOp::Toggle;
+      s.A = model.Entries.Data[rng.Below(model.Entries.Count)].Id;
+    } else if (roll < 72) {
+      s.Op = FuzzOp::ToggleAll;
+    } else if (roll < 77) {
+      s.Op = FuzzOp::SetWidth;
+      s.A = widths[rng.Below(sizeof(widths) / sizeof(*widths))];
+    } else if (roll < 80) {
+      s.Op = FuzzOp::FitsAtWidth;
+      s.A = widths[rng.Below(sizeof(widths) / sizeof(*widths))];
+      s.B = 1 + rng.Below(100);
+    } else {
+      s.Op = FuzzOp::Layout;
+    }
+    Array_Push(&log, s);
+
+    if (s.Op == FuzzOp::FitsAtWidth) {
+      // A probe of another width must leave the rendered rows untouched.
+      Array<u64> before = FuzzCapture(&scratch, &model);
+      FuzzApply(&model, s);
+      Array<u64> after = FuzzCapture(&scratch, &model);
+      u32 row = FuzzDiff(before, after);
+      if (row != 0xffffffffu) {
+        FuzzReport(&scratch, "FitsAtWidth probe", seed, step, &model, row, before, after);
+        ok = false;
+      }
+    } else {
+      FuzzApply(&model, s);
+    }
+    if (s.Op == FuzzOp::Layout && !FuzzInvariants(&model, seed, step)) ok = false;
+
+    // Full re-render of the same entries; Rounded round-trips to invalidate
+    // everything without the eviction a width change would trigger.
+    if (ok && step % 25 == 24) {
+      Array<u64> incremental = FuzzCapture(&scratch, &model);
+      LineModel_SetRounded(&model, !model.Rounded);
+      LineModel_SetRounded(&model, !model.Rounded);
+      Array<u64> rebuilt = FuzzCapture(&scratch, &model);
+      u32 row = FuzzDiff(rebuilt, incremental);
+      if (row != 0xffffffffu) {
+        FuzzReport(&scratch, "incremental layout", seed, step, &model, row, rebuilt, incremental);
+        ok = false;
+      }
+      if (!FuzzInvariants(&model, seed, step)) ok = false;
+    }
+  }
+
+  // Nothing was evicted from an uncapped model, so a fresh replay without any
+  // intermediate layout must render the same rows at the final width.
+  if (ok && cap == (1u << 20)) {
+    Array<u64> incremental = FuzzCapture(&scratch, &model);
+    Arena freshMem = ArenaCreate();
+    LineModel fresh;
+    LineModel_Init(&fresh, &freshMem, model.Width, cap, model.Color, model.Rounded);
+    for (u32 i = 0; i < log.Count; i++) {
+      FuzzOp op = log.Data[i].Op;
+      if (op != FuzzOp::Layout && op != FuzzOp::SetWidth && op != FuzzOp::FitsAtWidth)
+        FuzzApply(&fresh, log.Data[i]);
+    }
+    Array<u64> replayed = FuzzCapture(&scratch, &fresh);
+    u32 row = FuzzDiff(replayed, incremental);
+    if (row != 0xffffffffu) {
+      FuzzReport(&scratch, "fresh replay", seed, steps, &model, row, replayed, incremental);
+      ok = false;
+    }
+    LineModel_Release(&fresh);
+    ArenaRelease(&freshMem);
+  }
+  LineModel_Release(&model);
+  ArenaRelease(&modelMem);
+  ArenaRelease(&scratch);
+  return ok;
+}
+
 }  // namespace
+
+// Seeds are deterministic; set CLIPPI_LINEMODEL_FUZZ_SEEDS for a longer run.
+void TestLineModelFuzz() {
+  u32 seeds = 60;
+  if (const char* env = getenv("CLIPPI_LINEMODEL_FUZZ_SEEDS")) seeds = (u32)atoi(env);
+  u32 failed = 0;
+  for (u64 seed = 1; seed <= seeds; seed++)
+    if (!FuzzOne(seed, 300)) failed++;
+  CHECK(failed == 0);
+}
 
 void TestLineModel() {
   Arena a = ArenaCreate();
@@ -1218,4 +1606,5 @@ void TestLineModel() {
   }
 
   ArenaRelease(&a);
+  TestLineModelFuzz();
 }
