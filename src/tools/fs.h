@@ -136,7 +136,6 @@ struct FsWalkOptions {
 // Copy retained results into the caller's arena. Directory links are never
 // descended into, even when SkipLinks is false.
 typedef bool (*FsWalkVisitor)(void* user, StrView absPath, StrView relPath, const FsEntry& e);
-void Fs_Walk(Arena* arena, StrView root, const FsWalkOptions& opts, FsWalkVisitor visit, void* user);
 // False means I/O failure, cancellation, or a traversal/glob resource limit.
 // A visitor returning false requests a successful early stop.
 // Parent ignores stop at the nearest .git marker or filesystem root. .ignore

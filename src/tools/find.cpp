@@ -64,7 +64,6 @@ static bool FindExec(void* ctx, Arena* arena, StrView id,
                      StrBuf* err) {
   (void)ctx;
   (void)id;
-  (void)abort;
   (void)updates;
   StrView pattern = ToolArgs_GetStr(args, "pattern");
   if (pattern.Length == 0) {
@@ -100,7 +99,9 @@ static bool FindExec(void* ctx, Arena* arena, StrView id,
   FsWalkOptions opts = {};
   opts.RespectGitignore = true;
   opts.IncludeDirs = true;
-  Fs_Walk(arena, path, opts, Find_Visit, &st);
+  opts.Abort = abort;
+  // A cancelled or failed walk must not pass its partial results off as complete.
+  if (!Fs_WalkChecked(arena, path, opts, Find_Visit, &st, err)) return false;
 
   StrBuf raw = StrBuf_Make(arena, st.Results.Count ? st.Results.Count * 32u : 64u);
   if (st.Results.Count == 0) {

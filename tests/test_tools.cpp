@@ -1471,6 +1471,17 @@ static void TestTreeTools(Arena* a) {
             StrView_Contains(fo.Content.Data[0].Text, "c.txt"),
             !StrView_Contains(fo.Content.Data[0].Text, "b.md"));
 
+  // A cancelled walk fails instead of returning its partial results as complete.
+  {
+    volatile i32 cancelled = 1;
+    ToolResult partial = {};
+    StrBuf partialErr = StrBuf_Make(a, 64);
+    CHECK(!RunTool(ft, a, SV("{\"pattern\":\"*.txt\",\"path\":\"clippi_tools_it\"}"), &partial,
+                   &partialErr, nullptr, &cancelled));
+    CHECK_ALL(partial.Content.Count == 0,
+              StrView_Contains(StrBuf_View(&partialErr), "cancelled"));
+  }
+
   // Search the actual files, including case folding and context formatting.
   Tool gt = GrepTool();
   ToolResult go = {};

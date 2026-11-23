@@ -1233,7 +1233,3 @@ bool Fs_WalkChecked(Arena* arena, StrView root, const FsWalkOptions& opts,
   ArenaRelease(&scratch);
   return ok;
 }
-
-void Fs_Walk(Arena* arena, StrView root, const FsWalkOptions& opts, FsWalkVisitor visit, void* user) {
-  if (visit) Fs_WalkChecked(arena, root, opts, visit, user, nullptr);
-}
