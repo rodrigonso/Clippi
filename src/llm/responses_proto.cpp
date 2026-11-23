@@ -30,6 +30,33 @@ void WriteCanonicalObject(StrBuf* out, StrView json, StrView fallback) {
 
 // ---- request ------------------------------------------------------------
 
+// The body is rebuilt every turn and grows with the whole visible history.
+// Doubled up from a small buffer, it would leave about as many dead bytes in
+// the turn's arena as the body itself, so it is sized from what it will hold:
+// every text field, item overhead, and an eighth more for JSON escaping. An
+// underestimate only costs the one doubling it falls short by.
+u32 EstimateRequestBytes(const LlmContext* context) {
+  u64 bytes = 4096 + context->SystemPrompt.Length;
+  for (u32 i = 0; i < context->ToolCount; i++) {
+    const ToolDef* tool = &context->Tools[i];
+    bytes += 128 + tool->Name.Length + tool->Description.Length +
+             tool->ParamsJsonSchema.Length;
+  }
+  for (u32 i = 0; i < context->MessageCount; i++) {
+    const Message* message = &context->Messages[i];
+    bytes += 160 + message->ToolCallId.Length + message->ToolName.Length;
+    for (u32 c = 0; c < message->Content.Count; c++) {
+      const Content* content = &message->Content.Data[c];
+      bytes += 160 + content->Text.Length + content->Signature.Length +
+               content->ToolId.Length + content->ToolName.Length +
+               content->ToolArgsJson.Length + content->ImageData.Length +
+               content->ImageMimeType.Length;
+    }
+  }
+  bytes += bytes / 8;
+  return bytes < 0xFFFFFFF0u ? (u32)bytes : 0xFFFFFFF0u;
+}
+
 void WriteUserContent(StrBuf* out, const Message* message) {
   bool first = true;
   for (u32 i = 0; i < message->Content.Count; i++) {
@@ -576,7 +603,7 @@ StrBuf Responses_BuildRequest(Arena* arena, const Model* model,
   bool codex = dialect == ResponsesDialect::ChatGptCodex;
   ModelRequestProfile profile = Model_ResolveRequestProfile(
       model, options ? options->Profile : ModelRequestProfile{});
-  StrBuf out = StrBuf_Make(arena, 4096);
+  StrBuf out = StrBuf_Make(arena, EstimateRequestBytes(context));
   StrBuf_AppendCStr(&out, "{\"model\":");
   Json_WriteString(&out, model->Id);
   // Clippi keeps the whole transcript itself, so server-side state is neither
