@@ -188,7 +188,7 @@ stalled render thread cannot claim the whole gap.
 
 Note that *time* is clamped, not scalars per frame. A per-frame scalar cap
 silently becomes a hard ceiling of `cap x frame rate` that no amount of backlog
-can overcome, which is how an earlier pacing attempt (removed in `c95cd8e`)
+can overcome, which is how an earlier pacing attempt (removed in `26a3c19`)
 throttled long replies to 240 chars/sec. A frame here may emit up to
 `50 ms x 960 cps` at once. The frame always stops on a UTF-8 scalar boundary,
 so a budget edge never splits a character.
