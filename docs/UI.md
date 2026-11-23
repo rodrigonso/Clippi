@@ -193,11 +193,6 @@ throttled long replies to 240 chars/sec. A frame here may emit up to
 `50 ms x 960 cps` at once. The frame always stops on a UTF-8 scalar boundary,
 so a budget edge never splits a character.
 
-(jcode runs a second budget pool at the flat `MAX_SCALARS_PER_SECOND` and emits
-the smaller of the two. With the cap expressed as `MAX_STEP_MS x rate` that pool
-is redundant: since `rate <= MAX_SCALARS_PER_SECOND`, the flat pool is provably
-never the smaller one, so it was dropped rather than carried as dead state.)
-
 `StreamReveal_NextFrame` takes a `blocked` flag that `PumpDisplay` sets whenever
 anything is queued behind the reveal — a tool card, message end, the next user
 turn — because those events cannot be applied until the text drains. Blocking
