@@ -52,7 +52,6 @@ static void TestUpdateCache() {
   CHECK(UpdateCache_Parse(&a, UpdateCache_Format(&a, &written), &read));
   CHECK_ALL(read.CheckedAtMs == written.CheckedAtMs, StrView_EqCStr(read.Latest, "0.3.1"));
 
-  // A corrupt version is dropped instead of being shown in a notice.
   CHECK(UpdateCache_Parse(&a, SVL("{\"checked_at\":5,\"latest\":\"oops\"}"), &read));
   CHECK_ALL(read.CheckedAtMs == 5, read.Latest.Length == 0);
   CHECK(!UpdateCache_Parse(&a, SVL("not json"), &read));
@@ -60,7 +59,7 @@ static void TestUpdateCache() {
   UpdateCache fresh = {10 * day, {}};
   CHECK(!UpdateCache_IsStale(&fresh, 10 * day + day - 1));
   CHECK(UpdateCache_IsStale(&fresh, 11 * day));
-  CHECK(UpdateCache_IsStale(&fresh, 9 * day));  // clock moved backwards
+  CHECK(UpdateCache_IsStale(&fresh, 9 * day));
   UpdateCache never = {};
   CHECK(UpdateCache_IsStale(&never, 10 * day));
 
@@ -89,7 +88,6 @@ static void TestInstallPrefix() {
                        "clippi_update_test"));
   CHECK(StrView_EqCStr(Install_PrefixFromExe(&a, SVL("clippi_update_test\\BIN\\clippi.exe")),
                        "clippi_update_test"));
-  // Only <prefix>/bin/<exe> counts; a build directory next to the marker does not.
   CHECK(Install_PrefixFromExe(&a, SVL("clippi_update_test/build/clippi.exe")).Length == 0);
   CHECK(Install_PrefixFromExe(&a, SVL("clippi.exe")).Length == 0);
 

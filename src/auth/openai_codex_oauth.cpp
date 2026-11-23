@@ -61,7 +61,7 @@ OpenAICodexTokens PostTokenForm(Arena* arena, StrView body, StrView previousRefr
                                       response.Error, previousRefresh, NowMillis());
 }
 
-}  // namespace
+}
 
 StrView OpenAICodexOAuth_AuthorizeUrl(Arena* arena, const OAuthPkce* pkce) {
   StrBuf url = StrBuf_Make(arena, 512);

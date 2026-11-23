@@ -4,13 +4,11 @@
 #include "base/arena.h"
 #include "base/basics.h"
 
-// Non-owning UTF-8 view. The universal "string" passed around the agent.
 struct StrView {
   const char* Data;
   u32 Length;
 };
 
-// View from a string literal (length known at compile time).
 #define SVL(lit) \
   StrView { (lit), (u32)(sizeof(lit) - 1) }
 
@@ -84,7 +82,6 @@ inline bool StrView_EndsWith(StrView value, StrView suffix) {
           memcmp(value.Data + value.Length - suffix.Length, suffix.Data, suffix.Length) == 0);
 }
 
-// Bytewise order, a prefix first.
 inline i32 StrView_Compare(StrView a, StrView b) {
   u32 shared = a.Length < b.Length ? a.Length : b.Length;
   int c = shared ? memcmp(a.Data, b.Data, shared) : 0;
@@ -92,8 +89,6 @@ inline i32 StrView_Compare(StrView a, StrView b) {
   return a.Length < b.Length ? -1 : a.Length > b.Length ? 1 : 0;
 }
 
-// The longest prefix of at most `maxBytes` that does not split a UTF-8
-// sequence.
 inline StrView StrView_ClampUtf8(StrView value, u32 maxBytes) {
   if (value.Length <= maxBytes) return value;
   u32 length = maxBytes;
@@ -101,9 +96,6 @@ inline StrView StrView_ClampUtf8(StrView value, u32 maxBytes) {
   return StrView{value.Data, length};
 }
 
-// Length of the well-formed UTF-8 sequence at `s.Data[i]` (i < s.Length), or 0
-// when the bytes there are not well-formed. Rejects stray continuation bytes,
-// overlong forms, the surrogate range, and anything above U+10FFFF.
 inline u32 StrView_Utf8SequenceLength(StrView s, u32 i) {
   u8 lead = (u8)s.Data[i];
   if (lead < 0x80) return 1;
@@ -125,7 +117,7 @@ inline u32 StrView_Utf8SequenceLength(StrView s, u32 i) {
     else if (lead == 0xF4)
       maxNext = 0x8F;  // reject above U+10FFFF
   } else {
-    return 0;  // stray continuation byte, C0/C1 overlong, or F5..FF
+    return 0;
   }
   if (s.Length - i < length) return 0;
   u8 next = (u8)s.Data[i + 1];
@@ -147,9 +139,7 @@ inline bool StrView_EndsWithInsensitiveAscii(StrView value, StrView suffix) {
   return true;
 }
 
-// Arena-backed growable UTF-8 builder. Always keeps a null terminator at
-// [Length]. Reallocation on growth may move Data, so take a StrView only after
-// building is complete.
+// Growth may move Data, so take a StrView only after building is complete.
 struct StrBuf {
   Arena* Backing;
   char* Data;
@@ -169,10 +159,9 @@ inline StrBuf StrBuf_Make(Arena* arena, u32 capacity = 64) {
 }
 
 inline void StrBuf_Ensure(StrBuf* b, u32 additional) {
-  u64 need = (u64)b->Length + additional + 1;  // +1 for null terminator
+  u64 need = (u64)b->Length + additional + 1;
   if (need <= b->Capacity) return;
-  // Sized in u64: in u32 the sum and the doubling wrap, so a wrapped `need`
-  // would pass the check above and the append would write past the buffer.
+  // Sized in u64: in u32 the sum and the doubling wrap past the check above.
   FFI(need > 0xFFFFFFFFu);
   u64 newCap = b->Capacity ? (u64)b->Capacity * 2 : 8;
   while (newCap < need) newCap *= 2;
@@ -224,9 +213,7 @@ inline void StrBuf_AppendI64(StrBuf* b, i64 v) {
   }
 }
 
-// Append one scalar as UTF-8. Surrogates and out-of-range values have no UTF-8
-// form -- encoding them anyway yields CESU-8 that JSON consumers reject as
-// "surrogates not allowed" -- so they become U+FFFD instead.
+// Surrogates and out-of-range values become U+FFFD; encoding them yields CESU-8 that JSON consumers reject.
 inline void StrBuf_AppendUtf8(StrBuf* b, u32 cp) {
   if ((cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF) cp = 0xFFFD;
   if (cp < 0x80) {
@@ -249,7 +236,6 @@ inline void StrBuf_AppendUtf8(StrBuf* b, u32 cp) {
 inline StrView StrBuf_View(const StrBuf* b) { return StrView{b->Data, b->Length}; }
 inline const char* StrBuf_CStr(StrBuf* b) { return b->Data; }
 
-// Escapes & < > " ' so `value` is safe as XML text or a quoted attribute.
 inline void StrBuf_AppendXmlEscaped(StrBuf* out, StrView value) {
   for (u32 i = 0; i < value.Length; i++) {
     switch (value.Data[i]) {
@@ -268,11 +254,7 @@ inline void StrBuf_Clear(StrBuf* b) {
   b->Data[0] = '\0';
 }
 
-// Framing for byte streams that arrive in arbitrary chunks: hand every complete
-// '\n'-terminated line in `b` to `onLine` (stripping an optional trailing '\r'),
-// then compact the trailing partial line to the front so the next chunk can be
-// appended. Returns false, leaving the buffer untouched, as soon as `onLine`
-// asks to stop.
+// Returns false, leaving the buffer untouched, as soon as `onLine` asks to stop.
 inline bool StrBuf_DrainLines(StrBuf* b, void* user, bool (*onLine)(void*, StrView)) {
   u32 start = 0;
   for (u32 i = 0; i < b->Length; i++) {
@@ -291,7 +273,6 @@ inline bool StrBuf_DrainLines(StrBuf* b, void* user, bool (*onLine)(void*, StrVi
   return true;
 }
 
-// Copy a view into the arena and return a stable view over the copy.
 inline StrView StrView_Dup(Arena* arena, StrView s) {
   if (s.Length == 0) return StrView{"", 0};
   char* dst = (char*)ArenaAlloc(arena, s.Length, 1);
@@ -299,8 +280,6 @@ inline StrView StrView_Dup(Arena* arena, StrView s) {
   return StrView{dst, s.Length};
 }
 
-// Arena-owned null-terminated copy, for the C APIs (fopen, opendir, ...) that
-// cannot take a length.
 inline const char* StrView_DupCStr(Arena* arena, StrView s) {
   char* dst = (char*)ArenaAlloc(arena, s.Length + 1, 1);
   if (s.Length) memcpy(dst, s.Data, s.Length);
@@ -308,7 +287,7 @@ inline const char* StrView_DupCStr(Arena* arena, StrView s) {
   return dst;
 }
 
-// CRLF and lone CR become LF. Already-normalized input is borrowed unchanged.
+// Already-normalized input is borrowed unchanged.
 inline StrView StrView_NormalizeLf(Arena* arena, StrView s) {
   if (!s.Length || !memchr(s.Data, '\r', s.Length)) return s;
   char* dst = (char*)ArenaAlloc(arena, s.Length + 1, 1);
@@ -325,7 +304,6 @@ inline StrView StrView_NormalizeLf(Arena* arena, StrView s) {
   return StrView{dst, length};
 }
 
-// Value of one hex digit, or -1 when `c` is not one.
 inline int StrView_HexDigit(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;

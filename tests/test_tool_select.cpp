@@ -180,7 +180,7 @@ void TestBuiltinCatalog() {
             !HasTool(all, count, "bash"));
 }
 
-}  // namespace
+}
 
 void TestToolSelect() {
   Arena scratch = ArenaCreate((usize)16 << 20);

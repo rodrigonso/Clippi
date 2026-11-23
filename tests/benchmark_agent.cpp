@@ -429,7 +429,7 @@ void PrintDistribution(const BenchDistribution& distribution) {
          distribution.MedianMs, distribution.P95Ms, distribution.Samples);
 }
 
-}  // namespace
+}
 
 int RunAgentBenchmark(int argc, char** argv) {
   if (argc > 1 &&
@@ -496,9 +496,7 @@ int RunAgentBenchmark(int argc, char** argv) {
     printf("}%s\n", i + 1 == caseCount ? "" : ",");
   }
   printf("]\n");
-  // Peak working set for this process, which is what a user sees the agent
-  // loop cost. Reported once at the end rather than per case because the OS
-  // figure is a high-water mark over the whole process.
+  // Reported once at the end: the OS peak working set is a process-wide high-water mark.
   printf("{\"runtime\":\"clippi\",\"peakRssKb\":%llu}\n",
          (unsigned long long)(PeakRssBytes() / 1024));
   ArenaRelease(&arena);

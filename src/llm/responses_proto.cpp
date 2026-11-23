@@ -28,13 +28,8 @@ void WriteCanonicalObject(StrBuf* out, StrView json, StrView fallback) {
   ArenaRestore(out->Backing, mark);
 }
 
-// ---- request ------------------------------------------------------------
-
-// The body is rebuilt every turn and grows with the whole visible history.
-// Doubled up from a small buffer, it would leave about as many dead bytes in
-// the turn's arena as the body itself, so it is sized from what it will hold:
-// every text field, item overhead, and an eighth more for JSON escaping. An
-// underestimate only costs the one doubling it falls short by.
+// Sized from what the body will hold: doubling up from a small buffer would leave about as many
+// dead bytes in the turn's arena as the body itself.
 u32 EstimateRequestBytes(const LlmContext* context) {
   u64 bytes = 4096 + context->SystemPrompt.Length;
   for (u32 i = 0; i < context->ToolCount; i++) {
@@ -97,9 +92,6 @@ void WriteToolOutput(StrBuf* out, const Message* message) {
   Json_WriteString(out, StrBuf_View(&text));
 }
 
-// An assistant turn only belongs in the request when it carries something the
-// server can act on. Errored and aborted turns never do, and a turn that
-// produced only unreplayable reasoning contributes nothing.
 bool AssistantIsSendable(const Message* message) {
   if (!message || message->Stop == StopReason::Error ||
       message->Stop == StopReason::Aborted)
@@ -115,9 +107,7 @@ bool AssistantIsSendable(const Message* message) {
   return false;
 }
 
-// Item identities are scoped to the model that issued them; replaying one
-// against a different model is rejected. A turn recorded by another model is
-// still sent, just under generated ids and without its reasoning.
+// Item ids are scoped to the model that issued them; replaying one against another model is rejected.
 bool SignaturesReplayable(const Message* message, const Model* model) {
   return message && model && StrView_Eq(message->Provider, model->Provider) &&
          StrView_Eq(message->Model, model->Id);
@@ -164,9 +154,7 @@ void WriteAssistantItems(StrBuf* out, Arena* arena, const Model* model,
   for (u32 i = 0; i < message->Content.Count; i++) {
     const Content* content = &message->Content.Data[i];
     if (content->Kind == ContentKind::Thinking) {
-      // The stored signature is the server's own reasoning item, encrypted
-      // content and all. There is nothing to reconstruct it from, so a block
-      // without one is dropped rather than approximated.
+      // A reasoning block without its server-issued item cannot be reconstructed, so it is dropped.
       if (!replayable || !content->Signature.Length) continue;
       u32 reserve = content->Signature.Length <= (UINT_MAX - 64) / 2
                         ? content->Signature.Length * 2 + 64
@@ -202,8 +190,7 @@ void WriteAssistantItems(StrBuf* out, Arena* arena, const Model* model,
     StrBuf_AppendCStr(out, ",\"name\":");
     Json_WriteString(out, content->ToolName);
     StrBuf_AppendCStr(out, ",\"arguments\":");
-    // `arguments` is a JSON *string* holding JSON, so the object is
-    // canonicalized first and then written as a string.
+    // `arguments` is a JSON *string* holding JSON.
     StrBuf canonical =
         StrBuf_Make(out->Backing, content->ToolArgsJson.Length + 16);
     WriteCanonicalObject(&canonical, content->ToolArgsJson, SVL("{}"));
@@ -211,8 +198,6 @@ void WriteAssistantItems(StrBuf* out, Arena* arena, const Model* model,
     StrBuf_AppendChar(out, '}');
   }
 }
-
-// ---- streaming ----------------------------------------------------------
 
 void Emit(ResponsesParse* state, StreamEventKind kind, u32 contentIndex,
           StrView delta = {}) {
@@ -231,9 +216,7 @@ ResponsesSlot* FindSlot(ResponsesParse* state, i64 outputIndex) {
   return nullptr;
 }
 
-// Content blocks are pushed as their items open, so a block's index is fixed
-// before any delta arrives and the UI can address it immediately. The block is
-// rewritten in place when the item completes.
+// Blocks are pushed as items open, so a block's index is fixed before any delta arrives.
 ResponsesSlot* StartSlot(ResponsesParse* state, i64 outputIndex,
                          JsonValue* item) {
   ResponsesSlot* existing = FindSlot(state, outputIndex);
@@ -295,9 +278,6 @@ StrView EncodeTextSignature(ResponsesParse* state, StrView id, StrView phase) {
   return StrBuf_View(&signature);
 }
 
-// Writes the finished block. `item` is the completed output item when the
-// stream delivered one, and null when the stream ended first -- in which case
-// whatever deltas arrived are kept.
 void CloseSlot(ResponsesParse* state, ResponsesSlot* slot, JsonValue* item) {
   if (!slot || slot->Finished) return;
   slot->Finished = true;
@@ -368,8 +348,7 @@ void ReadUsage(ResponsesParse* state, JsonValue* response) {
   JsonValue* outputDetails = Json_Get(usage, "output_tokens_details");
   u32 cached = ReadU32(inputDetails, "cached_tokens");
   state->Use.CacheRead = cached;
-  // `input_tokens` is inclusive of cached tokens; subtract so Input keeps
-  // meaning "billed at full rate".
+  // `input_tokens` includes cached tokens; subtract so Input means "billed at full rate".
   state->Use.Input = input >= cached ? input - cached : input;
   state->Use.Output = output;
   state->Use.Reasoning = ReadU32(outputDetails, "reasoning_tokens");
@@ -461,8 +440,7 @@ void HandleEvent(ResponsesParse* state, JsonValue* event) {
 
 void HandleData(ResponsesParse* state, StrView data) {
   if (!data.Length || Eq(data, "[DONE]")) return;
-  // The payload is a slice of the parser's own writable buffer, so it can be
-  // null-terminated in place for Json_Parse rather than copied.
+  // The payload is a slice of the parser's own writable buffer, so it is null-terminated in place.
   char* end = (char*)(data.Data + data.Length);
   char saved = *end;
   *end = '\0';
@@ -477,8 +455,6 @@ bool OnParseLine(void* user, StrView line) {
   if (Sse_DataPayload(line, &data)) HandleData(state, data);
   return true;
 }
-
-// ---- model metadata -----------------------------------------------------
 
 bool JsonArrayHasString(JsonValue* values, const char* expected) {
   if (!Json_IsArray(values)) return false;
@@ -501,8 +477,7 @@ bool IsAgentModel(JsonValue* value) {
          (!Json_IsArray(outputs) || JsonArrayHasString(outputs, "text"));
 }
 
-// OpenRouter owns these facts. If the catalog does not advertise a capability
-// Clippi does not infer it from the model id.
+// Capabilities the catalog does not advertise are not inferred from the model id.
 void ApplyAdvertisedCapabilities(Model* model, JsonValue* value) {
   if (!model || !Json_IsObject(value)) return;
   JsonValue* parameters = Json_Get(value, "supported_parameters");
@@ -529,8 +504,7 @@ void ApplyAdvertisedCapabilities(Model* model, JsonValue* value) {
     model->DefaultEffort = defaultEffort;
 }
 
-// The ChatGPT backend names each model's reasoning levels itself; levels
-// Clippi has no tier for (such as "minimal") are not offered.
+// Levels Clippi has no tier for (such as "minimal") are not offered.
 void ApplyCodexCapabilities(Model* model, JsonValue* value) {
   model->EffortMask = 0;
   model->DefaultEffort = ModelEffort::None;
@@ -552,7 +526,7 @@ void ApplyCodexCapabilities(Model* model, JsonValue* value) {
     model->DefaultEffort = defaultEffort;
 }
 
-}  // namespace
+}
 
 StrView ResponsesEndpoint_ResolveBaseUrl(Arena* arena,
                                          const ResponsesEndpoint* endpoint) {
@@ -606,8 +580,7 @@ StrBuf Responses_BuildRequest(Arena* arena, const Model* model,
   StrBuf out = StrBuf_Make(arena, EstimateRequestBytes(context));
   StrBuf_AppendCStr(&out, "{\"model\":");
   Json_WriteString(&out, model->Id);
-  // Clippi keeps the whole transcript itself, so server-side state is neither
-  // needed nor wanted; reasoning comes back encrypted instead.
+  // Clippi keeps the whole transcript itself; reasoning comes back encrypted instead.
   StrBuf_AppendCStr(&out, ",\"store\":false,\"stream\":true");
 
   if (context->SystemPrompt.Length) {
@@ -628,9 +601,7 @@ StrBuf Responses_BuildRequest(Arena* arena, const Model* model,
   }
 
   if (profile.Effort != ModelEffort::None) {
-    // On OpenRouter "ultra" is Clippi's name for the tier the wire calls
-    // "max". The ChatGPT backend listed its levels by name, so they go back
-    // verbatim.
+    // On OpenRouter "ultra" is the wire's "max"; the ChatGPT backend's levels go back verbatim.
     ModelEffort wireEffort =
         profile.Effort == ModelEffort::Ultra && !codex ? ModelEffort::Max
                                                        : profile.Effort;
@@ -760,9 +731,8 @@ bool Responses_ParseModelsResponse(Arena* arena,
     if (!contextWindow)
       contextWindow = (u32)Json_GetInt(value, "context_window", 0);
     if (contextWindow) model.ContextWindow = contextWindow;
-    // A max-output figure is deliberately not read from the catalog: it is the
-    // model's ceiling rather than a budget for this turn, and naming a ceiling
-    // makes a metered gateway reserve credit for the whole of it.
+    // Max output is deliberately not read from the catalog: naming the model's ceiling makes a
+    // metered gateway reserve credit for the whole of it.
     ApplyAdvertisedCapabilities(&model, value);
     StrView name = Json_GetStr(value, "name");
     if (name.Length) model.Name = StrView_Dup(arena, name);
@@ -803,7 +773,6 @@ bool Responses_ParseCodexModelsResponse(Arena* arena,
       out->Error = SVL("the models response contains a model without a slug");
       return false;
     }
-    // Hidden entries are internal or retired models the picker must not offer.
     if (!Eq(Json_GetStr(value, "visibility"), "list")) continue;
 
     Model model = Responses_Model(arena, endpoint, StrView_Dup(arena, slug));

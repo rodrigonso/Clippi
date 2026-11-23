@@ -14,7 +14,6 @@ Style TuiSt(const Tui* t, u8 fg, u8 attr) {
   return Style{t->Color ? fg : COL_DEFAULT, COL_DEFAULT, attr};
 }
 
-// Append a C-string to a bounded buffer.
 void Put(char* buf, u32 cap, u32* len, const char* s) {
   while (*s && *len < cap - 1) buf[(*len)++] = *s++;
 }
@@ -48,7 +47,6 @@ void PutNum(char* buf, u32 cap, u32* len, u64 v) {
   while (n && *len < cap - 1) buf[(*len)++] = tmp[--n];
 }
 
-// Format a count using best-fit binary units and one decimal place.
 void PutScaled(char* buf, u32 cap, u32* len, u64 v) {
   const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
   u32 unit = 0;
@@ -71,8 +69,7 @@ void PutScaled(char* buf, u32 cap, u32* len, u64 v) {
   Put(buf, cap, len, units[unit]);
 }
 
-// Half-cell resolution, so each of the 16 steps is ~6% of the window. Any
-// nonzero occupancy shows at least one step: an empty bar means unknown.
+// Any nonzero occupancy shows at least one step: an empty bar means unknown.
 void PutContextBar(char* buf, u32 cap, u32* len, u32 tokens, u32 window,
                    u32* fillEnd) {
   constexpr u64 kSteps = kContextBarCells * 2;
@@ -85,8 +82,6 @@ void PutContextBar(char* buf, u32 cap, u32* len, u32 tokens, u32 window,
   for (u64 i = (halves + 1) / 2; i < kContextBarCells; i++)
     Put(buf, cap, len, "\xe2\x94\x80");
 }
-
-// ---- status row ----
 
 void FormatStatus(Tui* t, char* left, u32 leftCap, u32* ll, char* right,
                   u32 rightCap, u32* rl, u16 cols, TuiStatusBar* bar) {
@@ -112,7 +107,6 @@ void FormatStatus(Tui* t, char* left, u32 leftCap, u32* ll, char* right,
   } else if (t->State == TuiState::Idle) {
     Put(left, leftCap, ll, "ready");
   } else if (t->State != TuiState::Thinking) {
-    // Thinking has its own row at the foot of the transcript.
     Put(left, leftCap, ll, kSpinner[t->Spinner % 10]);
     bar->SpinnerEnd = *ll;
     Put(left, leftCap, ll, " ");
@@ -177,8 +171,6 @@ void FormatStatus(Tui* t, char* left, u32 leftCap, u32* ll, char* right,
   u32 usageCells = TextWidth(StrView{usage, usageLength});
   u32 effortCells = TextWidth(StrView{effort, effortLength});
 
-  // Narrow rows shed segments in reverse priority: effort, then token usage,
-  // then the context bar. The model name always stays.
   constexpr StrView kContextLabel = SVL("  ctx ");
   u32 window = t->Profile.ContextWindow;
   u32 contextCells = window ? kContextLabel.Length + kContextBarCells : 0;
@@ -208,8 +200,7 @@ void BuildStatusComponents(Tui* t, u16 statusY, u16 cols) {
   char* right = (char*)Ui_FrameAlloc(&t->Ui, 256, alignof(char));
   u32 leftLength = 0;
   u32 rightLength = 0;
-  // The row is inset on both sides, so the right-aligned group clears the
-  // transcript scrollbar column. Format against the usable width, not `cols`.
+  // The inset clears the scrollbar column; format against the usable width, not `cols`.
   constexpr u16 kStatusInset = 1;
   u16 contentCols = cols > 2 * kStatusInset ? (u16)(cols - 2 * kStatusInset) : 0;
   TuiStatusBar bar = {};
@@ -273,4 +264,4 @@ void BuildCwdComponent(Tui* t, u16 cwdY, u16 cols) {
   Ui_StyledText(&t->Ui, Ui_Key(SVL("cwd")), spans, count, props);
 }
 
-}  // namespace TuiInternal
+}

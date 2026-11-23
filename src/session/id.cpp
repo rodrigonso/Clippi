@@ -68,7 +68,6 @@ StrView DurableId_View(const DurableId* id) {
 }
 
 u32 DurableIdIndex_Hash(DurableId id) {
-  // FNV-1a over the fixed-width base64url character payload.
   u32 hash = 2166136261u;
   for (u32 i = 0; i < DURABLE_ID_CHAR_COUNT; i++) {
     hash ^= (u8)id.Value[i];
@@ -85,7 +84,7 @@ u32 DurableIdIndex_Capacity(u32 capacityHint) {
   while ((u64)cap < required) cap *= 2;
   return cap;
 }
-}  // namespace
+}
 
 usize DurableIdIndex_AllocationSize(u32 capacityHint) {
   return sizeof(DurableIdIndexSlot) *
@@ -119,7 +118,7 @@ void DurableIdIndex_Rehash(DurableIdIndex* index, u32 minCapacity) {
       DurableIdIndex_Put(index, oldSlots[i].Id, oldSlots[i].RecordIndex);
   }
 }
-}  // namespace
+}
 
 void DurableIdIndex_Put(DurableIdIndex* index, DurableId id, u32 recordIndex) {
   if (!index->Capacity) DurableIdIndex_Init(index, index->Mem, 16);

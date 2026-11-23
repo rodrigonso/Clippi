@@ -7,11 +7,8 @@
 #include <wchar.h>
 #include <windows.h>
 
-// Tools run in parallel, and every spawn creates inheritable handles for its
-// child. From the first CreatePipe until the child's ends are closed, a spawn
-// holds this lock, so a concurrent spawn cannot inherit another call's pipe
-// ends (a hook would then miss EOF on its stdin until that unrelated process
-// exited).
+// Held from CreatePipe until the child's ends are closed, so a concurrent spawn
+// cannot inherit another call's pipe ends (its reader would miss EOF).
 static SRWLOCK g_execSpawnLock = SRWLOCK_INIT;
 
 struct ExecSpawnGuard {
@@ -26,8 +23,6 @@ struct ExecSpawnGuard {
   ExecSpawnGuard& operator=(const ExecSpawnGuard&) = delete;
 };
 
-// UTF-8 to a NUL-terminated UTF-16 copy in `arena`. Null when the text is not
-// valid UTF-8 or exceeds CreateProcess's 32767-character command-line limit.
 static wchar_t* Exec_Wide(Arena* arena, StrView text) {
   int length = 0;
   if (text.Length) {
@@ -45,8 +40,7 @@ static wchar_t* Exec_Wide(Arena* arena, StrView text) {
   return wide;
 }
 
-// CreateProcess with no application name searches the current directory
-// before System32, so a workspace holding its own cmd.exe would run instead.
+// Security: without an application name CreateProcess searches the cwd first.
 static bool Exec_SystemCmdPath(wchar_t* out, u32 capacity) {
   static const wchar_t kSuffix[] = L"\\cmd.exe";
   const u32 suffixLength = (u32)(sizeof(kSuffix) / sizeof(kSuffix[0])) - 1;
@@ -56,15 +50,12 @@ static bool Exec_SystemCmdPath(wchar_t* out, u32 capacity) {
   return true;
 }
 
-// The parent's environment plus NoDefaultCurrentDirectoryInExePath=1. cmd.exe
-// otherwise resolves a bare program name from the working directory before
-// PATH, so a file the agent wrote there (git.bat, say) would run in place of
-// the real program the next time a command names it. Entries stay sorted by
-// name, which is the order CreateProcess documents for environment blocks.
+// Security: stops cmd.exe resolving bare names from the cwd (an agent-written
+// git.bat). CreateProcess requires the block sorted by name.
 static wchar_t* Exec_ShellEnvironment(Arena* arena) {
   static const wchar_t kEntry[] = L"NoDefaultCurrentDirectoryInExePath=1";
   const int nameLength = 34;
-  const u32 entryLength = (u32)(sizeof(kEntry) / sizeof(kEntry[0]));  // with NUL
+  const u32 entryLength = (u32)(sizeof(kEntry) / sizeof(kEntry[0]));
   wchar_t* parent = GetEnvironmentStringsW();
   if (!parent) return nullptr;
   usize parentLength = 0;
@@ -100,10 +91,6 @@ static wchar_t* Exec_ShellEnvironment(Arena* arena) {
   return block;
 }
 
-// Starts `commandLine` suspended with inherited handles. A null `application`
-// runs `commandLine` through the system cmd.exe, with the working directory
-// removed from bare-name lookup. All conversion buffers are released before
-// returning; CreateProcess copies what it keeps.
 static bool Exec_StartProcess(StrView application, StrView commandLine,
                               STARTUPINFOW* startup, PROCESS_INFORMATION* out) {
   Arena scratch = ArenaCreate();
@@ -171,8 +158,6 @@ static void Exec_AppendWindowsArg(StrBuf* commandLine, StrView arg) {
   StrBuf_AppendChar(commandLine, '"');
 }
 
-// Kill-on-close so a timeout or abort takes down the whole process tree, not
-// just the shell that was spawned.
 static HANDLE Exec_CreateKillOnCloseJob() {
   HANDLE job = CreateJobObjectW(nullptr, nullptr);
   if (!job) return nullptr;
@@ -199,12 +184,7 @@ static bool Exec_ReadWindowsPipe(HANDLE pipe, ExecChunkFn sink, void* user, bool
   }
 }
 
-// Non-blocking drain straight into a buffer, for the capturing form of
-// Exec_RunShellInput. `limit` caps what is kept, but draining continues past it
-// so a child that keeps writing still runs to completion instead of wedging on
-// a full pipe. `budget` caps what one call consumes, so a child writing without
-// pause cannot starve the caller's timeout and abort checks. Zero means no
-// bound.
+// Drains past `limit` so a child cannot wedge; `budget` bounds one pass (0 = none).
 static void Exec_DrainWindowsPipeToBuf(HANDLE pipe, StrBuf* out, u32 limit, u32 budget) {
   char buf[4096];
   for (u32 consumed = 0; !budget || consumed < budget;) {
@@ -491,8 +471,6 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
     return res;
   }
 
-  // Only created when the caller wants stdout; otherwise the child writes to
-  // the null device and there is nothing to drain.
   HANDLE outRead = nullptr, outWrite = nullptr;
   if (output && !CreatePipe(&outRead, &outWrite, &sa, 0)) {
     CloseHandle(nul);
@@ -503,11 +481,8 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   }
   if (outRead) SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
 
-  // Wrapped in an extra pair of quotes: `cmd /c` strips the first and last
-  // quote character of what follows, which silently corrupts any command
-  // beginning with a quoted path (`"C:\Program Files\hook.exe" --flag` loses
-  // the quote before the program and the one after the last argument). The
-  // added pair is what cmd consumes, leaving the command itself intact.
+  // `cmd /c` strips the first and last quote; the extra pair keeps a command
+  // starting with a quoted path intact.
   StrBuf cmd = StrBuf_Make(arena, command.Length + 16);
   StrBuf_AppendCStr(&cmd, "cmd.exe /c \"");
   StrBuf_Append(&cmd, command);
@@ -535,8 +510,7 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   bool ok = Exec_StartProcess(StrView{}, StrBuf_View(&cmd), &si, &pinfo);
   CloseHandle(inRead);
   CloseHandle(nul);
-  // Dropped as soon as the child owns it, so the read end sees EOF when the
-  // child exits rather than waiting on a handle this process still holds.
+  // Closed now so the read end sees EOF when the child exits.
   if (outWrite) CloseHandle(outWrite);
   spawning.Release();
   if (!ok) {
@@ -563,7 +537,7 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
     DWORD chunk = 0;
     if (!WriteFile(inWrite, input.Data + written, input.Length - written, &chunk, nullptr) ||
         chunk == 0) {
-      break;  // The child closed stdin early; its exit code still decides.
+      break;
     }
     written += (u32)chunk;
   }
@@ -571,8 +545,6 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
 
   DWORD start = GetTickCount();
   for (;;) {
-    // Bounded per pass so a child writing without pause cannot starve the
-    // timeout and abort checks below it.
     if (outRead) Exec_DrainWindowsPipeToBuf(outRead, output, outputLimit, 1u << 16);
     if (WaitForSingleObject(pinfo.hProcess, 10) == WAIT_OBJECT_0) break;
     if (abort && Atomic_LoadI32(abort)) {
@@ -587,8 +559,6 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   }
 
   WaitForSingleObject(pinfo.hProcess, INFINITE);
-  // Whatever the child wrote before exiting is still buffered in the pipe. The
-  // process is gone, so what remains is finite and needs no per-pass budget.
   if (outRead) {
     Exec_DrainWindowsPipeToBuf(outRead, output, outputLimit, 0);
     CloseHandle(outRead);
@@ -626,8 +596,7 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
   si.hStdInput = nul;
   si.hStdOutput = nul;
   si.hStdError = nul;
-  // Not Win32_Path: CreateProcess does not take an extended-length (\\?\)
-  // current directory.
+  // Not Win32_Path: CreateProcess rejects a \\?\ current directory.
   wchar_t* command = Exec_Wide(arena, StrBuf_View(&cmd));
   wchar_t* cwd = workingDirectory.Length ? Exec_Wide(arena, workingDirectory) : nullptr;
   if (!command || (workingDirectory.Length && !cwd)) {
@@ -636,9 +605,7 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
   }
   PROCESS_INFORMATION pinfo = {};
   DWORD flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
-  // Breaking away keeps the child alive when the caller runs inside a
-  // kill-on-close job (a terminal or IDE). A job that forbids it refuses the
-  // flag, and the child then simply shares the caller's job.
+  // Breakaway survives a kill-on-close parent job; retried without it if refused.
   BOOL ok = CreateProcessW(nullptr, command, nullptr, nullptr, TRUE,
                            flags | CREATE_BREAKAWAY_FROM_JOB, nullptr, cwd, &si, &pinfo);
   if (!ok)
@@ -652,7 +619,7 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
   return true;
 }
 
-#else  // POSIX
+#else
 #include <poll.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -662,13 +629,8 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
 #include <time.h>
 #include <unistd.h>
 
-// Tools run in parallel. A fork from one worker between another's pipe() and
-// its parent-side close would hand that child the other's write end, and a
-// reader waiting for EOF -- a shell call -- would then wait for an unrelated
-// process (a dev server) to exit. So every spawn creates its pipes, forks, and
-// closes the child's ends under this lock, and every pipe end is close-on-exec
-// so a later child never keeps one either. dup2 onto 0-2 clears the flag on
-// the copies a child is meant to keep.
+// Pipe creation, fork, and closing the child's ends happen under this lock, and
+// every end is CLOEXEC, so no child inherits another call's write end.
 static pthread_mutex_t g_execSpawnLock = PTHREAD_MUTEX_INITIALIZER;
 
 struct ExecSpawnGuard {
@@ -690,12 +652,8 @@ static int Exec_Pipe(int fds[2]) {
   return 0;
 }
 
-// SIGPIPE's disposition is process-wide, so it is set once and never restored.
-// Saving it and putting the default back around each write would leave a window
-// in which any other thread writing to a closed pipe or socket -- another hook,
-// or an in-flight libcurl transfer -- takes the default action and kills the
-// process. Two threads reach the writes below: the hook worker and the harness
-// coordinator running the PreToolUse gate.
+// Set once, never restored: toggling the process-wide disposition per write
+// would let another thread's write to a closed pipe/socket kill the process.
 static pthread_once_t g_execSigPipeOnce = PTHREAD_ONCE_INIT;
 
 static void Exec_SetSigPipeIgnored() { signal(SIGPIPE, SIG_IGN); }
@@ -704,10 +662,7 @@ static void Exec_IgnoreSigPipeOnce() {
   pthread_once(&g_execSigPipeOnce, Exec_SetSigPipeIgnored);
 }
 
-// Signed nanosecond arithmetic on purpose. Subtracting the tv_nsec fields into
-// an unsigned type underflows whenever the nanosecond component wraps, turning
-// a few hundred milliseconds into millennia and firing the timeout at random on
-// any child whose run crosses a second boundary.
+// Signed on purpose: unsigned tv_nsec subtraction underflows across a second.
 static u64 Exec_ElapsedMillis(const struct timespec* from, const struct timespec* to) {
   i64 ns = (i64)(to->tv_sec - from->tv_sec) * 1000000000ll +
            ((i64)to->tv_nsec - (i64)from->tv_nsec);
@@ -721,13 +676,6 @@ static char* Exec_DupPosixArg(Arena* arena, StrView arg) {
   return result;
 }
 
-// Non-blocking drain straight into a buffer, for the capturing form of
-// Exec_RunShellInput. Does not own the descriptor: the caller closes it once
-// after the final drain. `limit` caps what is kept, but draining continues past
-// it so a child that keeps writing still runs to completion instead of wedging
-// on a full pipe. `budget` caps what one call consumes, so a child writing
-// without pause cannot starve the caller's timeout and abort checks. Zero means
-// no bound.
 static void Exec_DrainPosixPipeToBuf(int fd, StrBuf* out, u32 limit, u32 budget) {
   char buf[4096];
   for (u32 consumed = 0; !budget || consumed < budget;) {
@@ -978,8 +926,7 @@ ExecResult Exec_RunStreaming(Arena* arena, StrView command, u32 timeoutMs,
   }
   close(fds[0]);
   int status = 0;
-  // EOF need not mean exit: a child can close stdout/stderr and keep running.
-  // Continue polling cancellation and the deadline while waiting for it.
+  // EOF need not mean exit; keep enforcing abort and the deadline.
   for (;;) {
     pid_t waited = waitpid(pid, &status, WNOHANG);
     if (waited == pid) break;
@@ -1019,8 +966,6 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
     return res;
   }
 
-  // Only created when the caller wants stdout; otherwise the child writes to
-  // /dev/null and there is nothing to drain.
   int outFds[2] = {-1, -1};
   if (output && Exec_Pipe(outFds) != 0) {
     close(fds[0]);
@@ -1049,10 +994,7 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
     close(fds[1]);
     if (outFds[0] >= 0) close(outFds[0]);
     int nul = open("/dev/null", O_WRONLY);
-    // stderr always goes to the null device, so a hook's diagnostics can never
-    // corrupt the stdout channel a caller is parsing. Redirecting stdout must
-    // not depend on that open succeeding: a capturing caller would otherwise
-    // see EOF while the child wrote over the inherited stdout.
+    // Redirecting stdout must not depend on the /dev/null open succeeding.
     if (outFds[1] >= 0) {
       dup2(outFds[1], STDOUT_FILENO);
     } else if (nul >= 0) {
@@ -1067,15 +1009,13 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
     _exit(127);
   }
   close(fds[0]);
-  // Dropped as soon as the child owns it, so the read end sees EOF when the
-  // child exits rather than waiting on a descriptor this process still holds.
+  // Closed now so the read end sees EOF when the child exits.
   if (outFds[1] >= 0) close(outFds[1]);
   spawning.Release();
   setpgid(pid, pid);
   res.Spawned = true;
 
-  // A hook that never reads stdin would otherwise raise SIGPIPE and take the
-  // agent down with it; a short write failure is not worth reporting.
+  // A hook that never reads stdin would otherwise kill us with SIGPIPE.
   Exec_IgnoreSigPipeOnce();
   for (u32 written = 0; written < input.Length;) {
     ssize_t n = write(fds[1], input.Data + written, input.Length - written);
@@ -1097,8 +1037,6 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   clock_gettime(CLOCK_MONOTONIC, &t0);
   int status = 0;
   for (;;) {
-    // Bounded per pass so a child writing without pause cannot starve the
-    // timeout and abort checks below it.
     if (outFds[0] >= 0) Exec_DrainPosixPipeToBuf(outFds[0], output, outputLimit, 1u << 16);
     pid_t done = waitpid(pid, &status, WNOHANG);
     if (done == pid) break;
@@ -1116,8 +1054,6 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
     struct timespec nap = {0, 5 * 1000 * 1000};
     nanosleep(&nap, nullptr);
   }
-  // Whatever the child wrote before exiting is still buffered in the pipe. The
-  // process is gone, so what remains is finite and needs no per-pass budget.
   if (outFds[0] >= 0) {
     Exec_DrainPosixPipeToBuf(outFds[0], output, outputLimit, 0);
     close(outFds[0]);
@@ -1139,13 +1075,10 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
                         : nullptr;
   ExecSpawnGuard spawning;
   pid_t pid = fork();
-  // The child must not touch the lock: only async-signal-safe calls are
-  // allowed in it before exec, and it never returns from this function.
+  // The child must not touch the lock (async-signal-safe calls only).
   if (pid != 0) spawning.Release();
   if (pid < 0) return false;
   if (pid == 0) {
-    // Double fork: the grandchild is reparented to init, so nothing has to
-    // reap it and it survives this process exiting.
     setsid();
     pid_t grandchild = fork();
     if (grandchild != 0) _exit(grandchild < 0 ? 1 : 0);

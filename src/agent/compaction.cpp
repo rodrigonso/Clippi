@@ -4,9 +4,7 @@
 
 namespace {
 
-// pi's flat per-image estimate. Providers bill an image by its pixels, not its
-// encoded size, so counting base64 bytes would make one screenshot look like
-// a whole context window.
+// pi's flat per-image estimate; counting base64 bytes would vastly overcount.
 constexpr u32 IMAGE_ESTIMATE_BYTES = 4800;
 
 u32 MessageContentBytes(const Message* message) {
@@ -54,8 +52,6 @@ void SortPaths(Array<StrView>* paths) {
   });
 }
 
-// Which bucket a tool call contributes to, or null when the tool is not one of
-// the three whose `path` argument is tracked.
 Array<StrView>* BucketForTool(StrView toolName, AgentFileOps* ops) {
   if (StrView_EqCStr(toolName, "read")) return &ops->Read;
   if (StrView_EqCStr(toolName, "write")) return &ops->Written;
@@ -71,8 +67,7 @@ void CollectMessagePaths(Arena* arena, const Message* message, AgentFileOps* ops
       continue;
     Array<StrView>* bucket = BucketForTool(content->ToolName, ops);
     if (!bucket) continue;
-    // The parser requires a null terminator one past the end, which a StrBuf
-    // maintains but a view into the raw record does not.
+    // The parser needs a null terminator one past the end; raw views lack it.
     StrBuf text = StrBuf_Make(arena, content->ToolArgsJson.Length + 1);
     StrBuf_Append(&text, content->ToolArgsJson);
     JsonValue* args = Json_Parse(arena, StrBuf_View(&text));
@@ -81,7 +76,7 @@ void CollectMessagePaths(Arena* arena, const Message* message, AgentFileOps* ops
   }
 }
 
-}  // namespace
+}
 
 bool AgentCompactionPolicy_IsValid(const AgentCompactionPolicy* policy) {
   return policy && policy->Enabled && policy->ReserveTokens &&
@@ -90,8 +85,6 @@ bool AgentCompactionPolicy_IsValid(const AgentCompactionPolicy* policy) {
 
 u32 AgentCompaction_EstimateMessageTokens(const Message* message) {
   if (!message) return 0;
-  // Per-message envelope overhead (role, delimiters, tool wiring) that every
-  // provider pays regardless of content length.
   constexpr u32 kMessageOverheadTokens = 4;
   u32 bytes = MessageContentBytes(message);
   return AddSaturated(bytes / AGENT_COMPACTION_BYTES_PER_TOKEN,
@@ -109,8 +102,6 @@ u32 AgentCompaction_EstimateContextTokens(const Message* messages, u32 count) {
 u32 AgentCompaction_ReportedContextTokens(const Message* messages, u32 count) {
   if (!messages || count == 0) return 0;
 
-  // Newest assistant message that actually reported usage. Everything after it
-  // has not been billed yet, so it is estimated.
   u32 anchor = count;
   for (u32 i = count; i > 0; i--) {
     const Message* message = &messages[i - 1];
@@ -172,8 +163,6 @@ bool AgentCompaction_SelectCutPoint(const SessionRecord* const* branch, u32 bran
   }
   if (firstMessage == branchCount) return false;
 
-  // Walk backwards accumulating the retained tail, remembering the oldest user
-  // boundary that still fits the budget. Everything before it gets folded away.
   u32 tailStart = branchCount;
   u32 tailTokens = 0;
   for (u32 i = lastMessage + 1; i > firstMessage; i--) {
@@ -190,12 +179,9 @@ bool AgentCompaction_SelectCutPoint(const SessionRecord* const* branch, u32 bran
   AgentCompactionCut cut = {};
   cut.BaseEntryId = branch[0]->EntryId;
 
-  // The whole message range fits the budget: there is nothing to fold away.
   if (tailStart == firstMessage) return false;
 
   if (tailStart == branchCount) {
-    // No user boundary fits the budget. Fold the whole branch, matching the
-    // pre-retention behaviour; pi's split-turn summary is not implemented.
     cut.ThroughEntryId = branch[lastMessage]->EntryId;
     cut.HasRetainedTail = false;
   } else {
@@ -221,9 +207,7 @@ void AgentCompaction_CollectFileOps(Arena* arena, const SessionRecord* const* br
     if (record->Kind == SessionRecordKind::Message) {
       CollectMessagePaths(arena, &record->MessageEntry.Value, out);
     } else if (record->Kind == SessionRecordKind::Compaction) {
-      // An earlier compaction folded its own span away, so its stored lists are
-      // the only surviving evidence of what those turns touched. Its modified
-      // paths stay modified.
+      // Stored lists are the only surviving evidence of an earlier compaction's span.
       const CompactionEntryData* entry = &record->CompactionEntry;
       for (u32 j = 0; j < entry->ReadFiles.Count; j++)
         AddPath(arena, &out->Read, entry->ReadFiles.Data[j]);

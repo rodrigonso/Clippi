@@ -5,52 +5,27 @@
 #include "base/basics.h"
 #include "base/str.h"
 
-// Peak resident set size (working set) of the current process, in bytes.
 u64 PeakRssBytes();
 
-// Current resident set size (working set) of the current process, in bytes.
 u64 CurrentRssBytes();
 
-// Current working directory of the process, copied into `a`, with any trailing
-// separator stripped. Empty if it cannot be determined.
 StrView Sys_CurrentDir(Arena* a);
 
-// Absolute path of the running executable, not argv[0] or the current directory.
-// UTF-8, null-terminated, and owned by `a`. Empty if discovery fails.
 StrView Sys_ExecutablePath(Arena* a);
 
-// Change the process working directory. Returns false when `path` is empty,
-// missing, not a directory, or cannot be entered.
 bool Sys_SetCurrentDir(StrView path);
 
-// User home directory from the environment (USERPROFILE on Windows, HOME
-// elsewhere), copied into `a` with any trailing separator stripped. Empty if
-// unset.
 StrView Sys_HomeDir(Arena* a);
 
-// If `path` begins with `home` at a path-separator boundary, return a copy with
-// that prefix replaced by "~"; otherwise a plain copy of `path`. On Windows the
-// prefix match is case-insensitive and treats '/' and '\\' as equivalent. Pure.
 StrView Sys_AbbreviatePath(Arena* a, StrView path, StrView home);
 
-// Current git branch for the repository containing `dir`, copied into `a`, or
-// empty if `dir` is not inside a git work tree or HEAD is detached. Walks up the
-// directory chain and follows the `.git` file (worktree/submodule) indirection.
 StrView Sys_GitBranch(Arena* a, StrView dir);
 
-// The git directory shared by every worktree of the repository containing
-// `dir`: the `.git` directory of a normal checkout, the main repository's
-// `.git` for a linked worktree (via its `commondir`), or the module directory
-// for a submodule. May contain `..` segments; canonicalize before comparing.
-// Empty if `dir` is not inside a git work tree. `*workTree`, when given,
-// receives the work tree `dir` is in. Owned by `a`.
+// May contain `..` segments; canonicalize before comparing.
 StrView Sys_GitCommonDir(Arena* a, StrView dir, StrView* workTree = nullptr);
 
-// Local calendar time for a millisecond timestamp. Wraps the platform's
-// reentrant localtime; returns false when the timestamp cannot be converted.
 bool Sys_LocalTime(u64 timestampMs, struct tm* out);
 
-// Pure parsers (exposed for testing).
-StrView Git_GitdirFromFile(StrView contents);  // "gitdir: <path>"      -> <path>
-StrView Git_BranchFromHead(StrView contents);  // "ref: refs/heads/<b>" -> <b>
-StrView Git_CommonDirFromFile(StrView contents);  // "../..\n"           -> "../.."
+StrView Git_GitdirFromFile(StrView contents);
+StrView Git_BranchFromHead(StrView contents);
+StrView Git_CommonDirFromFile(StrView contents);

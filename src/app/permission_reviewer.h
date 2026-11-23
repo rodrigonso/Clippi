@@ -12,7 +12,6 @@ AgentPermissionReviewer TypeSafePermissionReviewer_Make(
     StrView authPath = {}, const HttpRetryDeps* deps = nullptr);
 bool TypeSafePermissionReviewer_KeyConfigured(StrView authPath);
 
-// The same request path with injectable transport, backoff, and randomness.
 bool TypeSafePermissionReviewer_ReviewWithDeps(
     Arena* arena, StrView model, StrView apiKey,
     const AgentPermissionReviewRequest* request, volatile i32* abort,

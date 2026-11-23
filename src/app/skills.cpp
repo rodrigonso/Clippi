@@ -37,7 +37,6 @@ StrView AppendRel(Arena* arena, StrView parent, StrView name) {
   return StrBuf_View(&out);
 }
 
-// Skills need only these top-level scalars, not a general YAML parser.
 struct Frontmatter {
   StrView Name;
   StrView Description;
@@ -210,10 +209,7 @@ void LoadExplicitPath(LoadContext* ctx, Arena* scratch, StrView path) {
   LoadSkillFile(ctx, scratch, path);
 }
 
-// `.agents/skills` is shared with other harnesses and may sit at any level
-// between the repository root and the working directory, so every ancestor is
-// checked. Broad directories are visited first, matching how context files
-// layer, and the first definition of a name still wins.
+// Every ancestor is checked, broad first; the first definition still wins.
 void LoadAgentsAncestors(LoadContext* ctx, Arena* scratch,
                          StrView workingDirectory) {
   usize mark = scratch->Used;
@@ -236,8 +232,8 @@ void LoadAgentsAncestors(LoadContext* ctx, Arena* scratch,
   ArenaRestore(scratch, mark);
 }
 
-// pi escapes five characters in skill metadata, one more than the four the
-// project-context framing escapes. Reusing that escaper would drop `&apos;`.
+// pi escapes five characters here, one more than project-context framing;
+// reusing that escaper would drop `&apos;`.
 u64 EscapedLength(StrView value) {
   u64 length = value.Length;
   for (u32 i = 0; i < value.Length; i++) {
@@ -252,7 +248,7 @@ u64 EscapedLength(StrView value) {
   return length;
 }
 
-}  // namespace
+}
 
 bool Skills_ParseFile(Arena* arena, StrView filePath, StrView content,
                       Skill* out, Array<LoadDiagnostic>* warnings) {

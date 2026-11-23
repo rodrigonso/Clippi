@@ -16,8 +16,6 @@
 
 namespace {
 
-// The length of a regular file. Anything else (a pipe, a device) has no size
-// worth trusting up front and reports false.
 bool RegularFileSize(FILE* file, u64* out) {
 #if defined(_WIN32)
   struct _stat64 info;
@@ -33,7 +31,7 @@ bool RegularFileSize(FILE* file, u64* out) {
 
 constexpr u64 FILE_READ_GROWTH_FLOOR = (u64)64 << 10;
 
-}  // namespace
+}
 
 FileIoResult File_Open(Arena* arena, StrView path, const char* mode, FILE** out) {
   *out = nullptr;
@@ -105,9 +103,7 @@ FileIoResult File_ReadAll(Arena* arena, StrView path, StrView* out, u64 maxBytes
   FileIoResult result = FileIoResult::Success;
   for (;;) {
     if (length == capacity) {
-      // A full buffer is the common end of a regular file. Probing one byte
-      // tells that apart from a file that grew since the stat, or a source
-      // with no size, without allocating for data that is not there.
+      // A full buffer is the common end of a regular file; probe one byte for growth or unsized sources.
       int next = fgetc(file);
       if (next == EOF) break;
       if (capacity >= maxBytes) {
@@ -118,9 +114,7 @@ FileIoResult File_ReadAll(Arena* arena, StrView path, StrView* out, u64 maxBytes
                                   ? capacity
                                   : FILE_READ_GROWTH_FLOOR);
       if (grown > maxBytes) grown = maxBytes;
-      // Extending in place keeps the read to one block: nothing else
-      // allocates from `arena` while this runs, so the next bytes are the
-      // ones right after the buffer's terminator slot.
+      // Extends in place: nothing else allocates from `arena` meanwhile, so these bytes follow the buffer.
       char* extension = (char*)ArenaAlloc(arena, (usize)(grown - capacity), 1);
       FFI(extension != data + capacity + 1);
       capacity = grown;
@@ -217,9 +211,7 @@ FileIoResult File_Append(Arena* arena, StrView path, StrView content) {
   (void)arena;
   wchar_t native[4096];
   if (!Win32_Path(path, native, 4096)) return FileIoResult::OpenFailed;
-  // Append-only access makes the kernel place every write at the current end
-  // of file, atomically across processes. The C runtime's append mode seeks
-  // and then writes, so two appenders can land on one offset and lose a record.
+  // FILE_APPEND_DATA appends atomically across processes; CRT append mode seeks then writes and can lose records.
   HANDLE file = CreateFileW(native, FILE_APPEND_DATA,
                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                             nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);

@@ -14,17 +14,9 @@ const u32 NO_ENTRY = 0xffffffffu;
 const u32 ICON_FIELD_CELLS = 2;
 const u32 MARKER_LEFT_PADDING = 1;
 
-// Bullet color scheme: the system accent for user messages and white for
-// assistant responses. Tool calls show an outlined marker while pending
-// (animated in the accent while running here), then a green check or a red
-// cross.
 const u8 ASSISTANT_FG = 255;
-// Diff stats and diff lines are the one non-error place red appears: it is
-// paired with green and reads as "lines removed", not as a failure. Errors
-// still own bold 196. The same green marks a successful tool call.
 const u8 DIFF_ADD_FG = 71;
 const u8 DIFF_DEL_FG = 167;
-// A running call's expanded preview follows its output instead of growing.
 const u32 LIVE_TAIL_ROWS = 5;
 StrView FilledMarker(const LineModel* m) {
   return m->Rounded ? SVL("\xe2\x97\x8f") : SVL("\xe2\x97\xbc");
@@ -34,8 +26,6 @@ StrView OutlineMarker(const LineModel* m) {
 }
 const StrView CHECK_MARKER = SVL("\xe2\x9c\x93");
 const StrView CROSS_MARKER = SVL("\xe2\x9c\x97");
-// Notices are the app talking, not a participant: a dot dimmer than the grey
-// text beside it, so it recedes behind the turn markers.
 const u8 NOTICE_FG = 242;
 const u8 MUTED_FG = 244;
 const u8 RULE_FG = 238;
@@ -134,7 +124,6 @@ void AppendLogicalRow(Arena* rowsMem, Array<SpanLine>* out, u16 width, StrView l
   WrapSpanLine(rowsMem, &logical, width, out);
 }
 
-// Edit results open with a sentence the row header already conveys.
 StrView DiffBody(StrView text) {
   if (!StrView_StartsWith(text, SVL("Successfully replaced "))) return text;
   for (u32 i = 0; i + 1 < text.Length; i++) {
@@ -144,8 +133,7 @@ StrView DiffBody(StrView text) {
   return text;
 }
 
-// Diff_Make lines are "<+|-| ><lineNo> <text>"; the digit check keeps prose
-// that merely starts with '-' neutral, as CountDiffLines does.
+// The digit check keeps prose that merely starts with '-' neutral, as CountDiffLines does.
 Style PreviewLineStyle(const LineModel* m, StrView line, bool diff, Style base) {
   if (!diff || line.Length < 2 || line.Data[1] < '0' || line.Data[1] > '9') return base;
   if (line.Data[0] == '+') return LStyle(m, DIFF_ADD_FG, ATTR_NONE);
@@ -153,8 +141,6 @@ Style PreviewLineStyle(const LineModel* m, StrView line, bool diff, Style base) 
   return base;
 }
 
-// Both the renderer and the expanded-preview budget size previews through
-// here, so the two always agree on the row count.
 void AppendToolPreviewRows(const LineModel* m, Arena* rowsMem, Array<SpanLine>* out,
                            const Entry* entry, StrView indent) {
   const ToolEntry& tool = entry->Tool;
@@ -262,10 +248,8 @@ void BuildAssistant(LineModel* m, const Entry* entry) {
     }
     for (u32 j = 0; j < logical.Data[i].Spans.Count; j++)
       Array_Push(&prefixed.Spans, logical.Data[i].Spans.Data[j]);
-    // Markdown owns the inner continuation (list marker width, quote bar, code
-    // indent); the icon indent goes in front of it rather than replacing it.
-    // One Span still suffices because the markdown palette sets no background:
-    // the leading blanks have no visible colour of their own.
+    // Prepend the icon indent to markdown's continuation, never replace it. One Span
+    // suffices because the markdown palette sets no background.
     prefixed.Continuation = Span{indent, StyleDefault(), true};
     const SpanLine& row = logical.Data[i];
     if (row.HasContinuation && row.Continuation.Text.Length) {
@@ -279,7 +263,6 @@ void BuildAssistant(LineModel* m, const Entry* entry) {
   }
 }
 
-// Running calls tick in whole seconds; finished ones keep tenths below ten.
 StrView FormatDuration(Arena* arena, u64 ms, bool tenths) {
   StrBuf b = StrBuf_Make(arena, 16);
   u64 seconds = ms / 1000;
@@ -304,7 +287,6 @@ StrView FormatDuration(Arena* arena, u64 ms, bool tenths) {
   return StrBuf_View(&b);
 }
 
-// Sub-second calls show no timer, so quick reads stay uncluttered.
 StrView ToolTimer(Arena* arena, const ToolEntry& tool) {
   if (tool.Live)
     return tool.ElapsedSeconds ? FormatDuration(arena, (u64)tool.ElapsedSeconds * 1000, false)
@@ -344,7 +326,6 @@ void BuildTool(LineModel* m, const Entry* entry, bool expandPreview) {
     StrView outcome = BufView(tool.View.Outcome);
     u32 split = tool.View.OutcomeSplit;
     if (!tool.Error && split != 0 && split < outcome.Length) {
-      // Diff stat: "+N " in green, "-M" in red.
       Array_Push(&logical.Spans,
                  Span{StrView{outcome.Data, split},
                       LStyle(m, DIFF_ADD_FG, ATTR_NONE)});
@@ -458,11 +439,9 @@ void BuildFooter(LineModel* m, const Entry* entry) {
 
   SpanLine logical;
   InitRow(&m->RowsMem, &logical, 4);
-  // The lead rule fills the icon field, so the label lines up with message text.
   Array_Push(&logical.Spans, Span{Spaces(&m->RowsMem, MARKER_LEFT_PADDING), StyleDefault(), true});
   Array_Push(&logical.Spans, Span{SVL("\xe2\x94\x80\xe2\x94\x80 "), rule, true});
   Array_Push(&logical.Spans, Span{text, LStyle(m, MUTED_FG, ATTR_NONE)});
-  // One cell short of the edge, mirroring the left padding.
   u32 used = MARKER_LEFT_PADDING + ICON_FIELD_CELLS + 1u + LineTextWidth(text) + 1u;
   if (m->Width > used + 1u) {
     u32 fill = m->Width - used - 1u;
@@ -516,7 +495,6 @@ void BuildEntryRows(LineModel* m, const Entry* entry, bool showPreview) {
   }
   for (u32 i = 0; i < rowCount; i++) m->Lines.Data[rowStart + i].EntryId = entry->Id;
   if (rowCount != 0) {
-    // Footers and the thinking row are chrome, not turns to hover or toggle.
     m->Lines.Data[rowStart].IsEntryStart =
         entry->Kind != EntryKind::Footer && entry->Kind != EntryKind::Thinking;
     if (hidden) {
@@ -696,8 +674,6 @@ void WriteFlatRange(LineModel* m, u64 start, u64 end, u32 firstEntry = NO_ENTRY)
 }
 
 bool PreviewShown(const LineModel* m, const Entry* entry) {
-  // A running call's tail is capped at LIVE_TAIL_ROWS, so only finished
-  // previews draw on the expanded-row budget.
   return entry->Kind == EntryKind::Tool && !entry->Collapsed && entry->Tool.Preview.Length &&
          (!entry->Tool.Done || entry->Id >= m->ExpandedEntryId);
 }
@@ -722,8 +698,7 @@ bool TrimNewEntries(LineModel* m) {
     return false;
   u32 total = 0;
   const Entry* next = nullptr;
-  // Size a new batch backwards, so a capped hydration never formats its
-  // discarded prefix. Existing entries are not visited on an ordinary append.
+  // Sized backwards so a capped hydration never formats its discarded prefix.
   for (u32 i = m->Entries.Count; i > m->LayoutEntries; i--) {
     Entry* entry = &m->Entries.Data[i - 1];
     u32 removed = 0;
@@ -799,7 +774,7 @@ void EnsureLayout(const LineModel* m) {
   LineModel_Layout(const_cast<LineModel*>(m));
 }
 
-}  // namespace
+}
 
 namespace {
 
@@ -841,7 +816,7 @@ u16 SnapDisplayBoundary(const DisplayRowLayout* layout, u16 column, bool towardE
   return column;
 }
 
-}  // namespace
+}
 
 namespace {
 
@@ -928,7 +903,7 @@ void WrapSpanLine(Arena* a, const SpanLine* in, u16 width, Array<SpanLine>* out)
   Array_Push(out, current);
 }
 
-}  // namespace
+}
 
 void LineModel_Init(LineModel* m, Arena* mem, u16 width, u32 cap,
                     bool color, bool rounded, u8 accent) {
@@ -969,7 +944,6 @@ bool LineModel_FitsAtWidth(LineModel* m, u16 width, u32 maxRows) {
   if (width < 1) width = 1;
   if (width == m->Width) return m->Lines.Count <= maxRows;
 
-  // A scrollbar probe need not format a long history at every frame.
   u32 visible = 0;
   for (u32 i = 0; i < m->Entries.Count; i++)
     if (EntryVisible(&m->Entries.Data[i]) && ++visible > maxRows) return false;
@@ -1161,7 +1135,7 @@ void AccumulateDisplayRow(const DisplayRowLayout* layout, DisplayRowRange range,
     AccumulateDisplaySpaces(out, hash, (u16)(range.End - outputColumn));
 }
 
-}  // namespace
+}
 
 StrView LineModel_ExtractDisplayRow(Arena* arena, const DisplayRowLayout* layout, u16 anchor,
                                     u16 focus) {
@@ -1259,7 +1233,7 @@ bool AssistantPrefixIsStable(const LineModel* m,
          DisplayRowPrefixHash(last, m->Width, previous.LastEnd) == previous.LastRow;
 }
 
-}  // namespace
+}
 
 void LineModel_Layout(LineModel* m) {
   if (m->FirstDirtyEntry == NO_ENTRY && !m->TrimPending && !m->PreviewBudgetDirty) return;
@@ -1308,8 +1282,6 @@ void LineModel_Layout(LineModel* m) {
     m->LinesHead = (m->LinesHead + capacity - (u32)((oldOffset - offset) % capacity)) % capacity;
   m->RowOffset = offset;
   m->Lines.Count = count;
-  // Logical coordinates keep the surviving prefix in the same ring slots.
-  // Only an uncovered prefix or the changed suffix needs new metadata.
   u64 stableStart = offset > oldOffset ? offset : oldOffset;
   u64 stableEnd = suffixStart < oldEnd ? suffixStart : oldEnd;
   u32 changedEntry = !removed && first < m->Entries.Count ? first : NO_ENTRY;
@@ -1526,8 +1498,7 @@ bool LineModel_SetThinking(LineModel* m, u64 startMs, u64 nowMs) {
   return true;
 }
 
-// The thinking row is only ever last, so its rows end the layout and rewinding
-// RowsEnd to where it began is all the relayout needs.
+// Thinking is always last, so rewinding RowsEnd to where it began is the whole relayout.
 bool LineModel_EndThinking(LineModel* m) {
   if (!m->Entries.Count) return false;
   u32 index = m->Entries.Count - 1;
@@ -1577,7 +1548,6 @@ bool LineModel_UpdateTool(LineModel* m, StrView toolId, StrView preview) {
     bool hadPreview = entry->Tool.Preview.Length != 0;
     StrBuf_Clear(&entry->Tool.Preview);
     StrBuf_Append(&entry->Tool.Preview, preview);
-    // A collapsed row changes only when its hidden-content mark appears.
     if (!entry->Collapsed || hadPreview != (preview.Length != 0)) InvalidateEntry(m, i - 1);
     return true;
   }

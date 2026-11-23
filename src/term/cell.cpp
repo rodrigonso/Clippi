@@ -20,7 +20,7 @@ u32 Distance2(u8 r, u8 g, u8 b, u32 cr, u32 cg, u32 cb) {
   return (u32)(dr * dr + dg * dg + db * db);
 }
 
-}  // namespace
+}
 
 u8 Color_NearestXterm256(u8 r, u8 g, u8 b) {
   u32 ri = NearestCubeLevel(r);
@@ -39,15 +39,13 @@ u8 Color_NearestXterm256(u8 r, u8 g, u8 b) {
 }
 
 u32 CharWidth(u32 cp) {
-  if (cp == 0) return 1;  // blank cell renders as a space
+  if (cp == 0) return 1;
 
-  // Zero-width: combining marks, joiners, variation selectors, BOM.
   if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x1AB0 && cp <= 0x1AFF) ||
       (cp >= 0x1DC0 && cp <= 0x1DFF) || (cp >= 0x200B && cp <= 0x200F) ||
       (cp >= 0x20D0 && cp <= 0x20FF) || (cp >= 0xFE00 && cp <= 0xFE0F) || cp == 0xFEFF)
     return 0;
 
-  // Wide: CJK + fullwidth + emoji.
   if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0x303E) ||
       (cp >= 0x3041 && cp <= 0x33FF) || (cp >= 0x3400 && cp <= 0x4DBF) ||
       (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xA000 && cp <= 0xA4CF) ||
@@ -64,8 +62,7 @@ u32 Utf8Decode(StrView s, u32* i) {
   if (*i >= s.Length) return 0;
   const u8* p = (const u8*)s.Data + *i;
   u32 length = StrView_Utf8SequenceLength(s, *i);
-  // Only the offending byte is consumed: whatever follows a bad lead byte is
-  // decoded on its own, so an ESC can never hide inside a "continuation".
+  // Only the offending byte is consumed, so an ESC can never hide inside a "continuation".
   if (!length) {
     *i += 1;
     return 0xFFFD;

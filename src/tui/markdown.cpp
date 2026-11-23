@@ -4,13 +4,7 @@
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Palette and styles
-// ---------------------------------------------------------------------------
-
-// Nearest xterm-256 entries to pi's builtin dark theme. Link deliberately takes
-// 110 rather than its true nearest (109) so it stays distinguishable from
-// inline code, which also rounds to 109.
+// Link takes 110, not its nearest 109, to stay distinct from inline code.
 const MarkdownPalette kDarkPalette = {
     /*Heading*/ 222,
     /*Code*/ 109,
@@ -25,18 +19,12 @@ const MarkdownPalette kDarkPalette = {
     /*TableBorder*/ 244,
 };
 
-// Recolour `base` while keeping the attributes it already carries, so a
-// blockquote's italic survives an inline code span inside it.
 Style Recolour(Style base, bool color, u8 fg, u8 extraAttr) {
   Style out = base;
   if (color) out.Fg = fg;
   out.Attr = (u8)(out.Attr | extraAttr);
   return out;
 }
-
-// ---------------------------------------------------------------------------
-// Character classes
-// ---------------------------------------------------------------------------
 
 bool IsSpaceCh(char c) { return c == ' ' || c == '\t'; }
 bool IsDigit(char c) { return c >= '0' && c <= '9'; }
@@ -46,8 +34,6 @@ bool IsPunct(char c) {
          (c >= '[' && c <= '`') || (c >= '{' && c <= '~');
 }
 
-// Non-ASCII bytes are treated as word characters: they are never markdown
-// syntax, and the flanking rules only need "is this a word boundary".
 bool IsWordByte(char c) { return !IsSpaceCh(c) && !IsPunct(c); }
 
 u32 LeadingSpaces(StrView s) {
@@ -88,19 +74,15 @@ StrView SpacesOf(Arena* a, u32 count) {
   return Repeat(a, SVL(" "), count);
 }
 
-// ---------------------------------------------------------------------------
-// Inline: atoms
-// ---------------------------------------------------------------------------
-
 enum : u8 { ATOM_TEXT = 0, ATOM_DELIM = 1, ATOM_STYLED = 2 };
 
 struct MdAtom {
   StrView Text;
-  Style St;       // ATOM_STYLED only
+  Style St;
   u8 Kind;
-  u8 Attr;        // emphasis attributes resolved onto this atom
+  u8 Attr;
   char DelimCh;
-  u8 DelimLeft;   // unmatched delimiter characters still available
+  u8 DelimLeft;
   bool CanOpen;
   bool CanClose;
 };
@@ -122,14 +104,12 @@ void PushAtomStyled(Array<MdAtom>* atoms, StrView text, Style st) {
   Array_Push(atoms, atom);
 }
 
-// Length of the backtick run starting at `i`.
 u32 RunLength(StrView s, u32 i, char c) {
   u32 n = 0;
   while (i + n < s.Length && s.Data[i + n] == c) n++;
   return n;
 }
 
-// CommonMark code span: a run of N backticks closed by a run of exactly N.
 bool ScanCodeSpan(StrView s, u32 i, u32* contentStart, u32* contentEnd, u32* next) {
   u32 open = RunLength(s, i, '`');
   u32 j = i + open;
@@ -142,8 +122,6 @@ bool ScanCodeSpan(StrView s, u32 i, u32* contentStart, u32* contentEnd, u32* nex
     if (close == open) {
       u32 cs = i + open;
       u32 ce = j;
-      // Strip one space from each side when both are present and the content
-      // is not entirely spaces.
       if (ce > cs + 1 && s.Data[cs] == ' ' && s.Data[ce - 1] == ' ') {
         bool allSpace = true;
         for (u32 k = cs; k < ce; k++)
@@ -163,8 +141,6 @@ bool ScanCodeSpan(StrView s, u32 i, u32* contentStart, u32* contentEnd, u32* nex
   return false;
 }
 
-// Matching close bracket for the `[`/`(` at `open`, honouring nesting and
-// backslash escapes. Returns the index of the closer or -1.
 i32 MatchDelimiter(StrView s, u32 open, char lo, char hi) {
   u32 depth = 0;
   for (u32 i = open; i < s.Length; i++) {
@@ -199,8 +175,6 @@ bool IsUrlStart(StrView s, u32 i, u32* schemeLen) {
   return false;
 }
 
-// GFM autolink extent: stop at whitespace, then trim trailing punctuation that
-// is almost always sentence punctuation rather than part of the URL.
 u32 BareUrlEnd(StrView s, u32 start) {
   u32 i = start;
   while (i < s.Length && !IsSpaceCh(s.Data[i]) && s.Data[i] != '<' && s.Data[i] != '>') i++;
@@ -212,7 +186,6 @@ u32 BareUrlEnd(StrView s, u32 start) {
       continue;
     }
     if (c == ')') {
-      // Keep a closing paren only when it balances one inside the URL.
       u32 opens = 0, closes = 0;
       for (u32 k = start; k < i; k++) {
         if (s.Data[k] == '(') opens++;
@@ -235,7 +208,6 @@ struct InlineCtx {
   Style Base;
 };
 
-// A link destination may be wrapped in <> and may be followed by a title.
 StrView ParseDestination(StrView inner) {
   StrView dest = TrimAscii(inner);
   if (dest.Length >= 2 && dest.Data[0] == '<') {
@@ -251,15 +223,12 @@ StrView ParseDestination(StrView inner) {
 
 void PushLinkAtoms(InlineCtx* ic, Array<MdAtom>* atoms, StrView text, StrView url) {
   Style linkSt = Recolour(ic->Base, ic->Color, ic->Pal->Link, ATTR_UNDERLINE);
-  // Link text is emitted as one styled run rather than re-tokenised; nested
-  // emphasis inside link text is rare and the extra pass is not worth it.
   PushAtomStyled(atoms, text.Length ? text : url, linkSt);
   if (url.Length == 0 || StrView_Eq(text, url)) return;
   StrView bare = url;
   if (bare.Length > 7 && memcmp(bare.Data, "mailto:", 7) == 0) bare = Slice(bare, 7, bare.Length);
   if (StrView_Eq(text, bare)) return;
-  // pi's non-hyperlink fallback: " (url)". Built as one run so the line model
-  // wraps it as a single token.
+  // pi's non-hyperlink fallback, built as one run so the line model wraps it as one token.
   StrBuf suffix = StrBuf_Make(ic->A, url.Length + 4);
   StrBuf_AppendCStr(&suffix, " (");
   StrBuf_Append(&suffix, url);
@@ -274,7 +243,6 @@ void Tokenize(InlineCtx* ic, StrView s, Array<MdAtom>* atoms) {
   while (i < s.Length) {
     char c = s.Data[i];
 
-    // Backslash escape: the escaped punctuation becomes a literal.
     if (c == '\\' && i + 1 < s.Length && IsPunct(s.Data[i + 1])) {
       PushAtomText(atoms, Slice(s, plain, i));
       PushAtomStyled(atoms, Slice(s, i + 1, i + 2), ic->Base);
@@ -283,7 +251,6 @@ void Tokenize(InlineCtx* ic, StrView s, Array<MdAtom>* atoms) {
       continue;
     }
 
-    // Code span: highest precedence, contents are not parsed further.
     if (c == '`') {
       u32 cs, ce, next;
       if (ScanCodeSpan(s, i, &cs, &ce, &next)) {
@@ -298,7 +265,6 @@ void Tokenize(InlineCtx* ic, StrView s, Array<MdAtom>* atoms) {
       continue;
     }
 
-    // Autolink: <scheme:...> or <user@host>.
     if (c == '<') {
       i32 close = -1;
       bool mail = false;
@@ -338,7 +304,6 @@ void Tokenize(InlineCtx* ic, StrView s, Array<MdAtom>* atoms) {
       }
     }
 
-    // Inline link.
     if (c == '[') {
       i32 rb = MatchDelimiter(s, i, '[', ']');
       if (rb > 0 && (u32)rb + 1 < s.Length && s.Data[rb + 1] == '(') {
@@ -354,7 +319,6 @@ void Tokenize(InlineCtx* ic, StrView s, Array<MdAtom>* atoms) {
       }
     }
 
-    // Bare URL (GFM autolink), only at a word boundary.
     {
       u32 schemeLen = 0;
       bool boundary = i == 0 || !IsWordByte(s.Data[i - 1]);
@@ -371,7 +335,6 @@ void Tokenize(InlineCtx* ic, StrView s, Array<MdAtom>* atoms) {
       }
     }
 
-    // Emphasis / strikethrough delimiter run.
     if (c == '*' || c == '_' || c == '~') {
       u32 n = RunLength(s, i, c);
       char before = i > 0 ? s.Data[i - 1] : ' ';
@@ -387,13 +350,12 @@ void Tokenize(InlineCtx* ic, StrView s, Array<MdAtom>* atoms) {
       atom.DelimCh = c;
       atom.DelimLeft = (u8)(n > 255 ? 255 : n);
       if (c == '~') {
-        // pi tightens marked's rule: no whitespace or `~` adjacent to the
-        // fence, and a closer may not be followed by another `~`.
+        // pi tightens marked's rule: no whitespace or `~` beside the fence, and a closer
+        // may not be followed by another `~`.
         atom.CanOpen = n == 2 && !afterSpace && after != '~';
         atom.CanClose = n == 2 && !beforeSpace && before != '~' && before != '\\';
       } else if (c == '_') {
-        // Intraword `_` never opens or closes, which is what keeps
-        // snake_case_names from turning into emphasis.
+        // Intraword `_` never opens or closes, keeping snake_case_names literal.
         atom.CanOpen = leftFlank && (!rightFlank || IsPunct(before));
         atom.CanClose = rightFlank && (!leftFlank || IsPunct(after));
       } else {
@@ -416,10 +378,7 @@ void Tokenize(InlineCtx* ic, StrView s, Array<MdAtom>* atoms) {
   PushAtomText(atoms, Slice(s, plain, s.Length));
 }
 
-// CommonMark's "process emphasis": walk closers left to right, pair each with
-// the nearest compatible opener, and stamp the resulting attribute onto every
-// atom in between. The rule-of-three refinement is deliberately omitted; it
-// only affects pathological runs of mixed punctuation.
+// The rule-of-three refinement is deliberately omitted.
 void ResolveEmphasis(Array<MdAtom>* atoms) {
   for (u32 close = 0; close < atoms->Count; close++) {
     MdAtom* closer = &atoms->Data[close];
@@ -464,7 +423,6 @@ void EmitAtoms(const Array<MdAtom>* atoms, Style base, Array<Span>* out) {
   for (u32 i = 0; i < atoms->Count; i++) {
     const MdAtom& atom = atoms->Data[i];
     if (atom.Kind == ATOM_DELIM) {
-      // Whatever was not consumed by a pairing is literal text.
       if (atom.DelimLeft == 0) continue;
       Style st = base;
       st.Attr = (u8)(st.Attr | atom.Attr);
@@ -477,19 +435,13 @@ void EmitAtoms(const Array<MdAtom>* atoms, Style base, Array<Span>* out) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Block rendering
-// ---------------------------------------------------------------------------
-
 struct MdCtx {
   Arena* A;
   Array<SpanLine>* Out;
   const MarkdownPalette* Pal;
   Style Base;
   u16 Width;
-  // Extra indent for a list starting at this nesting level, so that a nested
-  // list lands on pi's absolute 4-columns-per-depth grid rather than under the
-  // parent's content.
+  // Puts nested lists on pi's absolute 4-columns-per-depth grid.
   u32 ListIndent;
   bool Color;
   bool PendingBlank;
@@ -516,9 +468,7 @@ void PushBlankRow(MdCtx* ctx) {
   ctx->EmittedAny = true;
 }
 
-// One blank row is emitted between blocks, never before the first or after the
-// last. Holding it pending is what keeps a streaming reply from ending on a
-// blank row that appears and disappears as text arrives.
+// Held pending so a streaming reply never ends on a blank row that flickers.
 void FlushPendingBlank(MdCtx* ctx) {
   if (ctx->PendingBlank && ctx->EmittedAny) PushBlankRow(ctx);
   ctx->PendingBlank = false;
@@ -544,10 +494,6 @@ void InlineInto(MdCtx* ctx, StrView text, Style base, Array<Span>* out) {
   EmitAtoms(&atoms, base, out);
 }
 
-// ---------------------------------------------------------------------------
-// Line classification
-// ---------------------------------------------------------------------------
-
 struct FenceInfo {
   u32 Indent;
   u32 Length;
@@ -563,7 +509,6 @@ bool ParseFence(StrView line, FenceInfo* out) {
   u32 n = RunLength(line, indent, c);
   if (n < 3) return false;
   StrView info = TrimAscii(Slice(line, indent + n, line.Length));
-  // An info string on a backtick fence may not itself contain a backtick.
   if (c == '`') {
     for (u32 i = 0; i < info.Length; i++)
       if (info.Data[i] == '`') return false;
@@ -591,7 +536,6 @@ bool ParseAtxHeading(StrView line, u32* level, StrView* text) {
   u32 after = indent + n;
   if (after < line.Length && !IsSpaceCh(line.Data[after])) return false;
   StrView body = TrimAscii(Slice(line, after, line.Length));
-  // A closing run of `#` is decoration when preceded by a space.
   u32 end = body.Length;
   while (end > 0 && body.Data[end - 1] == '#') end--;
   if (end != body.Length && (end == 0 || IsSpaceCh(body.Data[end - 1])))
@@ -614,7 +558,6 @@ bool IsHorizontalRule(StrView line) {
   return count >= 3;
 }
 
-// `=` underlines a level-1 setext heading, `-` a level-2 one.
 u32 SetextLevel(StrView line) {
   u32 i = LeadingSpaces(line);
   if (i > 3 || i >= line.Length) return 0;
@@ -629,10 +572,10 @@ u32 SetextLevel(StrView line) {
 }
 
 struct ListMarker {
-  u32 Indent;       // columns before the marker
-  u32 ContentCol;   // columns before the item's content
-  u32 Number;       // ordered lists only
-  char Delim;       // '.', ')' or the bullet character
+  u32 Indent;
+  u32 ContentCol;
+  u32 Number;
+  char Delim;
   bool Ordered;
   bool Task;
   bool Checked;
@@ -666,12 +609,9 @@ bool ParseListMarker(StrView line, ListMarker* out) {
     return false;
   }
 
-  // The marker must be followed by a space, or be the whole line.
   if (i < line.Length && !IsSpaceCh(line.Data[i])) return false;
   u32 afterMarker = i;
   while (i < line.Length && IsSpaceCh(line.Data[i])) i++;
-  // A blank remainder, or more than four spaces of padding, both indent the
-  // content by exactly one column past the marker.
   if (i >= line.Length || i - afterMarker > 4) i = afterMarker + 1;
   marker.ContentCol = i;
 
@@ -686,7 +626,6 @@ bool ParseListMarker(StrView line, ListMarker* out) {
   return true;
 }
 
-// A GFM delimiter row: cells of `-` with optional leading/trailing `:`.
 bool IsTableDelimiter(StrView line, u32* columns) {
   StrView s = TrimAscii(line);
   if (s.Length == 0) return false;
@@ -724,8 +663,6 @@ u32 CountTableCells(StrView line) {
   if (s.Data[i] == '|') i++;
   u32 end = s.Length;
   if (end > i && s.Data[end - 1] == '|') {
-    // A trailing pipe closes the last cell rather than opening a new one,
-    // unless it is escaped.
     u32 backslashes = 0;
     while (end - 1 - backslashes > i && s.Data[end - 2 - backslashes] == '\\') backslashes++;
     if (backslashes % 2 == 0) end--;
@@ -748,14 +685,7 @@ bool IsHtmlBlockStart(StrView line) {
   return c == '!' || c == '/' || c == '?' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-// ---------------------------------------------------------------------------
-// Nested rendering (blockquotes, list items, table cells)
-// ---------------------------------------------------------------------------
-
-// Renders `content` as blocks at `innerWidth`, then re-emits each produced row
-// with `firstPrefix` on the first and `restPrefix` on the rest. The nested
-// row arrays are abandoned in the arena, which is the arena tradeoff already
-// documented in base/array.h; the waste is bounded by the block's own size.
+// Nested row arrays are abandoned in the arena; the waste is bounded by the block's size.
 void RenderNested(MdCtx* ctx, StrView content, Span firstPrefix, Span restPrefix,
                   StrView contPrefix, Style contStyle, u16 innerWidth, Style innerBase,
                   u32 childListIndent = 0) {
@@ -777,7 +707,6 @@ void RenderNested(MdCtx* ctx, StrView content, Span firstPrefix, Span restPrefix
     if (prefix.Text.Length) Array_Push(&spans, prefix);
     for (u32 j = 0; j < src.Spans.Count; j++) Array_Push(&spans, src.Spans.Data[j]);
 
-    // The nested row's own continuation sits inside ours, so concatenate.
     StrView continuation = contPrefix;
     Style continuationStyle = contStyle;
     if (src.HasContinuation && src.Continuation.Text.Length) {
@@ -789,10 +718,6 @@ void RenderNested(MdCtx* ctx, StrView content, Span firstPrefix, Span restPrefix
     PushRow(ctx, spans, Span{continuation, continuationStyle, true}, continuation.Length != 0);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Span wrapping (table cells only; transcript rows are wrapped by LineModel)
-// ---------------------------------------------------------------------------
 
 void WrapSpansToWidth(Arena* a, const Array<Span>* spans, u16 width,
                       Array<Array<Span>>* rows) {
@@ -831,7 +756,6 @@ void WrapSpansToWidth(Arena* a, const Array<Span>* spans, u16 width,
         col += tokenWidth;
         continue;
       }
-      // Overlong word: break it across rows on scalar boundaries.
       u32 j = 0;
       while (j < token.Length) {
         u32 segStart = j;
@@ -864,10 +788,6 @@ u32 SpansWidth(const Array<Span>* spans) {
   return total;
 }
 
-// ---------------------------------------------------------------------------
-// Blocks
-// ---------------------------------------------------------------------------
-
 void RenderHeading(MdCtx* ctx, u32 level, StrView text) {
   FlushPendingBlank(ctx);
   // pi strips the marker for h1/h2 and keeps a styled `### ` for h3-h6.
@@ -892,8 +812,7 @@ void RenderCodeBlock(MdCtx* ctx, StrView info, const StrView* bodyLines, u32 bod
   Style body = Recolour(ctx->Base, ctx->Color, ctx->Pal->CodeBlock, ATTR_NONE);
   StrView indent = SVL("  ");
 
-  // pi always prints three backticks regardless of the source fence, with the
-  // info string on the opening row.
+  // pi always prints three backticks regardless of the source fence.
   Array<Span> open = Array_Make<Span>(ctx->A, 2);
   if (info.Length) {
     StrBuf fence = StrBuf_Make(ctx->A, info.Length + 4);
@@ -928,10 +847,8 @@ void RenderHorizontalRule(MdCtx* ctx) {
   ctx->PendingBlank = true;
 }
 
-// Inline text whose source spanned several lines. pi keeps a soft break as a
-// real break (`applyTextWithNewlines` splits on \n and rejoins on \n), so the
-// inline pass runs over the whole block -- emphasis may cross a break -- and
-// the resulting spans are cut at every newline.
+// pi keeps a soft break as a real break, so the inline pass spans the whole block
+// (emphasis may cross a break) and the spans are cut at every newline.
 void PushInlineRows(MdCtx* ctx, StrView text, Style base) {
   if (text.Length == 0) return;
   Array<Span> spans = Array_Make<Span>(ctx->A, 8);
@@ -955,10 +872,6 @@ void PushInlineRows(MdCtx* ctx, StrView text, Style base) {
 }
 
 void RenderParagraphText(MdCtx* ctx, StrView text) { PushInlineRows(ctx, text, ctx->Base); }
-
-// ---------------------------------------------------------------------------
-// Tables
-// ---------------------------------------------------------------------------
 
 const u32 kMaxColumnWeight = 30;
 
@@ -992,7 +905,6 @@ void SplitTableRow(Arena* a, StrView line, u32 columns, Array<StrView>* cells) {
   while (cells->Count < columns) Array_Push(cells, StrView{"", 0});
 }
 
-// Longest unbroken word in a cell, which is the floor a column can shrink to.
 u32 LongestWord(StrView s) {
   u32 best = 0;
   u32 i = 0;
@@ -1010,10 +922,10 @@ void RenderTable(MdCtx* ctx, const StrView* lines, u32 lineCount, u32 columns) {
   FlushPendingBlank(ctx);
   Style border = Recolour(ctx->Base, ctx->Color, ctx->Pal->TableBorder, ATTR_NONE);
 
-  u32 rowCount = lineCount - 1;  // the delimiter row is not data
+  u32 rowCount = lineCount - 1;
   Array<Array<StrView>> rows = Array_Make<Array<StrView>>(ctx->A, rowCount);
   for (u32 i = 0; i < lineCount; i++) {
-    if (i == 1) continue;  // delimiter
+    if (i == 1) continue;
     Array<StrView> cells = Array_Make<StrView>(ctx->A, columns);
     SplitTableRow(ctx->A, lines[i], columns, &cells);
     Array_Push(&rows, cells);
@@ -1036,7 +948,6 @@ void RenderTable(MdCtx* ctx, const StrView* lines, u32 lineCount, u32 columns) {
     }
   }
 
-  // `| ` + cell + ` ` per column, plus the closing `|`.
   u32 overhead = columns * 3 + 1;
   u32 naturalTotal = overhead;
   for (u32 c = 0; c < columns; c++) naturalTotal += natural[c];
@@ -1045,8 +956,7 @@ void RenderTable(MdCtx* ctx, const StrView* lines, u32 lineCount, u32 columns) {
   if (naturalTotal <= ctx->Width) {
     for (u32 c = 0; c < columns; c++) width[c] = natural[c] ? natural[c] : 1;
   } else if (ctx->Width <= overhead || ctx->Width - overhead < columns) {
-    // Too narrow for even one column each: fall back to the raw source, which
-    // is what pi does.
+    // Too narrow for one column each: fall back to the raw source, as pi does.
     for (u32 i = 0; i < lineCount; i++) RenderParagraphText(ctx, TrimAscii(lines[i]));
     ctx->PendingBlank = true;
     return;
@@ -1062,7 +972,6 @@ void RenderTable(MdCtx* ctx, const StrView* lines, u32 lineCount, u32 columns) {
       width[c] = share;
       assigned += share;
     }
-    // Hand the rounding remainder to columns that are still clipped.
     for (u32 c = 0; c < columns && assigned < available; c++) {
       while (assigned < available && width[c] < natural[c]) {
         width[c]++;
@@ -1100,8 +1009,6 @@ void RenderTable(MdCtx* ctx, const StrView* lines, u32 lineCount, u32 columns) {
     Style cellBase = ctx->Base;
     if (header) cellBase.Attr = (u8)(cellBase.Attr | ATTR_BOLD);
 
-    // Render every cell, wrap it to its column, and pad all cells in the row
-    // out to the tallest one.
     Array<Array<Array<Span>>> wrapped = Array_Make<Array<Array<Span>>>(ctx->A, columns);
     u32 height = 1;
     for (u32 c = 0; c < columns; c++) {
@@ -1140,14 +1047,8 @@ void RenderTable(MdCtx* ctx, const StrView* lines, u32 lineCount, u32 columns) {
   ctx->PendingBlank = true;
 }
 
-// ---------------------------------------------------------------------------
-// Lists
-// ---------------------------------------------------------------------------
-
 const u32 kListIndent = 4;
 
-// A line belongs to the current item when it is indented to the item's content
-// column, or when it is a lazy paragraph continuation.
 bool IsItemContinuation(StrView line, u32 contentCol) {
   if (IsBlank(line)) return true;
   return LeadingSpaces(line) >= contentCol;
@@ -1155,16 +1056,12 @@ bool IsItemContinuation(StrView line, u32 contentCol) {
 
 void RenderList(MdCtx* ctx, const Array<StrView>* lines, u32* index);
 
-// Collects one item's raw content (marker stripped, continuation lines
-// dedented) and renders it through RenderNested so nesting, code blocks and
-// tables inside list items all work.
 void RenderListItem(MdCtx* ctx, const Array<StrView>* lines, u32* index, const ListMarker& marker,
                     u32 displayNumber, bool ordered) {
   StrBuf content = StrBuf_Make(ctx->A, 128);
   StrView first = lines->Data[*index];
   u32 contentStart = marker.ContentCol;
   if (marker.Task) {
-    // The checkbox becomes part of the marker, so it is not item content.
     StrView rest = Slice(first, contentStart, first.Length);
     u32 skip = 3;
     while (skip < rest.Length && IsSpaceCh(rest.Data[skip])) skip++;
@@ -1177,7 +1074,6 @@ void RenderListItem(MdCtx* ctx, const Array<StrView>* lines, u32* index, const L
   while (*index < lines->Count) {
     StrView line = lines->Data[*index];
     if (IsBlank(line)) {
-      // A blank only stays in the item if more item content follows.
       u32 look = *index;
       while (look < lines->Count && IsBlank(lines->Data[look])) look++;
       if (look >= lines->Count || LeadingSpaces(lines->Data[look]) < marker.ContentCol) break;
@@ -1217,10 +1113,6 @@ void RenderListItem(MdCtx* ctx, const Array<StrView>* lines, u32* index, const L
 
   StrView markerText = StrBuf_View(&label);
   u32 markerWidth = TextWidth(markerText);
-  // pi puts a nested list on an absolute 4-column grid, so a child list adds
-  // whatever this marker did not. A marker wider than the grid step (`- [x] `,
-  // or `100. `) would need a negative adjustment; there the child stays under
-  // the parent's content rather than backing out to the left of it.
   u32 ownWidth = markerWidth - ctx->ListIndent;
   u32 childIndent = ownWidth < 4 ? 4 - ownWidth : 0;
   Style bullet = Recolour(ctx->Base, ctx->Color, ctx->Pal->ListBullet, ATTR_NONE);
@@ -1268,10 +1160,6 @@ void RenderList(MdCtx* ctx, const Array<StrView>* lines, u32* index) {
   ctx->PendingBlank = true;
 }
 
-// ---------------------------------------------------------------------------
-// Blockquotes
-// ---------------------------------------------------------------------------
-
 bool IsQuoteLine(StrView line) {
   u32 i = LeadingSpaces(line);
   return i <= 3 && i < line.Length && line.Data[i] == '>';
@@ -1292,7 +1180,6 @@ void RenderQuote(MdCtx* ctx, const Array<StrView>* lines, u32* index) {
       (*index)++;
       continue;
     }
-    // Lazy continuation: a plain paragraph line directly under a quoted one.
     if (!first && !IsBlank(line) && !IsHorizontalRule(line)) {
       ListMarker ignored;
       FenceInfo fence;
@@ -1319,10 +1206,6 @@ void RenderQuote(MdCtx* ctx, const Array<StrView>* lines, u32* index) {
   ctx->PendingBlank = true;
 }
 
-// ---------------------------------------------------------------------------
-// Block dispatch
-// ---------------------------------------------------------------------------
-
 bool IsTableStart(const Array<StrView>* lines, u32 index, u32* columns) {
   if (index + 1 >= lines->Count) return false;
   StrView header = lines->Data[index];
@@ -1340,7 +1223,6 @@ bool IsTableStart(const Array<StrView>* lines, u32 index, u32* columns) {
   return true;
 }
 
-// Does a new block start here? Used to terminate paragraph accumulation.
 bool StartsNewBlock(const Array<StrView>* lines, u32 index) {
   StrView line = lines->Data[index];
   FenceInfo fence;
@@ -1358,7 +1240,6 @@ bool StartsNewBlock(const Array<StrView>* lines, u32 index) {
   return false;
 }
 
-// A trailing run of 2+ spaces, or a trailing backslash, is a hard break.
 bool HasHardBreak(StrView line, StrView* trimmed) {
   if (line.Length >= 1 && line.Data[line.Length - 1] == '\\') {
     *trimmed = Slice(line, 0, line.Length - 1);
@@ -1382,7 +1263,6 @@ void RenderParagraph(MdCtx* ctx, const Array<StrView>* lines, u32* index) {
     if (IsBlank(line)) break;
     if (collected.Count) {
       u32 level = SetextLevel(line);
-      // `---` under a paragraph is a setext underline, not a rule.
       if (level) {
         setext = level;
         (*index)++;
@@ -1406,8 +1286,7 @@ void RenderParagraph(MdCtx* ctx, const Array<StrView>* lines, u32* index) {
   }
 
   FlushPendingBlank(ctx);
-  // Each source line stays its own row, matching pi: only the hard-break
-  // markers themselves are stripped.
+  // Each source line stays its own row, matching pi.
   StrBuf joined = StrBuf_Make(ctx->A, 128);
   for (u32 i = 0; i < collected.Count; i++) {
     StrView line = collected.Data[i];
@@ -1432,7 +1311,7 @@ void RenderFencedCode(MdCtx* ctx, const Array<StrView>* lines, u32* index) {
   u32 start = *index;
   while (*index < lines->Count && !IsFenceClose(lines->Data[*index], fence)) (*index)++;
   u32 count = *index - start;
-  if (*index < lines->Count) (*index)++;  // closing fence
+  if (*index < lines->Count) (*index)++;
   RenderCodeBlock(ctx, fence.Info, lines->Data + start, count, fence.Indent);
 }
 
@@ -1464,7 +1343,7 @@ void RenderHtmlBlock(MdCtx* ctx, const Array<StrView>* lines, u32* index) {
 
 void RenderTableBlock(MdCtx* ctx, const Array<StrView>* lines, u32* index, u32 columns) {
   u32 start = *index;
-  *index += 2;  // header + delimiter
+  *index += 2;
   while (*index < lines->Count) {
     StrView line = lines->Data[*index];
     if (IsBlank(line)) break;
@@ -1489,7 +1368,6 @@ void RenderBlocks(MdCtx* ctx, StrView md) {
     if (i >= md.Length) break;
     i++;
   }
-  // A trailing newline yields a final empty line that is not a real blank.
   if (lines.Count && md.Length && md.Data[md.Length - 1] == '\n' &&
       lines.Data[lines.Count - 1].Length == 0) {
     lines.Count--;
@@ -1547,15 +1425,9 @@ void RenderBlocks(MdCtx* ctx, StrView md) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Input normalisation
-// ---------------------------------------------------------------------------
-
-// pi's trimPartialClosingFences: while a fence is open and the model has begun
-// typing its closing run, drop the partial run so the block does not visibly
-// shrink and regrow as the backticks arrive one at a time.
+// pi's trimPartialClosingFences: drop a partial closing run so an open block does
+// not shrink and regrow as the backticks arrive.
 StrView TrimPartialClosingFence(StrView md) {
-  // Find the last unclosed fence by replaying opens and closes.
   bool open = false;
   char fenceChar = '`';
   u32 fenceLen = 0;
@@ -1593,7 +1465,6 @@ StrView TrimPartialClosingFence(StrView md) {
   if (last.Length == 0 || last.Length >= fenceLen) return md;
   for (u32 k = 0; k < last.Length; k++)
     if (last.Data[k] != fenceChar) return md;
-  // Drop the partial run and the newline that precedes it.
   u32 cut = lastLineStart;
   if (cut > 0 && md.Data[cut - 1] == '\n') cut--;
   return Slice(md, 0, cut);
@@ -1613,7 +1484,7 @@ StrView NormalizeTabs(Arena* a, StrView md) {
   return StrBuf_View(&out);
 }
 
-}  // namespace
+}
 
 const MarkdownPalette& Markdown_DefaultPalette() { return kDarkPalette; }
 

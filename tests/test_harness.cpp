@@ -190,17 +190,13 @@ SessionResult FailRewriteArguments(void* context, Arena* arena, StrView toolName
   return SessionResult_Error(SessionStatus::InvalidArgument, SVL("tool hook failed"));
 }
 
-// Drives the before-tool gate from a script rather than a policy: each call is
-// matched by tool name, so one batch can mix blocked and allowed calls.
 struct GateScript {
   StrView BlockTool;
   StrView Reason;
   bool Terminate;
-  // Only this tool terminates, so a batch can be made to disagree.
   StrView TerminateOnlyTool;
   u32 Calls;
-  // Copied rather than viewed: what the gate is handed lives in the turn's
-  // scratch arena, which is long gone by the time the test asserts.
+  // Copied, not viewed: the gate's inputs live in the turn's recycled scratch arena.
   char LastCallId[64];
   u32 LastCallIdLength;
   char LastArgumentsJson[128];
@@ -258,8 +254,6 @@ SessionResult BlockingAfterTurn(void* context, Arena* arena,
   return SessionResult_Ok();
 }
 
-// Per-turn hook coverage: pi's prepareNextTurn / shouldStopAfterTurn /
-// getSteeringMessages / getFollowUpMessages / convertToLlm.
 struct TurnHookState {
   u32 PrepareCount;
   u32 ShouldStopCount;
@@ -267,15 +261,14 @@ struct TurnHookState {
   u32 FollowUpCount;
   u32 ConvertCount;
   u32 BeforeContextCount;
-  u32 StopAfterTurn;   // 1-based turn that requests the stop; 0 never stops
-  u32 SteeringBudget;  // how many polls actually yield a message
+  u32 StopAfterTurn;
+  u32 SteeringBudget;
   u32 FollowUpBudget;
   bool OverrideNextTurn;
   bool OverrideContext;
   bool KeepAssistantInOverride;
   u32 StopSeenContext[8];
   u32 StopSeenCount;
-  // Observations from the last invocation of each hook.
   u32 LastToolResults;
   u32 LastContextCount;
   u32 LastNewMessages;
@@ -341,8 +334,6 @@ SessionResult HookPrepareNextTurn(void* context, Arena* arena, const AgentTurnCo
     out->Profile.Effort = ModelEffort::Medium;
   }
   if (state->OverrideContext && state->PrepareCount == 1) {
-    // A realistic trim: drop old history but keep the turn that just finished,
-    // billed usage and all.
     out->HasContext = true;
     out->Context = Array_Make<Message>(arena, 2);
     Array_Push(&out->Context, Message_User(arena, SVL("override context")));
@@ -409,13 +400,10 @@ AgentHarnessConfig ScriptConfig(ScriptProvider* script, Tool* tools, u32 toolCou
   return config;
 }
 
-// Scripted answers for the turn-limit question: say Continue a fixed number of
-// times, then Stop. Records what it was asked so the wording stays covered.
 struct LimitPrompter {
   u32 ContinueTimes;
   u32 Calls;
-  // The question is arena-backed and that arena is recycled every turn, so it
-  // is copied out rather than kept as a view.
+  // Copied out: the question's arena is recycled every turn.
   char Questions[8][160];
   u32 LastChoiceCount;
   bool Unavailable;
@@ -449,9 +437,6 @@ u32 CountKind(const Array<SessionRecord>* records, SessionRecordKind kind) {
   return count;
 }
 
-// True when every record after the session root is a plain Message -- the
-// only kind an ordinary run/tool-batch/queue-flush ever appends in v2 (no
-// operation/generation/tool-start/queue/cancel/deferred/recovery records).
 bool AllNonRootAreMessages(const Array<SessionRecord>* records) {
   for (u32 i = 1; i < records->Count; i++)
     if (records->Data[i].Kind != SessionRecordKind::Message) return false;
@@ -464,12 +449,6 @@ bool ContextTextEq(const Array<Message>* messages, u32 index, Role role, const c
   return message->Kind == role && message->Content.Count > 0 &&
          StrView_EqCStr(message->Content.Data[0].Text, text);
 }
-
-// ---------------------------------------------------------------------------
-// Watch-event classification: counts each transient/durable kind so tests can
-// assert on meaningful totals (agent/turn/tool/retry/queue lifecycle, durable
-// cursor contiguity) without hard-coding a single brittle grand total.
-// ---------------------------------------------------------------------------
 
 struct WatchTally {
   u32 Durable;
@@ -653,10 +632,6 @@ bool RetryPolicyCaptureStream(void* context, Arena* arena, const Model* model, c
   return true;
 }
 
-// Fails every attempt outright (no retry configured), so the run stops on
-// the very first turn with a durable error message -- used to check that
-// TransientAgentEnd/TransientTurnEnd carry AgentTurnOutcome::Failed and the
-// provider's error text, not just the success path.
 bool ImmediateErrorProviderStream(void* context, Arena* arena, const Model* model,
                                   const LlmContext* llm, const StreamOptions* options,
                                   StreamSink sink, Message* out) {
@@ -672,9 +647,6 @@ bool ImmediateErrorProviderStream(void* context, Arena* arena, const Model* mode
   return false;
 }
 
-// Reproduces a response cut off at the output cap: the call itself
-// succeeds, but the tool_use block the model was mid-way through is never
-// closed, so the message carries text and no tool calls at all.
 bool TruncatedLengthProviderStream(void* context, Arena* arena, const Model* model,
                                    const LlmContext* llm, const StreamOptions* options,
                                    StreamSink sink, Message* out) {
@@ -758,12 +730,9 @@ void WaitForWatchThread(void* context) {
   ArenaRelease(&arena);
 }
 
-}  // namespace
+}
 
 static void TestHarnessReplayAndIncremental() {
-  // Provider replay excludes incomplete assistant turns even when they
-  // contain partial output, while preserving the surrounding user messages
-  // (session/replay.h; see test_session.cpp TestReplay for direct coverage).
   {
     Arena arena = ArenaCreate();
     Message messages[5];
@@ -786,8 +755,6 @@ static void TestHarnessReplayAndIncremental() {
     ArenaRelease(&arena);
   }
 
-  // Public snapshots own their records and indexes through the caller arena,
-  // so they remain usable after the harness releases its internal state.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -819,10 +786,6 @@ static void TestHarnessReplayAndIncremental() {
     ArenaRelease(&arena);
   }
 
-  // Core deterministic proof: AgentHarness_Init performs exactly one ReadAll;
-  // every later operation (run, tool batch, compaction, navigation, model/
-  // name/label changes, snapshot, watch, fork) folds incrementally and never
-  // rereads the log. Plain-run persistence is message-only.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -860,7 +823,7 @@ static void TestHarnessReplayAndIncremental() {
     Array<SessionRecord> afterRun = {};
     CHECK(SessionResult_IsOk(SessionLog_ReadAll(&harness.Log, &arena, &afterRun)));
     u64 afterRunCalls = memory.ReadAllCalls;
-    CHECK(afterRunCalls == baseline + 2);  // this explicit browsing ReadAll is expected to count
+    CHECK(afterRunCalls == baseline + 2);
     CHECK_ALL(executions == 1, afterRun.Count == 5, AllNonRootAreMessages(&afterRun));
 
     SessionReduction snap = {};
@@ -919,10 +882,6 @@ static void TestHarnessReplayAndIncremental() {
     ArenaRelease(&arena);
   }
 
-  // Provider usage lives on the assistant message itself; a retried attempt's
-  // usage never reaches storage since v2 has no durable per-attempt
-  // generation record -- only the final, successful attempt's message does,
-  // and exactly one assistant message is ever persisted for the turn.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -958,8 +917,6 @@ static void TestHarnessReplayAndIncremental() {
     ArenaRelease(&arena);
   }
 
-  // The assistant-turn retry layer (Config.Retry) emits a matched
-  // retry_start/retry_end pair around its backoff, tagged AssistantTurn.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -996,9 +953,6 @@ static void TestHarnessReplayAndIncremental() {
     ArenaRelease(&arena);
   }
 
-  // Config.Stream.Retry is copied per provider attempt so the harness can
-  // attach ProviderRequest lifecycle events without mutating caller-owned
-  // policy state.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -1041,12 +995,6 @@ static void TestHarnessReplayAndIncremental() {
 }
 
 static void TestHarnessLifecycle() {
-  // Every transient lifecycle event kind exposes a complete, self-contained
-  // AgentHarnessEvent -- this is the v2 replacement for deriving
-  // AgentStart/TurnStart/ToolStart/AgentEnd from the now-removed durable
-  // OperationStarted/ToolStarted/OperationFinished records: app/TUI code can
-  // translate straight from these fields (Turn, ToolCallId/ToolName/
-  // ToolArgsJson, Outcome/Error) without ever touching the tree.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -1130,9 +1078,6 @@ static void TestHarnessLifecycle() {
     ArenaRelease(&arena);
   }
 
-  // A turn that fails outright (no retry configured) still publishes
-  // TransientTurnEnd/TransientAgentEnd tagged AgentTurnOutcome::Failed with
-  // the provider's error text -- not just AgentTurnOutcome::Succeeded.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -1178,9 +1123,6 @@ static void TestHarnessLifecycle() {
     ArenaRelease(&arena);
   }
 
-  // A truncated response fails the run. Without the explicit check the empty
-  // tool batch reads as "the model is done" and reports success with the work
-  // half-finished.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -1226,10 +1168,6 @@ static void TestHarnessLifecycle() {
     ArenaRelease(&arena);
   }
 
-  // Compaction turns are tagged AgentTurnKind::Compaction throughout their
-  // lifecycle events (distinct from AgentTurnKind::Run), and queuing while
-  // idle publishes a TransientQueueUpdate with correctly incrementing counts
-  // even with no run in progress.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -1290,8 +1228,6 @@ static void TestHarnessLifecycle() {
     ArenaRelease(&arena);
   }
 
-  // A storage failure while appending the compaction record is reflected in
-  // both the returned result and the final lifecycle event.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -1473,7 +1409,7 @@ static void TestHarnessTranscriptProjection() {
   DurableId result = AppendSnapshotMessage(
       &harness, assistant, Message_ToolResult(&arena, SVL("call"), SVL("echo"),
                                              SVL("tool result"), false));
-  CheckTranscriptSuffixes(&harness);  // A one-message tail is just the tool result.
+  CheckTranscriptSuffixes(&harness);
   DurableId second = AppendSnapshotMessage(&harness, result, Message_User(&arena, SVL("two")));
   Message reply = Message_AssistantEmpty(&arena);
   Array_Push(&reply.Content, Content_Text(SVL("reply")));
@@ -1481,7 +1417,7 @@ static void TestHarnessTranscriptProjection() {
   DurableId sibling = AppendSnapshotMessage(
       &harness, first, Message_User(&arena, SVL("inactive sibling")));
   CHECK(DurableId_Eq(harness.Reduction.HeadId, tail));
-  CheckTranscriptSuffixes(&harness);  // The cursor includes the inactive sibling.
+  CheckTranscriptSuffixes(&harness);
   CHECK(SessionResult_IsOk(AgentHarness_SetName(&harness, SVL("non-message tail"))));
   CheckTranscriptSuffixes(&harness);
 
@@ -1557,7 +1493,6 @@ static void TestHarnessTranscriptOwnership() {
   CHECK_ALL(owned, snapshot.Transcript.Count == 3, watched.Transcript.Count == 2,
             watched.HasEarlierMessages, !snapshot.HasEarlierMessages);
 
-  // Poison the actual projection source, not just the append caller's input.
   for (u32 i = 1; i < harness.Records.Count; i++) {
     Message& source = harness.Records.Data[i].MessageEntry.Value;
     StrView fields[] = {source.ErrorMessage, source.Model, source.Provider,
@@ -1643,8 +1578,6 @@ static void TestHarnessTranscriptMemory() {
   CHECK(SessionResult_IsOk(AgentHarness_SetName(&harness, StrView{payload, payloadBytes})));
   CHECK(harness.State.Used >= (usize)payloadBytes * 4);
 
-  // Exercise plain suffix exclusion, partial compaction, and overlapping full
-  // compaction. None may commit the omitted payloads in the caller's arena.
   DurableId head = tail;
   for (u32 phase = 0; phase < 3; phase++) {
     if (phase)
@@ -1749,8 +1682,6 @@ static void TestHarnessTranscriptWatchFailures() {
       &harness, root, Message_User(&arena, SVL("off branch")));
   AppendSnapshotCompaction(&harness, active, root, active,
                             Message_User(&arena, SVL("valid span")));
-  // Production append rejects off-branch spans. Corrupt only the in-memory
-  // projection fixture, then restore it before any further durable operation.
   SessionRecord* damaged = &harness.Records.Data[harness.Records.Count - 1];
   DurableId savedThrough = damaged->CompactionEntry.ThroughEntryId;
   damaged->CompactionEntry.ThroughEntryId = inactive;
@@ -1870,8 +1801,6 @@ static void TestHarnessTranscriptWatchBoundary() {
       for (u32 i = 0; i < count; i++)
         CHECK(snapshot.Transcript.Data[i].Timestamp == cursor - count + i);
     }
-    // Releasing snapshot storage while still registered cannot release the
-    // watch's queued events or prevent later durable publication.
     ArenaRelease(&output);
     Message afterRelease = Message_User(&arena, SVL("after release"));
     afterRelease.Timestamp = harness.Records.Count;
@@ -1906,10 +1835,6 @@ static void TestHarnessTranscriptWatchBoundary() {
 }
 
 static void TestHarnessWatchers() {
-  // WatchTranscript atomically returns a snapshot cursor and then delivers every
-  // durable transition plus transient agent/turn/provider lifecycle events in
-  // publication order; message-only persistence means far fewer durable
-  // events than transient ones.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -1964,8 +1889,6 @@ static void TestHarnessWatchers() {
               ContextTextEq(&complete.Transcript, 0, Role::User, "watched prompt"),
               ContextTextEq(&complete.Transcript, 1, Role::Assistant, "watched response"));
 
-    // Cheap views over the same state: a summary, metadata, and a watch that
-    // skips the transcript copy entirely.
     AgentHarnessSummary summary = {};
     CHECK(SessionResult_IsOk(AgentHarness_Summarize(&arena, &harness, &summary)));
     CHECK_ALL(summary.Cursor == complete.Cursor, summary.RecordCount == 3,
@@ -1987,8 +1910,6 @@ static void TestHarnessWatchers() {
     ArenaRelease(&arena);
   }
 
-  // Slow watchers fail explicitly and require a new snapshot instead of
-  // silently dropping events.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2016,10 +1937,6 @@ static void TestHarnessWatchers() {
     ArenaRelease(&arena);
   }
 
-  // Concurrent control-plane calls (steering, cancel) while a provider call
-  // is blocked are memory-only -- they never append a durable record -- yet
-  // the watcher still sees the run's own durable records in strict,
-  // gap-free cursor order.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2078,8 +1995,6 @@ static void TestHarnessWatchers() {
     ArenaRelease(&arena);
   }
 
-  // Closing a watcher wakes a blocked consumer before the watcher resources
-  // are destroyed.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2122,8 +2037,6 @@ static void TestHarnessWatchers() {
     ArenaRelease(&arena);
   }
 
-  // Model/profile changes atomically replace the active request
-  // configuration and release their admission reservation.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2166,9 +2079,6 @@ static void TestHarnessWatchers() {
 }
 
 static void TestHarnessToolsAndHooks() {
-  // Parallel tools publish updates and finalized completions in actual finish
-  // order while durable tool-result messages remain in assistant source
-  // order.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2243,8 +2153,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // Central validation rejects malformed arguments before the tool executes,
-  // and unsupported custom schemas fail closed during harness initialization.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2313,9 +2221,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // Awaited hooks may alter accepted input, request context, provider
-  // settings, and tool arguments; all effect-facing values are applied
-  // before tools run, and every appended record is still a plain Message.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2369,8 +2274,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // A successful provider turn followed by an AfterTurn hook failure must
-  // publish the final agent lifecycle event as failed, matching its result.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2403,9 +2306,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // Hook failure becomes a typed HookError while still completing the
-  // assistant/tool-result group -- with a normal error tool result recorded
-  // -- without executing the blocked tool effect.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2448,8 +2348,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // The before-tool gate, pi's `beforeToolCall`. A block with no reason must
-  // produce pi's exact fallback wording, and the tool effect must not run.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2480,7 +2378,6 @@ static void TestHarnessToolsAndHooks() {
     config.Hooks.User = &gate;
     config.Hooks.BeforeTool = ScriptedToolGate;
     CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
-    // A block is a tool result, not a harness failure: the run continues.
     CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("gate me"))));
     SessionReduction snapshot = {};
     CHECK(SessionResult_IsOk(AgentHarness_Snapshot(&arena, &harness, &snapshot)));
@@ -2490,8 +2387,6 @@ static void TestHarnessToolsAndHooks() {
               context.Data[2].Kind == Role::ToolResult, context.Data[2].IsError,
               ContextTextEq(&context, 2, Role::ToolResult, "Tool execution was blocked"),
               ContextTextEq(&context, 3, Role::Assistant, "after block"));
-    // The gate sees the call id and the canonical arguments, which is all a
-    // policy has to decide on.
     CHECK(StrView_EqCStr(StrView{gate.LastCallId, gate.LastCallIdLength}, "gate-call"));
     CHECK(StrView_EqCStr(StrView{gate.LastArgumentsJson, gate.LastArgumentsJsonLength},
                          "{\"k\":1}"));
@@ -2500,8 +2395,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // A reason is the tool result verbatim -- no prefix, no decoration -- and a
-  // blocked call does not stop its siblings from running.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2543,7 +2436,6 @@ static void TestHarnessToolsAndHooks() {
     CHECK(SessionResult_IsOk(AgentHarness_Snapshot(&arena, &harness, &snapshot)));
     Array<Message> context = {};
     CHECK(SessionResult_IsOk(SessionReducer_Context(&arena, &snapshot, snapshot.HeadId, &context)));
-    // Cleared before any call runs, so both are asked before either acts.
     CHECK_ALL(gate.Calls == 2, executions == 1,
               ContextTextEq(&context, 2, Role::ToolResult, "policy says no"),
               context.Data[2].IsError,
@@ -2554,8 +2446,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // `terminate` ends the run only when every call in the batch sets it. Here
-  // only the blocked one does, so the sibling's result still drives a next turn.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2605,7 +2495,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // ... and when every call terminates, the turn ends without another request.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2649,9 +2538,6 @@ static void TestHarnessToolsAndHooks() {
     ArenaRelease(&arena);
   }
 
-  // Steering queued (memory-only) while a tool effect is active folds onto
-  // the tree right after the tool-result batch, before the next provider
-  // request -- with no durable queue record anywhere.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2701,9 +2587,6 @@ static void TestHarnessToolsAndHooks() {
 }
 
 static void TestHarnessPerTurnHooks() {
-  // ShouldStopAfterTurn ends the run gracefully after the requested turn: the
-  // assistant message and its tool results are still durable, but no further
-  // provider request starts and neither steering source is polled.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2741,15 +2624,11 @@ static void TestHarnessPerTurnHooks() {
     CHECK(SessionResult_IsOk(AgentHarness_Snapshot(&arena, &harness, &snapshot)));
     Array<Message> context = {};
     CHECK(SessionResult_IsOk(SessionReducer_Context(&arena, &snapshot, snapshot.HeadId, &context)));
-    // prompt + run-start steering + assistant + tool result. The only steering
-    // poll is the one before the first turn; the post-turn checkpoint is
-    // skipped entirely by the graceful stop.
     CHECK_ALL(script.Index == 1, hooks.PrepareCount == 1, hooks.ShouldStopCount == 1,
               hooks.SteeringCount == 1, hooks.FollowUpCount == 0, context.Count == 4,
               ContextTextEq(&context, 1, Role::User, "hook steering"),
               context.Data[2].Kind == Role::Assistant,
               context.Data[3].Kind == Role::ToolResult);
-    // The turn context reports the finished turn, not a partial one.
     CHECK_ALL(hooks.LastAssistantSeen, hooks.LastToolResults == 1,
               hooks.LastContextCount == 4, hooks.LastNewMessages == 4);
 
@@ -2761,8 +2640,6 @@ static void TestHarnessPerTurnHooks() {
     ArenaRelease(&arena);
   }
 
-  // PrepareNextTurn's model and effort override applies to every later turn of
-  // the same run, and never leaks into AgentHarnessConfig.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2802,7 +2679,6 @@ static void TestHarnessPerTurnHooks() {
               hooks.ProviderEffort[0] == ModelEffort::None,
               hooks.ProviderEffort[1] == ModelEffort::Medium,
               hooks.ProviderEffort[2] == ModelEffort::Medium);
-    // The harness config itself is untouched: overrides are run-scoped only.
     CHECK_ALL(StrView_EqCStr(harness.Config.ModelInfo.Id, "script-model"),
               harness.Config.Stream.Profile.Effort == ModelEffort::None);
     CHECK(SessionResult_IsOk(AgentHarness_Close(&harness)));
@@ -2810,11 +2686,6 @@ static void TestHarnessPerTurnHooks() {
     ArenaRelease(&arena);
   }
 
-  // A PrepareNextTurn context override replaces the branch context but stays
-  // live: later turns accumulate their own assistant message and tool results
-  // onto it. A frozen snapshot would re-send an identical request every turn,
-  // which a non-terminating tool batch turns into an unbounded loop.
-  // ShouldStopAfterTurn observes the override, not the pre-override context.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2849,20 +2720,12 @@ static void TestHarnessPerTurnHooks() {
     CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
     CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("override the context"))));
 
-    // Turn 1 sees the real branch (just the prompt). Turn 2 sees the 1-message
-    // override installed after turn 1. Turn 3 sees that override plus turn 2's
-    // own assistant message and tool result.
     CHECK_ALL(script.Index == 3, hooks.ProviderTurnCount == 3,
               hooks.ProviderMessageCount[0] == 1, hooks.ProviderMessageCount[1] == 1,
               hooks.ProviderMessageCount[2] == 3);
-    // The stop hook sees the post-override context on the turn that installed
-    // it (1), then the accumulated one: +assistant +tool result (3), then the
-    // final text-only turn's assistant (4). Never the growing real branch.
     CHECK_ALL(hooks.StopSeenCount == 3, hooks.StopSeenContext[0] == 1,
               hooks.StopSeenContext[1] == 3, hooks.StopSeenContext[2] == 4);
 
-    // The durable branch is untouched by the override: prompt + 2x(assistant,
-    // tool result) + final assistant.
     SessionReduction snapshot = {};
     CHECK(SessionResult_IsOk(AgentHarness_Snapshot(&arena, &harness, &snapshot)));
     Array<Message> context = {};
@@ -2877,9 +2740,6 @@ static void TestHarnessPerTurnHooks() {
     ArenaRelease(&arena);
   }
 
-  // A message from the in-memory queue must reach a live context override too,
-  // not just a hook-sourced one -- otherwise a user's steering/follow-up is
-  // durably recorded but invisible to the model.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2905,9 +2765,6 @@ static void TestHarnessPerTurnHooks() {
     CHECK(SessionResult_IsOk(AgentHarness_QueueFollowUp(&harness, SVL("queued follow-up"))));
     CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("start"))));
 
-    // Turn 1 sends the real branch (the prompt). The override installed after
-    // turn 1 holds 1 message; the queued follow-up drains onto it, so turn 2
-    // sends 2. A queue drain that bypassed the accumulator would send 1.
     CHECK_ALL(script.Index == 2, hooks.ProviderTurnCount == 2,
               hooks.ProviderMessageCount[0] == 1, hooks.ProviderMessageCount[1] == 2);
 
@@ -2922,9 +2779,6 @@ static void TestHarnessPerTurnHooks() {
     ArenaRelease(&arena);
   }
 
-  // The hook message sources drive the same two checkpoints the in-memory
-  // queues do: steering continues the turn loop, follow-up restarts a run that
-  // would otherwise have stopped.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2942,8 +2796,8 @@ static void TestHarnessPerTurnHooks() {
     ScriptProvider script = {steps, 3, 0};
 
     TurnHookState hooks = {};
-    hooks.SteeringBudget = 1;   // consumed by the pre-first-turn poll
-    hooks.FollowUpBudget = 1;   // one extra run turn after the agent would stop
+    hooks.SteeringBudget = 1;
+    hooks.FollowUpBudget = 1;
     AgentHarness harness = {};
     AgentHarnessConfig config = ScriptConfig(&script, nullptr, 0);
     config.Hooks.User = &hooks;
@@ -2962,8 +2816,6 @@ static void TestHarnessPerTurnHooks() {
               ContextTextEq(&context, 2, Role::Assistant, "first"),
               ContextTextEq(&context, 3, Role::User, "hook follow-up"),
               ContextTextEq(&context, 4, Role::Assistant, "second"));
-    // Steering is polled before turn 1 and after each of the 2 turns;
-    // follow-up only at the two points the run would have stopped.
     CHECK_ALL(hooks.SteeringCount == 3, hooks.FollowUpCount == 2,
               hooks.SteeringBudget == 0, hooks.FollowUpBudget == 0);
 
@@ -2975,8 +2827,6 @@ static void TestHarnessPerTurnHooks() {
     ArenaRelease(&arena);
   }
 
-  // ConvertToLlm is the last rewrite before the request is built: it runs
-  // after BeforeContext, and only its output reaches the provider.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -2999,8 +2849,6 @@ static void TestHarnessPerTurnHooks() {
     CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
     CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("only prompt"))));
 
-    // 1 durable prompt -> BeforeContext appends 1 -> ConvertToLlm sees 2 and
-    // appends 1 -> the provider request carries 3. Neither marker is durable.
     CHECK_ALL(hooks.BeforeContextCount == 1, hooks.ConvertCount == 1,
               hooks.BeforeContextLastCount == 2, hooks.ConvertLastCount == 2,
               hooks.ProviderTurnCount == 1, hooks.ProviderMessageCount[0] == 3);
@@ -3016,8 +2864,6 @@ static void TestHarnessPerTurnHooks() {
     ArenaRelease(&arena);
   }
 
-  // Both new hook families surface a typed HookError, and a failing hook stops
-  // the run at its own checkpoint.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3063,7 +2909,6 @@ static void TestHarnessPerTurnHooks() {
     config.Hooks.User = &steeringCalls;
     config.Hooks.GetSteeringMessages = FailSteeringMessages;
     CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
-    // The run-start poll fails before the first provider request.
     CHECK(AgentHarness_Run(&harness, SVL("fail steering")).Status == SessionStatus::HookError);
     CHECK_ALL(steeringCalls == 1, script.Index == 0);
     CHECK(SessionResult_IsOk(AgentHarness_Close(&harness)));
@@ -3073,7 +2918,6 @@ static void TestHarnessPerTurnHooks() {
 }
 
 static void TestHarnessCancellationAndBranches() {
-  // Append failure faults the harness before any provider effect starts.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3095,8 +2939,6 @@ static void TestHarnessCancellationAndBranches() {
     ArenaRelease(&arena);
   }
 
-  // Cancellation accepted after an assistant tool call is durable but before
-  // dispatch materializes an error result without invoking the tool.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3159,10 +3001,6 @@ static void TestHarnessCancellationAndBranches() {
     ArenaRelease(&arena);
   }
 
-  // Cancellation completeness: every live tool call still receives exactly
-  // one normal result before the harness stops -- cancellation mid-batch
-  // never leaves a dispatched call without a result -- and no further
-  // provider request happens afterward.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3225,8 +3063,6 @@ static void TestHarnessCancellationAndBranches() {
     ArenaRelease(&arena);
   }
 
-  // Cancellation accepted while an after-turn hook is still finalizing wins
-  // the locked completion race and produces one aborted terminal event.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3276,8 +3112,6 @@ static void TestHarnessCancellationAndBranches() {
     ArenaRelease(&arena);
   }
 
-  // An empty aborted assistant remains in the durable transcript but is not
-  // replayed to the provider when the user continues the conversation.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3326,11 +3160,6 @@ static void TestHarnessCancellationAndBranches() {
     ArenaRelease(&arena);
   }
 
-  // Restart: a fresh harness Init over a log left with an orphaned assistant
-  // tool call (simulating a crash before the tool's result landed) never
-  // suspends or asks for reconciliation -- it just loads normally. The next
-  // provider request transiently synthesizes "No result provided" for the
-  // orphaned call; the synthetic result is never persisted.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3407,8 +3236,6 @@ static void TestHarnessCancellationAndBranches() {
     ArenaRelease(&arena);
   }
 
-  // Compaction appends exactly one Compaction entry carrying its own usage,
-  // replaces prior context with the summary, and clears provider context.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3459,9 +3286,6 @@ static void TestHarnessCancellationAndBranches() {
     ArenaRelease(&arena);
   }
 
-  // Navigation restores ancestry-derived settings, the next run branches from
-  // the checked-out head, and a fork of a labeled branch carries the whole
-  // ancestry (model/thinking/tools/message/branch-label) across.
   {
     Arena arena = ArenaCreate();
     MemoryRepository memory = {};
@@ -3518,9 +3342,6 @@ static void TestHarnessCancellationAndBranches() {
     entries[7].Kind = SessionRecordKind::Message;
     entries[7].MessageEntry.ParentId = entries[6].EntryId;
     entries[7].MessageEntry.Value = Message_User(&arena, SVL("new branch message"));
-    // Appended through the harness's own seam (not the raw log) so the
-    // harness's maintained Records/Reduction stay in sync -- v2 never
-    // reloads to pick up out-of-band writes.
     CHECK(SessionResult_IsOk(AgentHarness_Append(&harness, entries, 8)));
     CHECK(SessionResult_IsOk(AgentHarness_Navigate(&harness, entries[7].EntryId)));
 
@@ -3582,10 +3403,6 @@ static void TestHarnessCancellationAndBranches() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Automatic compaction: fires from inside the turn loop when the context eats
-// into the window's reserved headroom, and never as a nested agent lifecycle.
-// ---------------------------------------------------------------------------
 static AgentHarnessConfig AutoCompactConfig(ScriptProvider* script, Tool* tools, u32 toolCount,
                                             bool enabled, u32 keepRecentTokens = 10) {
   AgentHarnessConfig config = ScriptConfig(script, tools, toolCount);
@@ -3647,7 +3464,6 @@ static void TestHarnessAutoCompaction() {
 
   ScriptToolCall calls[1] = {ScriptToolCall{SVL("echo"), SVL("call-1"), SVL("{\"x\":1}")}};
 
-  // Over the threshold: the loop compacts once before the next provider call.
   {
     Arena arena = ArenaCreate((usize)32 << 20);
     MemoryRepository memory = {};
@@ -3677,14 +3493,12 @@ static void TestHarnessAutoCompaction() {
         AgentHarness_Watch(&harness, 128, &watch)));
 
     CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("hello"))));
-    CHECK(script.Index == 3);  // turn, compaction summary, final turn
+    CHECK(script.Index == 3);
 
     Array<SessionRecord> records = {};
     CHECK(SessionResult_IsOk(SessionLog_ReadAll(&harness.Log, &arena, &records)));
     CHECK(CountKind(&records, SessionRecordKind::Compaction) == 1);
 
-    // The compaction turn is reported at turn level only: a run must never
-    // contain a nested Compaction-tagged agent lifecycle.
     u32 compactionTurnStarts = 0, compactionTurnEnds = 0, compactionAgentEvents = 0;
     u32 agentEnds = 0;
     while (agentEnds == 0) {
@@ -3715,8 +3529,6 @@ static void TestHarnessAutoCompaction() {
     ArenaRelease(&arena);
   }
 
-  // The summarizer sees only the folded span. The retained tail survives
-  // verbatim after the summary, so it must not also be summarized.
   {
     Arena arena = ArenaCreate((usize)32 << 20);
     MemoryRepository memory = {};
@@ -3745,7 +3557,6 @@ static void TestHarnessAutoCompaction() {
     CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("keep this turn"))));
     CHECK(script.Index == 3);
 
-    // [fold this turn, folded answer, summarize prompt], then [summary, kept].
     CHECK_ALL(probe.CompactionMessages == 3, probe.CompactionSawFolded,
               !probe.CompactionSawTail, probe.LastRunMessages == 2,
               probe.LastRunStartsWithSummary);
@@ -3755,9 +3566,6 @@ static void TestHarnessAutoCompaction() {
     ArenaRelease(&arena);
   }
 
-  // Automatic compaction sizes against what the request will actually carry.
-  // A small context override must not be destroyed by a compaction triggered
-  // by the large durable branch it replaced.
   {
     Arena arena = ArenaCreate((usize)32 << 20);
     MemoryRepository memory = {};
@@ -3766,8 +3574,6 @@ static void TestHarnessAutoCompaction() {
     SessionLog log = {};
     CHECK(SessionResult_IsOk(CreateSession(&repository, &arena, &log)));
 
-    // Turn 1 reports 700 prompt tokens, past the 600-token threshold, so the
-    // branch alone would compact before turn 2.
     ScriptStep steps[3] = {};
     steps[0].Tools = calls;
     steps[0].ToolCount = 1;
@@ -3780,9 +3586,6 @@ static void TestHarnessAutoCompaction() {
 
     TurnHookState hooks = {};
     hooks.OverrideContext = true;
-    // The trimmed context keeps turn 1's assistant message, which carries the
-    // 700-token usage report. Sizing that anchor as if it still paid for the
-    // discarded history would compact and destroy the override.
     hooks.KeepAssistantInOverride = true;
     AgentHarness harness = {};
     AgentHarnessConfig config = AutoCompactConfig(&script, echo, 1, true);
@@ -3791,8 +3594,6 @@ static void TestHarnessAutoCompaction() {
     CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
     CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("override then compact"))));
 
-    // The trimmed override is genuinely small, so no compaction turn is spent
-    // and the override survives: exactly 2 provider calls, no Compaction entry.
     Array<SessionRecord> records = {};
     CHECK(SessionResult_IsOk(SessionLog_ReadAll(&harness.Log, &arena, &records)));
     CHECK_ALL(script.Index == 2, CountKind(&records, SessionRecordKind::Compaction) == 0,
@@ -3802,7 +3603,6 @@ static void TestHarnessAutoCompaction() {
     ArenaRelease(&arena);
   }
 
-  // Under the threshold: nothing compacts.
   {
     Arena arena = ArenaCreate((usize)32 << 20);
     MemoryRepository memory = {};
@@ -3834,7 +3634,6 @@ static void TestHarnessAutoCompaction() {
     ArenaRelease(&arena);
   }
 
-  // A disabled policy never fires, however much context accumulates.
   {
     Arena arena = ArenaCreate((usize)32 << 20);
     MemoryRepository memory = {};
@@ -3866,8 +3665,6 @@ static void TestHarnessAutoCompaction() {
     ArenaRelease(&arena);
   }
 
-  // With a budget that spans two user turns, the tail is retained: the summary
-  // replaces only the older prefix and the recent turns survive verbatim.
   {
     Arena arena = ArenaCreate((usize)32 << 20);
     MemoryRepository memory = {};
@@ -3879,10 +3676,10 @@ static void TestHarnessAutoCompaction() {
     ScriptStep steps[4] = {};
     steps[0].Text = SVL("ok");
     steps[0].Stop = StopReason::Stop;
-    steps[0].Use = PromptUsage(100);  // first run stays under the threshold
+    steps[0].Use = PromptUsage(100);
     steps[1].Tools = calls;
     steps[1].ToolCount = 1;
-    steps[1].Use = PromptUsage(700);  // second run crosses it
+    steps[1].Use = PromptUsage(700);
     steps[2].Text = SVL("compact summary");
     steps[2].Stop = StopReason::Stop;
     steps[3].Text = SVL("done");
@@ -3907,7 +3704,6 @@ static void TestHarnessAutoCompaction() {
     CHECK(SessionResult_IsOk(
         SessionReducer_Context(&arena, &snapshot, snapshot.HeadId, &context)));
 
-    // The summary leads, the first user turn is gone, and the second survives.
     bool sawSummary = false, sawHello = false, sawSecond = false;
     for (u32 i = 0; i < context.Count; i++) {
       const Message* message = &context.Data[i];
@@ -3925,8 +3721,6 @@ static void TestHarnessAutoCompaction() {
     ArenaRelease(&arena);
   }
 
-  // A failing compaction turn aborts the run with a message that names
-  // compaction, rather than letting the provider reject an oversized request.
   {
     Arena arena = ArenaCreate((usize)32 << 20);
     MemoryRepository memory = {};
@@ -3944,7 +3738,7 @@ static void TestHarnessAutoCompaction() {
 
     AgentHarness harness = {};
     AgentHarnessConfig config = AutoCompactConfig(&script, echo, 1, true);
-    config.Retry.Enabled = false;  // fail on the first compaction attempt
+    config.Retry.Enabled = false;
     CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
 
     SessionResult run = AgentHarness_Run(&harness, SVL("hello"));
@@ -3961,9 +3755,6 @@ static void TestHarnessAutoCompaction() {
   }
 }
 
-// Closing a watch stops further publication but must not discard what was
-// already published: a consumer that shuts down right after a run still needs
-// that run's trailing turn_end/agent_end.
 static void TestHarnessWatchDrainsAfterClose() {
   Arena arena = ArenaCreate((usize)32 << 20);
   MemoryRepository memory = {};
@@ -3989,8 +3780,7 @@ static void TestHarnessWatchDrainsAfterClose() {
 
   CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("hello"))));
 
-  // Request the close before reading anything, so every event of the run is
-  // still sitting in the ring buffer.
+  // Close before reading so every event of the run is still in the ring buffer.
   CHECK(SessionResult_IsOk(AgentHarness_WatchRequestClose(&watch)));
   CHECK_ALL(watch.Closed, !watch.Registered, watch.Owner == nullptr,
             harness.WatcherCount == 0);
@@ -4017,9 +3807,6 @@ static void TestHarnessWatchDrainsAfterClose() {
   ArenaRelease(&arena);
 }
 
-// Ring-buffer behaviour under a consumer that cannot keep up. Driving the
-// publish seams directly keeps this focused on the watcher rather than on a
-// provider script's timing.
 void TestHarnessWatchOverflow() {
   Arena arena = ArenaCreate();
   MemoryRepository memory = {};
@@ -4036,8 +3823,6 @@ void TestHarnessWatchOverflow() {
   AgentHarness harness = {};
   CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
 
-  // Adjacent text deltas on the same content block collapse into one queued
-  // event, so a burst far larger than the ring still fits.
   {
     AgentHarnessWatch watch = {};
     CHECK(SessionResult_IsOk(
@@ -4056,13 +3841,10 @@ void TestHarnessWatchOverflow() {
     CHECK(SessionResult_IsOk(AgentHarness_WatchNext(&arena, &watch, &event)));
     CHECK_ALL(event.Kind == AgentHarnessEventKind::TransientStream,
               event.Stream.Delta.Length == 200);
-    // Draining the ring returns its backing memory rather than growing forever.
     CHECK_ALL(watch.Count == 0, watch.Mem.Used == 0);
     CHECK(SessionResult_IsOk(AgentHarness_WatchClose(&watch)));
   }
 
-  // A different content index cannot merge, so the ring genuinely overflows.
-  // The watcher keeps running and reports the gap instead of dying.
   {
     AgentHarnessWatch watch = {};
     CHECK(SessionResult_IsOk(
@@ -4071,14 +3853,12 @@ void TestHarnessWatchOverflow() {
     for (u32 i = 0; i < 20; i++) {
       StreamEvent delta = {};
       delta.Kind = StreamEventKind::TextDelta;
-      delta.ContentIndex = i;  // never adjacent-mergeable
+      delta.ContentIndex = i;
       delta.Delta = SVL("y");
       AgentHarness_PublishStream(&harness, &delta);
     }
     CHECK_ALL(!watch.Lagged, watch.Count == 8, watch.DroppedTransient == 12);
 
-    // The gap is reported once, at the head, and then the stream resumes with
-    // the oldest surviving event.
     AgentHarnessEvent event = {};
     CHECK(SessionResult_IsOk(AgentHarness_WatchNext(&arena, &watch, &event)));
     CHECK_ALL(event.Kind == AgentHarnessEventKind::TransientEventsDropped,
@@ -4089,8 +3869,6 @@ void TestHarnessWatchOverflow() {
     CHECK(SessionResult_IsOk(AgentHarness_WatchClose(&watch)));
   }
 
-  // Durable records are never sacrificed to make room: losing one would leave
-  // the consumer's transcript short an entry.
   {
     AgentHarnessWatch watch = {};
     CHECK(SessionResult_IsOk(
@@ -4110,19 +3888,12 @@ void TestHarnessWatchOverflow() {
         dropped += event.Dropped.Count;
       if (event.Kind == AgentHarnessEventKind::TransientAgentEnd) break;
     }
-    // A four-slot ring cannot hold a whole run, so events were certainly
-    // discarded -- yet every durable record still arrived.
     SessionReduction reduction = {};
     CHECK(SessionResult_IsOk(AgentHarness_Snapshot(&arena, &harness, &reduction)));
     CHECK_ALL(!watch.Lagged, dropped > 0, durable == reduction.RecordCount - 1);
     CHECK(SessionResult_IsOk(AgentHarness_WatchClose(&watch)));
   }
 
-  // A consumer that stops draining entirely must not be able to grow the ring's
-  // arena without bound. Coalescing used to reallocate at the exact merged size
-  // on every delta, so a tail built from N deltas cost O(N^2) arena: 20k
-  // one-byte deltas consumed ~200 MB, and a longer stall reached the arena
-  // reservation and trapped the process instead of degrading.
   {
     AgentHarnessWatch watch = {};
     CHECK(SessionResult_IsOk(
@@ -4135,11 +3906,8 @@ void TestHarnessWatchOverflow() {
       delta.Delta = SVL("z");
       AgentHarness_PublishStream(&harness, &delta);
     }
-    // Geometric growth keeps the total a small multiple of the text, and the
-    // coalesce limit caps each tail, so this stays in the low hundreds of KB.
     CHECK_ALL(!watch.Lagged, watch.Mem.Used < ((usize)4 << 20));
 
-    // The merged text is still intact.
     AgentHarnessEvent event = {};
     CHECK(SessionResult_IsOk(AgentHarness_WatchNext(&arena, &watch, &event)));
     CHECK(event.Kind == AgentHarnessEventKind::TransientStream);
@@ -4154,10 +3922,6 @@ void TestHarnessWatchOverflow() {
   ArenaRelease(&arena);
 }
 
-// The harness keeps an in-memory clone of every record, which is what makes
-// incremental folding O(1), so State grows with the conversation by design.
-// This pins the rate: it is roughly twice the raw text, and a change that added
-// another clone per turn would show up here rather than as a slow leak.
 void TestHarnessStateGrowthRate() {
   Arena arena = ArenaCreate();
   MemoryRepository memory = {};
@@ -4173,7 +3937,7 @@ void TestHarnessStateGrowthRate() {
   step.Stop = StopReason::Stop;
   ScriptProvider script = {&step, 1, 0};
   AgentHarnessConfig config = ScriptConfig(&script, nullptr, 0);
-  config.Compaction = {};  // measure raw growth, not the compaction policy
+  config.Compaction = {};
   AgentHarness harness = {};
   CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
 
@@ -4183,27 +3947,17 @@ void TestHarnessStateGrowthRate() {
     CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("prompt"))));
   }
 
-  // Two records per turn (user + assistant) carrying ~2 KB of text. Arena
-  // growth abandons the block it grew out of, so some overhead is inherent;
-  // 6 KB/turn leaves room for that without hiding a second copy.
+  // ~2 KB of text per turn; 6 KB/turn allows arena-growth slack but not a second copy.
   usize perTurn = harness.State.Used / kTurns;
   CHECK_ALL(harness.Records.Count == kTurns * 2 + 1, perTurn > sizeof(body),
             perTurn < (usize)6 * 1024);
 
-  // Closing releases State: growth is bounded by one continuous session, not by
-  // the life of the process, which is why /clear and a session switch reset it.
   CHECK(SessionResult_IsOk(AgentHarness_Close(&harness)));
   CHECK(harness.State.Base == nullptr);
   ArenaRelease(&arena);
 }
 
-// harness->Work is reset once per run but allocated into on every turn -- the
-// provider builds each request body from it (driver.cpp: input.Mem) -- so a
-// run of N turns holds N request bodies at once. Reset alone kept that peak
-// committed for the life of the process, which is what put a real session at
-// 62 MB in one arena.
-// Samples the harness's turn arena from inside a tool call, which is the only
-// place a test can observe it part-way through a run.
+// Samples Work from inside a tool call, the only place it is observable mid-run.
 struct WorkPeakProbe {
   AgentHarness* Harness;
   usize Peak;
@@ -4230,11 +3984,6 @@ bool WorkPeakExec(void* context, Arena* arena, StrView id, const ToolArgs* args,
   return true;
 }
 
-// What a run costs must track the size of one turn, not the number of turns it
-// takes. Every turn materializes the whole branch and a whole request body into
-// Work; without a per-turn reset those stack up, which is what took a real
-// session's Work arena to 62 MB. Measured from inside the tool call because the
-// peak is gone by the time the run returns.
 usize RunTurnLoopPeak(u32 turns, char* body, u32 bodyLength) {
   Arena arena = ArenaCreate();
   MemoryRepository memory = {};
@@ -4281,9 +4030,6 @@ usize RunTurnLoopPeak(u32 turns, char* body, u32 bodyLength) {
   return peak;
 }
 
-// The turn arena is recycled between turns, so a PrepareNextTurn hook that
-// keeps part of the turn it was handed -- the obvious thing for it to do, and
-// what pi's own trimming hooks do -- must end up owning a copy.
 struct OverrideProbe {
   u32 Prepare;
   u32 Checks;
@@ -4341,10 +4087,7 @@ void TestHarnessOverrideOutlivesTurnArena() {
   SessionLog log = {};
   CHECK(SessionResult_IsOk(CreateSession(&repository, &arena, &log)));
 
-  // Big enough that a later turn's own context and request body reallocate over
-  // it, so a retained pointer reads something other than the original bytes.
-  // Arena-allocated rather than static so the test binary does not carry it in
-  // .bss, where it would also skew --benchmark's process memory figures.
+  // Big enough to be reallocated over; arena-allocated so .bss doesn't skew --benchmark.
   const u32 filledLength = 128 * 1024;
   char* filled = ArenaPushArray(&arena, char, filledLength);
   for (u32 i = 0; i < filledLength; i++) filled[i] = 'Z';
@@ -4382,8 +4125,6 @@ void TestHarnessOverrideOutlivesTurnArena() {
   CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
   CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("go"))));
 
-  // Read back on turns after the one that stored it, once the turn arena has
-  // been recycled underneath.
   CHECK(probe.Checks >= 2);
   CHECK(probe.Corrupt == 0);
 
@@ -4428,8 +4169,6 @@ SessionResult ReplacementProvider(void* user, Arena* arena, AgentTurnKind kind, 
   ReplacementProbe* probe = (ReplacementProbe*)user;
   CHECK(kind == AgentTurnKind::Run);
   CHECK(arena == &probe->Harness->Work);
-  // The first override intentionally carries two 4 MiB fields. Later small
-  // replacements must not retain that spike or grow with replacement count.
   if (probe->Turns != 1) CHECK(arena->Used < ((usize)2 << 20));
   if (probe->Turns) {
     CHECK(input->Context.MessageCount == probe->ContextCount + 1);
@@ -4464,7 +4203,6 @@ SessionResult ReplacementPrepare(void* user, Arena* arena, const AgentTurnContex
   probe->Turns++;
   CHECK(arena == &probe->Harness->Work);
   CHECK(turn->NewMessages.Count == probe->Turns * 2);
-  // RunMem retains only the geometrically grown array of durable handles.
   CHECK(probe->Harness->RunMem.Used <
         ((usize)turn->NewMessages.Count + 8) * sizeof(Message) * 4);
   CHECK(probe->Harness->RunMem.Committed < ((usize)1 << 20));
@@ -4480,7 +4218,6 @@ SessionResult ReplacementPrepare(void* user, Arena* arena, const AgentTurnContex
     out->ModelInfo.EffortMask = ModelEffort_Bit(ModelEffort::Medium);
     out->ModelInfo.DefaultEffort = ModelEffort::Medium;
     if (probe->Turns == 3) {
-      // Both replacement fields borrow request copies from this turn.
       out->ModelInfo = probe->SeenModel;
       out->ModelInfo.Name = probe->Context.Data[0].Content.Data[0].Text;
     } else if (probe->Turns == 4) {
@@ -4521,9 +4258,6 @@ SessionResult ReplacementStop(void* user, Arena* arena, const AgentTurnContext* 
   for (u32 i = 0; i < turn->Context.Count; i++)
     CHECK(turn->Context.Data[i].Content.Backing == arena);
   if (probe->Turns > 2) CHECK(arena->Used < ((usize)4 << 20));
-  // Work alone cannot expose leaked private override owners. Leave room for
-  // the small growing transcript, but not the first 8 MiB override spike or
-  // hundreds of abandoned 64 KiB replacements.
   if (probe->Turns == 3 || probe->Turns % 25 == 0)
     CHECK(OverridePrivateBytesOutsideWork(probe->Harness) <=
           probe->PrivateBytesBefore + ((u64)4 << 20));
@@ -4642,7 +4376,6 @@ SessionResult OverrideExitStop(void* user, Arena*, const AgentTurnContext* turn,
 SessionResult OverrideExitProvider(void* user, Arena* arena, AgentTurnKind kind, u32,
                                     AgentHarnessProviderInput* input) {
   OverrideExitProbe* probe = (OverrideExitProbe*)user;
-  // Hook inputs are callback-scoped. Refresh borrowed errors after Work resets.
   probe->ContextError = StrView_Dup(arena, SVL("owned context error"));
   if (kind == AgentTurnKind::Compaction) return SessionResult_Ok();
   probe->Providers++;
@@ -4761,9 +4494,6 @@ void TestHarnessWorkArenaPerTurn() {
   usize few = RunTurnLoopPeak(3, body, bodyLength);
   usize many = RunTurnLoopPeak(24, body, bodyLength);
 
-  // Eight times the turns must not cost eight times the memory. The allowance
-  // is for the branch itself getting longer, not for retained per-turn scratch:
-  // without the reset `many` lands at roughly eight times `few`.
   CHECK(few > 0);
   CHECK(many <= few * 3);
   ArenaRelease(&scratch);
@@ -4777,14 +4507,10 @@ void TestHarnessWorkArenaTrim() {
   SessionLog log = {};
   CHECK(SessionResult_IsOk(CreateSession(&repository, &arena, &log)));
 
-  // Each turn calls the tool, so the run keeps looping and Work keeps growing.
-  // Each turn duplicates its assistant text into Work (the real provider puts a
-  // whole request body there), so eight tool-looping turns deposit ~4 MB --
-  // several times the floor the trim keeps.
   const u32 bodyLength = 512 * 1024;
   char* body = ArenaPushArray(&arena, char, bodyLength);
   for (u32 i = 0; i < bodyLength; i++) body[i] = 'a' + (char)(i % 26);
-  u32 executions = 0;  // EchoExec increments this through a u32*
+  u32 executions = 0;
   Tool echo = {};
   echo.Name = SVL("echo");
   echo.Description = SVL("echo arguments");
@@ -4805,19 +4531,14 @@ void TestHarnessWorkArenaTrim() {
   ScriptProvider script = {steps, 9, 0};
   AgentHarnessConfig config = ScriptConfig(&script, &echo, 1);
   config.Compaction = {};
-  config.Retry.Enabled = false;  // a scripted error must fail the run, not retry
+  config.Retry.Enabled = false;
   AgentHarness harness = {};
   CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
 
-  // A short run first, to establish what one turn costs.
   script.Index = 8;
   CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("short"))));
   usize afterShort = harness.Work.Committed;
 
-  // Then a nine-turn run depositing ~4 MB into Work. What the run peaks at is
-  // not the point; what matters is that the peak is handed back at the end of
-  // it rather than retained for the life of the harness. Without the trim
-  // Committed stays at the high-water mark and this fails.
   script.Index = 0;
   CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("long"))));
   usize afterLong = harness.Work.Committed;
@@ -4826,12 +4547,8 @@ void TestHarnessWorkArenaTrim() {
   usize floor = ((usize)1 << 20) + (usize)64 * 1024;
   CHECK_ALL(afterShort <= floor, afterLong <= floor, harness.Work.Used == 0);
 
-  // The trim must not have broken the run itself.
   CHECK(executions >= 8);
 
-  // An accepted run that fails *after* allocating past the trim floor. The
-  // provider's error message is Work-backed, so returning it without copying it
-  // out first hands the caller memory the trim has just unmapped.
   static char errText[64];
   for (u32 i = 0; i < sizeof(errText); i++) errText[i] = 'e';
   ScriptStep failSteps[4] = {};
@@ -4854,8 +4571,6 @@ void TestHarnessWorkArenaTrim() {
   CHECK(intact);
   CHECK(harness.Work.Committed <= floor);
 
-  // The copy lands in LastResult, which holds one message rather than growing
-  // by one per failure, so repeated failures must not accumulate.
   usize afterFirstFailure = harness.LastResult.Used;
   for (u32 i = 0; i < 5; i++) {
     script.Index = 0;
@@ -4867,8 +4582,6 @@ void TestHarnessWorkArenaTrim() {
   ArenaRelease(&arena);
 }
 
-// The turn budget stops a runaway loop, and the ask seam decides whether it is
-// a hard stop or a fresh budget.
 void TestHarnessTurnLimit() {
   Arena arena = ArenaCreate();
   MemoryRepository memory = {};
@@ -4883,7 +4596,6 @@ void TestHarnessTurnLimit() {
   echo.Ctx = &executions;
   echo.Execute = EchoExec;
 
-  // Every step calls the tool, so nothing but the budget can end this run.
   ScriptToolCall call[1] = {ScriptToolCall{SVL("echo"), SVL("c1"), SVL("{\"x\":1}")}};
   ScriptStep steps[64] = {};
   for (u32 i = 0; i < 64; i++) {
@@ -4892,7 +4604,6 @@ void TestHarnessTurnLimit() {
     steps[i].ToolCount = 1;
   }
 
-  // No seam installed: the cap is a hard, graceful stop.
   {
     SessionLog log = {};
     CHECK(SessionResult_IsOk(CreateSession(&repository, &arena, &log)));
@@ -4906,12 +4617,10 @@ void TestHarnessTurnLimit() {
 
     executions = 0;
     SessionResult result = AgentHarness_Run(&harness, SVL("go"));
-    // Ok, not an error: the branch is intact and a follow-up resumes from here.
     CHECK(result.Status == SessionStatus::Ok);
     CHECK(StrView_Contains(result.Message, "stopped after 3 turns"));
     CHECK(executions == 3);
 
-    // The next prompt starts from a fresh budget rather than stopping instantly.
     script.Index = 0;
     executions = 0;
     SessionResult again = AgentHarness_Run(&harness, SVL("again"));
@@ -4920,7 +4629,6 @@ void TestHarnessTurnLimit() {
     CHECK(SessionResult_IsOk(AgentHarness_Close(&harness)));
   }
 
-  // A seam that says "Continue" twice and then "Stop" grants two more budgets.
   {
     SessionLog log = {};
     CHECK(SessionResult_IsOk(CreateSession(&repository, &arena, &log)));
@@ -4940,8 +4648,6 @@ void TestHarnessTurnLimit() {
     SessionResult result = AgentHarness_Run(&harness, SVL("go"));
     CHECK(result.Status == SessionStatus::Ok);
     CHECK_ALL(prompter.Calls == 3, executions == 9);
-    // Each grant buys another MaxTurns, but the count reported to the user is
-    // the true run total -- the third question must not claim only 3 turns.
     CHECK_ALL(strstr(prompter.Questions[0], "has run 3 turns") != nullptr,
               strstr(prompter.Questions[1], "has run 6 turns") != nullptr,
               strstr(prompter.Questions[2], "has run 9 turns") != nullptr);
@@ -4950,8 +4656,6 @@ void TestHarnessTurnLimit() {
     CHECK(SessionResult_IsOk(AgentHarness_Close(&harness)));
   }
 
-  // Steering mid-run means the loop is no longer unattended, so it refills the
-  // budget. Without that reset this run would stop at turn 2 instead of 5.
   {
     SessionLog log = {};
     CHECK(SessionResult_IsOk(CreateSession(&repository, &arena, &log)));
@@ -4986,14 +4690,11 @@ void TestHarnessTurnLimit() {
     executions = 0;
     SessionResult result = AgentHarness_Run(&harness, SVL("go"));
     CHECK(result.Status == SessionStatus::Ok);
-    // Three steered turns plus two the model drove alone.
     CHECK(executions == 2);
     CHECK(StrView_Contains(result.Message, "stopped after 2 turns"));
     CHECK(SessionResult_IsOk(AgentHarness_Close(&harness)));
   }
 
-  // A disabled policy, and an enabled one with no cap, both leave the loop
-  // exactly as unbounded as it was before any of this existed.
   for (u32 variant = 0; variant < 2; variant++) {
     SessionLog log = {};
     CHECK(SessionResult_IsOk(CreateSession(&repository, &arena, &log)));
@@ -5098,7 +4799,6 @@ SessionResult MutableBeforeContext(void* user, Arena* arena, AgentTurnKind,
   MutateHookMessage(arena, &messages->Data[0], 'B');
   CHECK(probe->Harness->State.Used == stateUsed);
   if (probe->FailAt == 1) return MutableHookFailure(arena);
-  // A later hook must detach this borrowed replacement again.
   messages->Data[0] = probe->Borrowed;
   return SessionResult_Ok();
 }
@@ -5122,7 +4822,6 @@ SessionResult MutableBeforeProvider(void* user, Arena* arena, AgentTurnKind, u32
   if (!attempt) {
     CheckHookSeed(*first);
   } else {
-    // Retry reuses this turn's already detached history, not a fresh deep copy.
     CHECK_ALL(first->Content.Data == probe->RetryContent,
               first->Content.Data[0].Text.Data[0] == 'P');
   }
@@ -5164,8 +4863,6 @@ bool MutableProvider(void* user, Arena* arena, const Model* model,
     out->Model = probe->Harness->Config.ModelInfo.Id;
     return false;
   }
-  // Providers may return borrowed nested fields, even when the outer Message
-  // lives in Work. AfterProvider must not mutate the source record/config.
   *out = probe->Borrowed;
   out->Kind = Role::Assistant;
   out->Stop = StopReason::Stop;
@@ -5410,7 +5107,6 @@ SessionResult CompactionMutationStop(void* user, Arena* arena, const AgentTurnCo
   CHECK(turn->Context.Backing == arena);
   if (probe->Turns == 1) {
     CHECK(turn->Context.Data[0].Content.Data[0].Text.Data[0] == 'O');
-    // Trimming the observational copy must not suppress required compaction.
     turn->Context.Data[0].Content.Data[0].Text.Length = 1;
   } else {
     CHECK_ALL(probe->Compacted,
@@ -5477,8 +5173,7 @@ struct MutationAdmissionProbe {
 
 SessionResult AdmissionAppend(void* user, SessionRecord* record) {
   MutationAdmissionProbe* probe = (MutationAdmissionProbe*)user;
-  // The log callback runs under StateLock, after public admission released it.
-  // This assertion covers precisely the old check-idle/unlock/append gap.
+  // Runs under StateLock after public admission released it: the old check/unlock/append gap.
   CHECK(probe->Harness->Running);
   CHECK(DurableId_Eq(probe->Harness->Reduction.HeadId, probe->Head));
   if (record->Kind != SessionRecordKind::SessionName)
@@ -5711,7 +5406,6 @@ static void TestHookChain() {
   CHECK_ALL(composed.User == &chain, composed.BeforeTool, composed.AfterTool,
             !composed.BeforeRun, !composed.ConvertToLlm, !composed.GetFollowUpMessages);
 
-  // The first blocking link decides and later links never see the call.
   a.Block = true;
   b.Block = true;
   AgentToolGateDecision decision = {};
@@ -5723,7 +5417,6 @@ static void TestHookChain() {
   composed.BeforeTool(composed.User, &arena, SVL("write"), SVL("call"), nullptr, &decision);
   CHECK_ALL(decision.Block, StrView_EqCStr(StrBuf_View(&trace), "ab"));
 
-  // After-tool hooks see each other's rewrites, in registration order.
   ToolOutcome outcome = {};
   outcome.Content = Array_Make<Content>(&arena, 1);
   composed.AfterTool(composed.User, &arena, SVL("write"), SVL("call"), nullptr, &outcome);
@@ -5731,7 +5424,6 @@ static void TestHookChain() {
   CHECK_ALL(StrView_EqCStr(outcome.Content.Data[0].Text, "a"),
             StrView_EqCStr(outcome.Content.Data[1].Text, "b"));
 
-  // AfterTurn is a notification: every link runs, the first failure wins.
   StrBuf_Clear(&trace);
   a.Fail = true;
   SessionResult turned = composed.AfterTurn(composed.User, &arena, AgentTurnKind::Run,

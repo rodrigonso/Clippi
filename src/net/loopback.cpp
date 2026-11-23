@@ -30,7 +30,6 @@ const u32 REQUEST_HEAD_CAPACITY = 8192;
 const u32 CLIENT_READ_TIMEOUT_MS = 5000;
 const u32 POLL_MS = 100;
 
-// Waits until `s` is readable or `ms` elapses. Returns <0 on error.
 int WaitReadable(LoopbackSocket s, u32 ms) {
   fd_set set;
   FD_ZERO(&set);
@@ -82,9 +81,8 @@ void RespondAndClose(LoopbackSocket s, u32 status, StrView html) {
   CloseSocket(s);
 }
 
-// Reads the request head (through the blank line) so closing the socket does
-// not reset the connection under the browser while it still has bytes queued.
-// `buf` holds REQUEST_HEAD_CAPACITY + 1 bytes.
+// Reads through the blank line so closing does not reset the connection while the browser has
+// bytes queued. `buf` holds REQUEST_HEAD_CAPACITY + 1 bytes.
 bool ReadHead(LoopbackSocket s, char* buf, StrView* out) {
   u32 length = 0;
   u64 deadline = MonotonicMillis() + CLIENT_READ_TIMEOUT_MS;
@@ -104,7 +102,6 @@ bool ReadHead(LoopbackSocket s, char* buf, StrView* out) {
   return false;
 }
 
-// "GET <target> HTTP/1.x" -> target.
 bool ParseRequestLine(StrView head, bool* isGet, StrView* target) {
   const char* end = (const char*)memchr(head.Data, '\r', head.Length);
   if (!end) return false;
@@ -122,7 +119,7 @@ bool ParseRequestLine(StrView head, bool* isGet, StrView* target) {
   return target->Length > 0;
 }
 
-}  // namespace
+}
 
 bool LoopbackServer_Open(LoopbackServer* server) {
   return LoopbackServer_OpenPort(server, 0);
@@ -138,8 +135,7 @@ bool LoopbackServer_OpenPort(LoopbackServer* server, u16 port) {
     WSACleanup();
     return false;
   }
-  // Without this another local process could bind the same port with
-  // SO_REUSEADDR and receive the authorization code instead of us.
+  // Otherwise another local process could bind the port with SO_REUSEADDR and receive the authorization code.
   BOOL exclusive = TRUE;
   setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&exclusive,
              sizeof(exclusive));
@@ -148,9 +144,7 @@ bool LoopbackServer_OpenPort(LoopbackServer* server, u16 port) {
   if (s < 0) return false;
   int one = 1;
   setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-  // A fixed port is reused across sign-in attempts, so a previous attempt's
-  // TIME_WAIT connection must not block the bind. BSD sockets still refuse a
-  // second active listener on the same address.
+  // A fixed port is reused across attempts, so a previous attempt's TIME_WAIT must not block the bind.
   if (port) setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 #endif
   sockaddr_in addr = {};
@@ -205,8 +199,7 @@ LoopbackWait LoopbackServer_Accept(LoopbackServer* server, Arena* arena,
     setsockopt(accepted, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
 #endif
     LoopbackSocket client = (LoopbackSocket)accepted;
-    // Skipped connections must cost no arena memory, or a local process could
-    // exhaust the caller's arena by connecting repeatedly.
+    // Skipped connections must cost no arena memory, or a local process could exhaust the arena.
     char buf[REQUEST_HEAD_CAPACITY + 1];
     StrView head = {};
     bool isGet = false;

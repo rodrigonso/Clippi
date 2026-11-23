@@ -98,10 +98,7 @@ static void TestTruncate(Arena* a) {
   CHECK_ALL(t.Truncated, t.OutputLines == 2, StrView_Contains(t.Content, "e"),
             !StrView_Contains(t.Content, "a"));
 
-  // A byte cut must land on a character boundary. Splitting a multi-byte
-  // character produces invalid UTF-8 that the provider rejects for the whole
-  // request, so the cut moves off the character instead.
-  StrView wide = SVL("\xE4\xB8\xAD\xE4\xB8\xAD\xE4\xB8\xAD");  // 3 chars, 9 bytes
+  StrView wide = SVL("\xE4\xB8\xAD\xE4\xB8\xAD\xE4\xB8\xAD");
   TruncResult head = Trunc_Head(a, wide, 100, 4);
   CHECK_ALL(head.Truncated, head.ByBytes, head.Content.Length == 3,
             (u8)head.Content.Data[0] == 0xE4);
@@ -299,7 +296,6 @@ static void TestCheckedWalk(Arena* a, StrView root) {
   CHECK(Fs_WalkChecked(a, Fs_Join(a, root, SVL("blocked")), opts, Infra_Visit, &state, &err));
   CHECK(state.Paths.Count == 0);
 
-  // An inner repository boundary stops loading ignore files above it.
   Infra_Write(a, root, SVL("nested/.git"));
   Array_Clear(&state.Paths);
   CHECK(Fs_WalkChecked(a, nested, opts, Infra_Visit, &state, &err));
@@ -458,7 +454,6 @@ static void TestFileLock() {
   FileLockToken t3 = FileLock_Acquire(SVL("lockpath/two"));
   FileLock_Release(t3);
 
-  // One file named with another case or separator waits for the same lock.
   FileLockToken held = FileLock_Acquire(SVL("lockpath/case/foo.cpp"));
   FileLockContender contender = {0};
   Thread thread = {};
@@ -473,9 +468,6 @@ static void TestFileLock() {
 static void TestProcessFileLockProbe(Arena* a) {
   StrView path = SVL("clippi_lock_probe.tmp");
   remove("clippi_lock_probe.tmp");
-  // Asking whether a lock is held must never author the sentinel. Session
-  // listings ask this once per session, so a probe that created the file would
-  // write one lock beside every log it merely displayed.
   CHECK_ALL(!ProcessFileLock_IsHeld(a, path), !Fs_Exists(path));
 
   ProcessFileLock lock = {};
@@ -483,8 +475,6 @@ static void TestProcessFileLockProbe(Arena* a) {
         ProcessFileLockStatus::Acquired);
   CHECK(Fs_Exists(path));
   ProcessFileLock_Release(&lock, path);
-  // Release removes the sentinel, and probing the now-free lock still leaves
-  // the directory exactly as it found it.
   CHECK_ALL(!Fs_Exists(path), !ProcessFileLock_IsHeld(a, path),
             !Fs_Exists(path));
 }

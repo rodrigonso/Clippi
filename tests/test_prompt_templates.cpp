@@ -410,7 +410,7 @@ void Cleanup() {
   for (u32 i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) RemoveDir(dirs[i]);
 }
 
-}  // namespace
+}
 
 void TestPromptTemplates() {
   Arena a = ArenaCreate((usize)16 << 20);

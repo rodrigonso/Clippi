@@ -43,8 +43,7 @@ void WritePermissionReview(JsonWriter* w, const AgentHarnessEvent* event) {
   }
 }
 
-// Tool results are content arrays; a JSON consumer wants the text. Image blocks
-// are skipped rather than base64-inlined into an event stream.
+// Image blocks are deliberately skipped, not base64-inlined.
 void WriteToolContent(JsonWriter* w, const ToolResult* result) {
   StrBuf text = StrBuf_Make(w->Out->Backing, 128);
   if (result) {
@@ -75,8 +74,6 @@ void WriteRetry(JsonWriter* w, const AgentHarnessEvent* event) {
   if (event->Retry.Error.Length) JsonWrite_String(w, "error", event->Retry.Error);
 }
 
-// Only the deltas carry text a consumer can render; the structural start/end
-// markers are better recovered from the durable record.
 const char* StreamDeltaType(StreamEventKind kind) {
   switch (kind) {
     case StreamEventKind::TextDelta: return "text_delta";
@@ -86,13 +83,12 @@ const char* StreamDeltaType(StreamEventKind kind) {
   }
 }
 
-}  // namespace
+}
 
 SessionResult AgentEventJson_Write(StrBuf* out, const AgentHarnessEvent* event) {
   if (!out || !event) return SessionResult_Invalid("event JSON arguments are invalid");
 
-  // A rejected event must leave `out` byte-for-byte as it was found, so callers
-  // can append unconditionally and flush only on success.
+  // A rejected event must leave `out` byte-for-byte unchanged.
   u32 mark = out->Length;
   auto restore = [out, mark](SessionResult result) {
     out->Length = mark;
@@ -141,7 +137,6 @@ SessionResult AgentEventJson_Write(StrBuf* out, const AgentHarnessEvent* event) 
     case AgentHarnessEventKind::TransientToolStart:
       JsonWrite_String(&w, "type", SVL("tool_start"));
       WriteToolIdentity(&w, event);
-      // Arguments are already validated JSON, so embed rather than re-quote.
       JsonWrite_Key(&w, "arguments");
       StrBuf_Append(out, event->Tool.ArgumentsJson.Length ? event->Tool.ArgumentsJson
                                                          : SVL("{}"));

@@ -11,9 +11,6 @@
 
 static const u32 READ_CHUNK_BYTES = 64u * 1024u;
 static const u32 READ_SCRATCH_BYTES = 256u * 1024u;
-// Clippi's resource policy, not a provider limit. Inline images are sent
-// base64-encoded with every later request, and encoding expands this by 4/3
-// (rounded up to a four-byte group); raw image data is never retained.
 static const u32 READ_MAX_IMAGE_BYTES = 20u * 1024u * 1024u;
 
 static void Read_AppendNoticePrefix(StrBuf* b) {
@@ -48,8 +45,7 @@ static bool Read_Image(Arena* arena, Arena* scratch, FileReader* file,
   for (;;) {
     u32 complete = count - count % 3u;
     StrView part = Base64Encode(scratch, (const byte*)buffer, complete);
-    // Only encoded bytes are allocated in the result arena during this loop,
-    // so extending the allocation never leaves abandoned growth buffers.
+    // Contiguous growth: nothing else may allocate from `arena` in this loop.
     memcpy(ArenaAlloc(arena, part.Length, 1), part.Data, part.Length);
     encodedBytes += part.Length;
     ArenaRestore(scratch, mark);
@@ -223,8 +219,6 @@ static bool ReadExec(void* ctx, Arena* arena, StrView id, const ToolArgs* args,
     return false;
   }
 
-  // Includes the chunk, selected prefix and truncation/base64 scratch; this
-  // reservation is a hard bound independent of file size.
   Arena scratch = ArenaCreate(READ_SCRATCH_BYTES);
   FileReader file = {};
   if (File_OpenRead(&scratch, path, &file) != FileIoResult::Success) {
@@ -251,7 +245,6 @@ static bool ReadExec(void* ctx, Arena* arena, StrView id, const ToolArgs* args,
   bool closed = File_Close(&file) == FileIoResult::Success;
   ArenaRelease(&scratch);
   if (!ok || !closed) {
-    // Text argument errors have already populated err, so preserve its storage.
     if (failure || ok) {
       ArenaRestore(arena, outputMark);
       if (mime.Length) ArenaTrim(arena, outputMark);

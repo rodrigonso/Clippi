@@ -1,5 +1,3 @@
-"""Offline checks for macOS accounting and portable CLI discovery."""
-
 from __future__ import annotations
 
 import contextlib

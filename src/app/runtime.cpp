@@ -118,8 +118,7 @@ RuntimeInputResult RuntimeReadText(InteractiveRuntime* rt, Arena* arena,
 
   char buffer[8194] = {};
   StrView value = {};
-  // Plain_ReadText prints only the prompt, so the title has to be surfaced
-  // here or the context it carries -- the question, the provider -- is lost.
+  // Plain_ReadText prints only the prompt, so the title is surfaced here.
   if (title.Length && !StrView_Eq(title, prompt))
     printf("%.*s\n", (int)title.Length, title.Data);
   bool failed = false;
@@ -135,8 +134,7 @@ static bool RuntimeAskUserImpl(void* user, Arena* arena,
                                const AgentAskRequest* request,
                                AgentAskResponse* out) {
   InteractiveRuntime* rt = (InteractiveRuntime*)user;
-  // `false`, not Declined: nobody saw the question, so the caller must be free
-  // to carry on rather than treat it as a refusal.
+  // `false`, not Declined: nobody saw the question.
   if (!rt || !rt->Interactive || request->Question.Length == 0) return false;
   StrView category =
       request->Category.Length ? request->Category : SVL("Question");
@@ -157,13 +155,9 @@ static bool RuntimeAskUserImpl(void* user, Arena* arena,
   }
 
   StrView answer = {};
-  // Title carries the question; the prompt line is the input hint, so the
-  // question is not rendered twice in the same panel.
   RuntimeInputResult result =
       RuntimeReadText(rt, arena, request->Question, SVL("Your answer"), StrView{},
                       &answer, category);
-  // An empty confirmation is an answer the model cannot use, so it counts as a
-  // dismissal rather than a blank reply.
   if (result != RuntimeInputResult::Confirmed || StrView_Trim(answer).Length == 0) {
     out->Status = AgentAskStatus::Declined;
     return true;
@@ -219,7 +213,6 @@ AppCommandHandlerResult RuntimeOwnedFailure(InteractiveRuntime* rt, StrView mess
 void InteractiveRuntime_Init(InteractiveRuntime* rt, Arena* mem) {
   *rt = InteractiveRuntime{};
   rt->Mem = mem;
-  // Sized for one command's report; `/tree` on a large session is the biggest.
   rt->CommandMem = ArenaCreate((usize)16 << 20);
 }
 
@@ -315,8 +308,7 @@ bool RuntimeRefreshPermissionReviewer(InteractiveRuntime* rt) {
 AppCommandDispatchResult RuntimeDispatchCommand(InteractiveRuntime* rt, StrView input,
                                                 const AppCommandHandlers* handlers,
                                                 const AppCommandUx* ux) {
-  // The previous command's message has already been rendered by the time the
-  // next one is submitted, so its storage is free to reuse.
+  // The previous command's message is rendered by now, so reuse is safe.
   ArenaReset(&rt->CommandMem);
   rt->PendingPrompt = StrView{};
   return AppCommand_Dispatch(input, handlers, ux);

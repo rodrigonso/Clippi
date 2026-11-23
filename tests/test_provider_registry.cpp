@@ -65,7 +65,6 @@ static void TestModelDiscoveryFailures() {
   CHECK_ALL(noEndpoint.Status == ProviderModelListStatus::Unavailable,
             noEndpoint.Error.Length != 0);
 
-  // The Responses API authenticates every caller; there is no anonymous path.
   ProviderModelList anonymous = Responses_ListModelsWithFetch(
       &arena, endpoint, {}, nullptr, FetchModelsFixture, nullptr);
   CHECK(anonymous.Status == ProviderModelListStatus::Unavailable);
@@ -130,7 +129,6 @@ static void TestModelDiscovery() {
 
   ProviderModelList live = Responses_ListModelsWithFetch(
       &arena, spec->Endpoint, auth, nullptr, FetchModelsFixture, &fixture);
-  // A base URL that already ends in "/v1" does not get a second one.
   CHECK_ALL(live.Status == ProviderModelListStatus::Success, live.Count == 3,
             fixture.RequestsValid,
             StrView_EqCStr(fixture.Urls[0],
@@ -142,8 +140,6 @@ static void TestModelDiscovery() {
   CHECK_ALL(StrView_Eq(fixture.Authorizations[0], StrBuf_View(&expectedAuth)),
             StrView_EqCStr(fixture.Accepts[0], "application/json"));
 
-  // OpenRouter's catalog decides availability and exact reasoning controls.
-  // Its max-output ceiling is deliberately not adopted as a request budget.
   CHECK_ALL(StrView_EqCStr(live.Models[0].Id, "anthropic/claude-sonnet-4.5"),
             live.Models[0].ContextWindow == 1000000,
             live.Models[0].MaxTokens == 0, live.Models[0].Reasoning,
@@ -167,8 +163,6 @@ static void TestCodexModelDiscovery() {
   Arena arena = ArenaCreate();
   const ProviderSpec* spec = ProviderRegistry_Find(SVL("openai-codex"));
 
-  // The backend scopes every request to a ChatGPT account, so a token without
-  // one never reaches the network.
   ModelsFetchFixture unused = {};
   ProviderAuth noAccount = {SVL("access"), {}};
   ProviderModelList refused = Responses_ListModelsWithFetch(
@@ -204,8 +198,6 @@ static void TestCodexModelDiscovery() {
             StrView_EqCStr(fixture.AccountIds[0], "acct-1"),
             StrView_EqCStr(fixture.Originators[0], "clippi"));
 
-  // Hidden models are dropped and the rest follow the backend's priority,
-  // keeping its order among ties.
   CHECK_ALL(StrView_EqCStr(live.Models[0].Id, "gpt-6.1-sol"),
             StrView_EqCStr(live.Models[0].Name, "GPT-6.1 Sol"),
             StrView_EqCStr(live.Models[0].Provider, "openai-codex"),
@@ -214,7 +206,6 @@ static void TestCodexModelDiscovery() {
             !Model_SupportsEffort(&live.Models[0], ModelEffort::Max),
             live.Models[0].DefaultEffort == ModelEffort::Medium,
             Model_MetadataIsValid(&live.Models[0]));
-  // Levels Clippi has no tier for are not offered, nor defaulted to.
   CHECK_ALL(StrView_EqCStr(live.Models[1].Id, "gpt-mini"),
             live.Models[1].EffortMask == ModelEffort_Bit(ModelEffort::Low),
             live.Models[1].DefaultEffort == ModelEffort::None);
@@ -256,8 +247,6 @@ static void TestModelCache() {
   listed[1].ContextWindowOptionCount = 2;
   CHECK(ModelCache_Save(root, codex->Id, listed, 2));
 
-  // A model created without a catalog fetch -- at startup, say -- carries what
-  // the last listing said; identity and endpoint still come from the registry.
   Model sol = ModelCache_CreateModel(&arena, root, codex, SVL("gpt-6.1-sol"));
   CHECK_ALL(StrView_EqCStr(sol.Name, "GPT-6.1 Sol"), sol.ContextWindow == 400000,
             sol.Reasoning, sol.EffortMask == MODEL_EFFORT_STANDARD_MASK,
@@ -271,8 +260,6 @@ static void TestModelCache() {
   Model unlisted = ModelCache_CreateModel(&arena, root, codex, SVL("gpt-unlisted"));
   CHECK(unlisted.ContextWindow == 0);
 
-  // Effort names from a newer build are skipped; inconsistent entries are not
-  // applied at all.
   CHECK(ConfigFile_WriteAtomic(
       &arena, SV(cacheFile),
       SVL("{\"models\":["
@@ -301,8 +288,6 @@ void TestProviderRegistry() {
             ProviderRegistry_Find(SVL("anthropic")) == nullptr,
             ProviderRegistry_Find(SVL("openai-compat")) == nullptr);
 
-  // The provider picker enumerates the table directly instead of filtering it,
-  // so every row must be complete and selectable.
   for (u32 i = 0; i < ProviderRegistry_Count(); i++) {
     const ProviderSpec* spec = ProviderRegistry_At(i);
     CHECK_ALL(spec != nullptr, spec->Id.Length > 0, spec->Name.Length > 0,
@@ -342,8 +327,6 @@ void TestProviderRegistry() {
             StrView_EqCStr(manual.BaseUrl, "https://openrouter.ai/api/v1"),
             manual.ContextWindow == 0, manual.EffortMask == 0);
 
-  // The bootstrap route carries no compiled capabilities; discovery fills
-  // them from OpenRouter before the picker displays the catalog.
   Model automatic =
       openrouter->CreateModel(&arena, openrouter, openrouter->DefaultModel);
   CHECK_ALL(StrView_EqCStr(automatic.Id, "openrouter/auto"),
@@ -355,7 +338,6 @@ void TestProviderRegistry() {
   CHECK_ALL(provider.Stream != nullptr,
             provider.Ctx == (void*)openrouter->Endpoint);
 
-  // ChatGPT sign-in replaces an API key, so there is no variable to name.
   const ProviderSpec* codex = ProviderRegistry_Find(SVL("openai-codex"));
   CHECK(codex == ProviderRegistry_At(1));
   CHECK_ALL(StrView_EqCStr(codex->Name, "ChatGPT"),

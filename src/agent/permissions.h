@@ -77,7 +77,6 @@ struct AgentPermissionEngine {
   Arena Session;
   Arena GrantMem;
   Arena Run;
-  // Holds WritableRoots; reset whenever they are replaced.
   Arena RootMem;
   Mutex Lock;
   const AgentAskUser* AskUser;
@@ -114,8 +113,6 @@ void AgentPermissionEngine_Init(AgentPermissionEngine* engine,
                                 const AgentAskUser* askUser,
                                 AgentPermissionReviewer reviewer);
 void AgentPermissionEngine_Close(AgentPermissionEngine* engine);
-// Replaces the directories outside the working directory that file mutations
-// may target as freely as the working directory itself. Copied.
 void AgentPermissionEngine_SetWritableRoots(AgentPermissionEngine* engine,
                                             const StrView* roots, u32 count);
 void AgentPermissionEngine_BeginRun(AgentPermissionEngine* engine);

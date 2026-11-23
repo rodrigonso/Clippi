@@ -24,7 +24,7 @@ void CollectUnknown(Arena* arena, const Tool* tools, u32 count,
   }
 }
 
-}  // namespace
+}
 
 void ToolSelect_SplitNames(Arena* arena, StrView value, Array<StrView>* out) {
   u32 start = 0;

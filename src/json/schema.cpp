@@ -468,7 +468,7 @@ bool ValidateNode(Arena* arena, const JsonValue* schema, JsonValue* value,
   return true;
 }
 
-}  // namespace
+}
 
 bool JsonSchema_Compile(Arena* arena, StrView schemaJson, JsonSchema* out,
                         StrBuf* err) {

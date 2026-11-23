@@ -4,17 +4,8 @@
 #include "base/basics.h"
 #include "llm/types.h"
 
-// Pi-style message normalization performed only while building a provider
-// request. It never mutates or persists the session log:
-//  - Assistant messages that ended in an error or were aborted are omitted
-//    from replay (a later run naturally continues the branch without ever
-//    sending the failed turn back to the provider).
-//  - Any assistant tool call left without a corresponding tool-result message
-//    (for example after a process crash) gets a synthetic, transient error
-//    tool result containing "No result provided" inserted where the real
-//    result would have appeared. Synthetic results are never written back to
-//    the session log or treated as having run; a future implementation is
-//    free to change this transform without touching any stored branch.
+// pi parity: request-time only, never persisted. Errored/aborted assistant
+// turns are dropped; unanswered tool calls get a synthetic error result.
 inline StrView SessionReplay_NoResultMessage() {
   return StrView{"No result provided", 18};
 }
@@ -63,9 +54,6 @@ inline Array<Message> SessionReplay_TransformMessages(Arena* arena,
       continue;
     }
 
-    // A user or assistant message ends the run of tool results that could
-    // satisfy the previous assistant's tool calls; synthesize whatever is
-    // still missing before moving on to the new message.
     for (u32 p = 0; p < pendingIds.Count; p++)
       Array_Push(&result, SessionReplay_MakeNoResult(
                               arena, pendingIds.Data[p], pendingNames.Data[p],

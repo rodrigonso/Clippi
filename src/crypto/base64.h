@@ -36,24 +36,19 @@ inline StrView Base64EncodeWith(Arena* arena, const byte* data, u32 len,
   return StrView{buf, o};
 }
 
-// Standard base64 (RFC 4648 §4) WITH padding. Arena-allocated, null-terminated.
-// Used for inline image content in provider requests.
 inline StrView Base64Encode(Arena* arena, const byte* data, u32 len) {
   return Base64EncodeWith(
       arena, data, len,
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", true);
 }
 
-// URL-safe base64 (RFC 4648 §5) WITHOUT padding, as OAuth PKCE requires.
 inline StrView Base64UrlEncode(Arena* arena, const byte* data, u32 len) {
   return Base64EncodeWith(
       arena, data, len,
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", false);
 }
 
-// Decodes URL-safe base64 as JWT segments carry it: padding is optional and
-// the standard alphabet's '+' and '/' are accepted too. Arena-allocated and
-// null-terminated; false on any character outside either alphabet.
+// As JWT segments carry it: padding is optional and '+' and '/' are accepted too.
 inline bool Base64UrlDecode(Arena* arena, StrView text, StrView* out) {
   *out = {};
   u32 length = text.Length;

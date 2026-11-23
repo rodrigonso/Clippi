@@ -1,16 +1,3 @@
-// Clippi test harness.
-//
-// A single CLI entry point for every test suite in the project. Humans and
-// agents select what to run by name or substring instead of always paying for
-// the full sweep:
-//
-//   clippi_tests                    run every default suite
-//   clippi_tests --list             print suite names and tags
-//   clippi_tests json session       run the named suites
-//   clippi_tests --filter tui       run suites whose name contains "tui"
-//   clippi_tests --all              include network-tagged suites
-//   clippi_tests --benchmark ...    run the opt-in agent-loop benchmark
-//   clippi_tests --help             usage
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,9 +14,6 @@ const char* g_test_executable = nullptr;
 
 namespace {
 
-// Suites tagged Network perform live I/O and are skipped unless explicitly
-// requested (by name, by --filter, or via --all), so the default run stays
-// offline and deterministic.
 enum SuiteTag { TagDefault, TagNetwork };
 
 struct Suite {
@@ -76,15 +60,10 @@ void PrintList() {
   }
 }
 
-// Reserved subcommand: the process file lock test re-execs this binary to
-// verify a second process observes the lock as busy, and that the read-only
-// probe agrees without disturbing the sentinel. Must run before any suite
-// selection so it never gets treated as a suite name.
+// Reserved re-exec subcommand for the cross-process lock test; dispatched before suite selection.
 int RunLockProbe(const char* path) {
   Arena arena = ArenaCreate();
-  // Cross-process is the only place the probe can be checked against a live
-  // holder: POSIX F_GETLK reports conflicting owners only, so a self-held lock
-  // reads as free in the owning process.
+  // POSIX F_GETLK ignores self-held locks, so the probe can only be checked cross-process.
   bool held = ProcessFileLock_IsHeld(&arena, SV(path));
   bool survived = Fs_Exists(SV(path));
   ProcessFileLock lock = {};
@@ -96,8 +75,6 @@ int RunLockProbe(const char* path) {
   return status == ProcessFileLockStatus::Busy && held && survived ? 0 : 1;
 }
 
-// Appends everything on stdin to `path`, plus a trailing newline so successive
-// runs stay separable. Shared by every child helper that records its payload.
 bool DrainStdinToFile(const char* path) {
   FILE* out = fopen(path, "ab");
   if (!out) return false;
@@ -109,7 +86,7 @@ bool DrainStdinToFile(const char* path) {
   return true;
 }
 
-}  // namespace
+}
 
 int main(int argc, char** argv) {
   if (argc == 3 && strcmp(argv[1], "--echo-arg") == 0) {
@@ -119,9 +96,6 @@ int main(int argc, char** argv) {
   if (argc == 3 && strcmp(argv[1], "--sink-stdin") == 0) {
     return DrainStdinToFile(argv[2]) ? 0 : 1;
   }
-  // Gate helpers, one per half of the decision protocol. Each verdict is
-  // emitted by the child rather than passed in so a JSON body never has to
-  // survive shell quoting.
   if (argc == 3 && strcmp(argv[1], "--deny-stdin") == 0) {
     if (!DrainStdinToFile(argv[2])) return 1;
     fputs("denied by policy", stdout);
@@ -143,9 +117,7 @@ int main(int argc, char** argv) {
     Sleep_Ms((u32)atoi(argv[2]));
     return 0;
   }
-  // Writes far more than a pipe buffer holds without ever reading stdin: the
-  // shape that deadlocks a capturing parent which writes the payload and only
-  // then starts draining.
+  // Floods past a pipe buffer without reading stdin, deadlocking a parent that drains late.
   if (argc == 3 && strcmp(argv[1], "--flood-stdout") == 0) {
     int lines = atoi(argv[2]);
     for (int i = 0; i < lines; i++)
@@ -224,7 +196,6 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  // No explicit selection: run everything, network suites only with --all.
   if (!anySelected) {
     for (u32 s = 0; s < kSuiteCount; s++) {
       selected[s] = includeNetwork || kSuites[s].Tag == TagDefault;

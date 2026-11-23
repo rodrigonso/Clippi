@@ -39,7 +39,7 @@ PerfSummary Summarize(const TuiPerf* p) {
   return out;
 }
 
-}  // namespace
+}
 
 void TuiPerf_FrameRendered(TuiPerf* p, u64 nowUs) {
   if (p->LastFrameUs)
@@ -212,7 +212,6 @@ void BuildLines(const TuiPerf* p, OverlayBuilder* b) {
   if (p->LastTurnUs) {
     Duration(b, p->LastTurnUs);
     if (p->LastTokens.Output) {
-      // Turn wall time includes tool execution.
       u64 tenths =
           (u64)p->LastTokens.Output * 10000000ull / p->LastTurnUs;
       Text(b, "  ");
@@ -274,7 +273,7 @@ void PaintDebugOverlayNode(UiContext*, const UiNode* node,
                             data->ValueStyle, maxX);
 }
 
-}  // namespace
+}
 
 void BuildDebugOverlayComponent(Tui* t, u16 cols, u16 rows, u64 nowMs) {
   if (!t->Perf.Visible) return;
@@ -315,4 +314,4 @@ void BuildDebugOverlayComponent(Tui* t, u16 cols, u16 rows, u64 nowMs) {
   Ui_Leaf(&t->Ui, desc);
 }
 
-}  // namespace TuiInternal
+}

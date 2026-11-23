@@ -9,8 +9,8 @@
 
 namespace {
 
-// Optional positive token count. Absent leaves `*io` at its default; present
-// but not a positive JSON-safe integer is a hard parse failure.
+// Absent keeps the default; present but not a positive integer is a hard
+// failure.
 bool ReadTokenCount(JsonValue* object, const char* key, u32* io) {
   JsonValue* value = Json_Get(object, key);
   if (!value) return true;
@@ -51,7 +51,7 @@ void WriteStringArray(StrBuf* content, const char* key,
   StrBuf_AppendChar(content, ']');
 }
 
-}  // namespace
+}
 
 StrView AppSettings_DefaultPath(Arena* a) {
   return ClippiDataPath(a, "settings.json");
@@ -118,8 +118,7 @@ AppSettingsLoadResult AppSettings_Load(Arena* a, StrView path, AppSettings* out)
       if (enabled->Kind != JsonKind::Bool) return AppSettingsLoadResult::Malformed;
       retry.Enabled = enabled->Bool;
     }
-    // A zero retry count is meaningful here (retry off), unlike the token
-    // counts above, so it is read directly rather than through ReadTokenCount.
+    // Zero is meaningful (retry off), so not read through ReadTokenCount.
     JsonValue* maxRetries = Json_Get(retryValue, "maxRetries");
     if (maxRetries) {
       if (maxRetries->Kind != JsonKind::Number || maxRetries->Number < 0.0 ||
@@ -143,8 +142,7 @@ AppSettingsLoadResult AppSettings_Load(Arena* a, StrView path, AppSettings* out)
       if (enabled->Kind != JsonKind::Bool) return AppSettingsLoadResult::Malformed;
       turnLimit.Enabled = enabled->Bool;
     }
-    // Zero is meaningful (no cap), so this is read directly rather than through
-    // ReadTokenCount's positive-integer check.
+    // Zero is meaningful (no cap), so this is not read through ReadTokenCount.
     JsonValue* maxTurns = Json_Get(turnLimitValue, "maxTurns");
     if (maxTurns) {
       if (maxTurns->Kind != JsonKind::Number || maxTurns->Number < 0.0 ||
@@ -272,8 +270,7 @@ bool AppSettings_Save(Arena* a, StrView path, const AppSettings* settings) {
     StrBuf_AppendCStr(&content, ",\"contextWindow\":");
     StrBuf_AppendU64(&content, settings->Profile.ContextWindow);
   }
-  // Normalize on write: a zero token count would round-trip into a file the
-  // strict loader rejects, leaving the user with unreadable settings.
+  // Normalize on write: a zero would round-trip into a file the loader rejects.
   u32 reserveTokens = settings->Compaction.ReserveTokens
                           ? settings->Compaction.ReserveTokens
                           : AGENT_COMPACTION_DEFAULT_RESERVE_TOKENS;
@@ -287,8 +284,7 @@ bool AppSettings_Save(Arena* a, StrView path, const AppSettings* settings) {
   StrBuf_AppendCStr(&content, ",\"keepRecentTokens\":");
   StrBuf_AppendU64(&content, keepRecentTokens);
   StrBuf_AppendChar(&content, '}');
-  // Same normalization as compaction: a zero delay would not survive the
-  // strict loader's positive-integer check on the way back in.
+  // Same normalization: a zero delay would not survive the strict loader.
   u32 baseDelayMs = settings->Retry.BaseDelayMs
                         ? settings->Retry.BaseDelayMs
                         : AGENT_RETRY_DEFAULT_BASE_DELAY_MS;

@@ -22,7 +22,6 @@ static const char* const NON_RETRYABLE[] = {
     "quota exceeded",     "billing",            "usage limit",
 };
 
-// Transient provider load, HTTP status, transport, and premature stream-end text.
 static const char* const RETRYABLE[] = {
     "overloaded",      "rate limit",         "rate-limit",
     "rate_limit",      "ratelimit",          "too many requests",

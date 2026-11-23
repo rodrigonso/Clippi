@@ -53,13 +53,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
-# Resolve the build directory the same way build.ps1 does.
 $buildPath = if ([System.IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $root $BuildDir }
 $exe = Join-Path $buildPath 'clippi.exe'
 
 if (-not $NoBuild) {
     & (Join-Path $PSScriptRoot 'build.ps1') -Config $Config -BuildDir $BuildDir -Target clippi
-    # A compiler failure must never launch an older executable.
     if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

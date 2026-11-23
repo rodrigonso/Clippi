@@ -4,7 +4,6 @@
 
 namespace {
 
-// Sanitize `in` into a fresh arena buffer and return a stable view over it.
 StrView San(Arena* a, StrView in) {
   StrBuf b = StrBuf_Make(a, 64);
   Sanitize_Display(&b, in);
@@ -18,12 +17,11 @@ bool AllSpaces(StrView s, u32 from, u32 to) {
   return true;
 }
 
-}  // namespace
+}
 
 void TestSanitize() {
   Arena a = ArenaCreate();
 
-  // Empty input -> empty output.
   CHECK(San(&a, StrView{nullptr, 0}).Length == 0);
 
   struct SanitizeCase {
@@ -48,11 +46,9 @@ void TestSanitize() {
       {"a\001\002b", "ab"},
       {"a\177b", "ab"},
       {"h\303\251llo", "h\303\251llo"},
-      // A bad lead byte must not swallow the ESC after it as a continuation.
       {"ok\xC2\033[31mred", "ok\xEF\xBF\xBDred"},
       {"\xC2\033]0;title\xC2\033\\Z", "\xEF\xBF\xBDZ"},
       {"a\xE4\xB8\033[2Jb", "a\xEF\xBF\xBD\xEF\xBF\xBD" "b"},
-      // C1 controls, UTF-8 encoded (U+009B is CSI) or as a bare 8-bit byte.
       {"\xC2\x9B" "31mX", "31mX"},
       {"\x9B" "31mX", "\xEF\xBF\xBD" "31mX"},
       {"\xEF\xBF\xBD", "\xEF\xBF\xBD"},
@@ -64,30 +60,28 @@ void TestSanitize() {
   }
   CHECK(sanitized);
 
-  // --- tab expansion to 8-column stops ---
   {
-    StrView s = SanC(&a, "\tx");  // col 0 -> pad 8
+    StrView s = SanC(&a, "\tx");
     CHECK_ALL(s.Length == 9, AllSpaces(s, 0, 8) && s.Data[8] == 'x');
   }
   {
-    StrView s = SanC(&a, "a\tb");  // 'a' at col 0 -> col 1, pad 7
+    StrView s = SanC(&a, "a\tb");
     CHECK_ALL(s.Length == 9,
               s.Data[0] == 'a' && AllSpaces(s, 1, 8) && s.Data[8] == 'b');
   }
   {
-    StrView s = SanC(&a, "ab\n\tc");  // tab stop resets after newline -> pad 8
+    StrView s = SanC(&a, "ab\n\tc");
     CHECK_ALL(s.Length == 12,
               s.Data[2] == '\n' && AllSpaces(s, 3, 11) && s.Data[11] == 'c');
   }
 
   {
-    const char raw[] = {'a', '\0', 'b'};  // embedded NUL dropped
+    const char raw[] = {'a', '\0', 'b'};
     CHECK(StrView_EqCStr(San(&a, StrView{raw, 3}), "ab"));
   }
 
-  // A wide (width-2) glyph advances the tab-stop column by 2.
   {
-    StrView s = SanC(&a, "\344\270\255\tx");  // "中" + tab + x ; col 2 -> pad 6
+    StrView s = SanC(&a, "\344\270\255\tx");
     CHECK_ALL(s.Length == 10,
               (unsigned char)s.Data[0] == 0xE4 &&
                   (unsigned char)s.Data[1] == 0xB8 &&

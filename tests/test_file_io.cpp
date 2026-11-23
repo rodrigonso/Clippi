@@ -31,7 +31,6 @@ void TestFileIo() {
   for (u32 i = 0; i < 10000; i++) data[i] = (char)(i % 256);
   data[10000] = 'x';
   StrView content{data, 10000};
-  // Neither the content nor the pathname needs a terminator at its view boundary.
   StrBuf pathWithSuffix = StrBuf_Make(&arena, path.Length + 16);
   StrBuf_Append(&pathWithSuffix, path);
   StrBuf_AppendCStr(&pathWithSuffix, ".not-the-path");
@@ -68,7 +67,6 @@ void TestFileIo() {
   CHECK(ConfigFile_ReadAll(&arena, path, &bytes) == ConfigFileReadResult::Success);
   CHECK(StrView_Eq(bytes, content));
 
-  // A regular file is read into exactly one block of its size plus the NUL.
   mark = arena.Used;
   CHECK(File_ReadAll(&arena, path, &bytes) == FileIoResult::Success);
   CHECK_ALL(StrView_Eq(bytes, content), arena.Used - mark == content.Length + 1u);
@@ -124,7 +122,6 @@ void TestFileIo() {
   CHECK(File_ReadAll(&arena, unicodePath, &bytes) == FileIoResult::Success);
   CHECK(StrView_EqCStr(bytes, "unicode path"));
 
-  // Directory, replace, remove, and atomic config writes take UTF-8 paths too.
   StrView unicodeDir = Fs_Join(&arena, StrBuf_View(&root), SVL("d\xc3\xa9j\xc3\xa0"));
   CHECK(File_MakeDir(&arena, unicodeDir));
   CHECK(File_MakeDir(&arena, unicodeDir));
@@ -139,7 +136,6 @@ void TestFileIo() {
   CHECK(File_ReadAll(&arena, unicodePath, &bytes) == FileIoResult::Missing);
   CHECK(File_Remove(&arena, unicodeConfig));
   CHECK(!File_Remove(&arena, unicodeConfig));
-  // Tree removal takes UTF-8 paths: files and directories alike.
   CHECK(File_WriteAll(&arena, Fs_Join(&arena, unicodeDir, SVL("\xc3\xa9t\xc3\xa9.txt")),
                       SVL("x")) == FileIoResult::Success);
   CHECK(Fs_RemoveTree(&arena, unicodeDir));

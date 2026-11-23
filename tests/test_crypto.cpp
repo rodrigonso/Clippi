@@ -19,13 +19,10 @@ void TestCrypto() {
 
   CHECK(Base64Encode(&a, b3, 0).Length == 0);
 
-  // 5 bytes exercises a full group plus a 2-byte remainder, and covers the
-  // high-bit values that a signed char would sign-extend.
   byte mixed[5] = {0x00, 0x7f, 0x80, 0xab, 0xcd};
   StrView encoded = Base64Encode(&a, mixed, 5);
   CHECK_ALL(encoded.Length == 8, StrView_EqCStr(encoded, "AH+Aq80="));
 
-  // URL-safe alphabet, no padding.
   CHECK_ALL(StrView_EqCStr(Base64UrlEncode(&a, bff, 3), "____"),
             StrView_EqCStr(Base64UrlEncode(&a, b1, 1), "Zg"),
             StrView_EqCStr(Base64UrlEncode(&a, mixed, 5), "AH-Aq80"));

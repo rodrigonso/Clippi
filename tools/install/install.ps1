@@ -9,8 +9,7 @@
 #                            alongside, instead of downloading
 #   CLIPPI_NO_MODIFY_PATH   1 to leave the user PATH alone
 #
-# Everything runs inside one script block so `iex` leaves no variables or
-# preference changes behind in the caller's session.
+# One script block so `iex` leaves no variables or preferences in the caller's session.
 & {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
@@ -69,9 +68,8 @@
             throw "Invalid checksum file for $name"
         }
         $expected = $Matches[1]
-        # .NET rather than Get-FileHash/Expand-Archive: those live in modules
-        # that Windows PowerShell fails to load when it inherits PowerShell 7's
-        # PSModulePath.
+        # .NET, not Get-FileHash/Expand-Archive: Windows PowerShell can't load those
+        # modules when it inherits PowerShell 7's PSModulePath.
         $sha = [Security.Cryptography.SHA256]::Create()
         $stream = [IO.File]::OpenRead($archive)
         try { $actual = -join ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) }
@@ -89,9 +87,7 @@
         New-Item -ItemType Directory -Force -Path $bin, (Join-Path $installDir 'share') | Out-Null
         $share = Join-Path $installDir 'share\clippi'
         if (Test-Path -LiteralPath $share) { Remove-Item -LiteralPath $share -Recurse -Force }
-        # A running clippi.exe (including the one running `clippi upgrade`)
-        # cannot be overwritten, but it can be renamed out of the way. Earlier
-        # leftovers are removed once nothing is running them.
+        # A running clippi.exe can't be overwritten but can be renamed aside.
         Get-ChildItem -LiteralPath $bin -Filter 'clippi.exe.old-*' |
             Remove-Item -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $exe) {
@@ -112,8 +108,7 @@
             $entries = @($userPath -split ';' | Where-Object { $_ })
             if ($entries -notcontains $bin) {
                 $key.SetValue('Path', (($entries + $bin) -join ';'), 'ExpandString')
-                # Setting any user variable through .NET broadcasts the change,
-                # so terminals opened afterwards see the new PATH.
+                # Setting any user variable via .NET broadcasts the PATH change to new terminals.
                 [Environment]::SetEnvironmentVariable('CLIPPI_INSTALL_REFRESH', '1', 'User')
                 [Environment]::SetEnvironmentVariable('CLIPPI_INSTALL_REFRESH', $null, 'User')
                 Write-Host "Added $bin to your user PATH."

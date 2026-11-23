@@ -1,7 +1,3 @@
-// Application-layer logic that used to be unreachable from tests.
-//
-// Everything here lived inside main.cpp, which has no library target, so none
-// of it could be exercised. The behaviour is unchanged; only its address is.
 #include <stdio.h>
 #include <string.h>
 
@@ -39,18 +35,13 @@ namespace {
 void TestSessionProjectKey() {
   Arena arena = ArenaCreate();
 
-  // The key is a filesystem-safe basename plus a hash of the full path, so two
-  // directories sharing a basename never collide into one session directory.
   StrView a = SessionProjectKey(&arena, SVL("/home/dev/clippi"));
   StrView b = SessionProjectKey(&arena, SVL("/srv/build/clippi"));
   CHECK_ALL(!StrView_Eq(a, b), StrView_Contains(a, "clippi"),
             StrView_Contains(b, "clippi"));
 
-  // Same input, same key -- session directories must be stable across runs.
   CHECK(StrView_Eq(a, SessionProjectKey(&arena, SVL("/home/dev/clippi"))));
 
-  // Characters that cannot appear in a path component are replaced rather than
-  // escaped, and the hash still separates the results.
   StrView odd = SessionProjectKey(&arena, SVL("/tmp/we ird:name*"));
   for (u32 i = 0; i < odd.Length; i++) {
     char c = odd.Data[i];
@@ -59,21 +50,14 @@ void TestSessionProjectKey() {
     CHECK(ok);
   }
 
-  // A trailing separator leaves no basename; the key still has to be usable.
   StrView rooted = SessionProjectKey(&arena, SVL("/"));
   CHECK(rooted.Length > 0);
 
 #if defined(_WIN32)
-  // Windows paths are compared case-insensitively with normalized separators,
-  // so one directory spelled two ways resolves to a single session rather than
-  // silently forking into two session directories.
   CHECK(StrView_Eq(SessionProjectKey(&arena, SVL("C:\\Work\\Clippi")),
                    SessionProjectKey(&arena, SVL("c:/work/clippi"))));
-  // Distinct directories that differ only by case of a *parent* component still
-  // agree, because the whole path feeds the hash.
   CHECK(StrView_Eq(SessionProjectKey(&arena, SVL("C:\\A\\proj")),
                    SessionProjectKey(&arena, SVL("c:\\a\\proj"))));
-  // But genuinely different directories must not collide.
   CHECK(!StrView_Eq(SessionProjectKey(&arena, SVL("C:\\a\\proj")),
                     SessionProjectKey(&arena, SVL("C:\\b\\proj"))));
 #endif
@@ -81,8 +65,6 @@ void TestSessionProjectKey() {
   ArenaRelease(&arena);
 }
 
-// A key recorded before the basename was case-folded still has to open, since
-// on Windows it names the very same storage directory.
 void TestProjectKeyComparison() {
   CHECK(SessionProjectKey_Eq(SVL("clippi-abc"), SVL("clippi-abc")));
   CHECK(!SessionProjectKey_Eq(SVL("clippi-abc"), SVL("clippi-abd")));
@@ -97,7 +79,6 @@ void TestProjectKeyComparison() {
 
 void TestConfigPaths() {  Arena arena = ArenaCreate();
 
-  // Every per-user file hangs off one root, and the root is a prefix of each.
   StrView root = ClippiDataRoot(&arena);
   StrView settings = ClippiDataPath(&arena, "settings.json");
   CHECK_ALL(StrView_Contains(root, ".clippi"),
@@ -105,7 +86,6 @@ void TestConfigPaths() {  Arena arena = ArenaCreate();
             settings.Length > root.Length,
             memcmp(settings.Data, root.Data, root.Length) == 0);
 
-  // An empty name is the root itself rather than a trailing slash.
   CHECK(StrView_Eq(ClippiDataRoot(&arena), ClippiDataPath(&arena, nullptr)));
 
   ArenaRelease(&arena);
@@ -116,8 +96,6 @@ void TestTrustChoiceMenu() {
   StrView options[TRUST_CHOICE_CAPACITY] = {};
   TrustChoice choices[TRUST_CHOICE_CAPACITY] = {};
 
-  // `/trust` exists to persist a decision, so it drops the session-only
-  // entries the startup prompt offers.
   u32 full = BuildTrustChoices(&arena, SVL("/home/dev"), true, options, choices);
   u32 persistOnly =
       BuildTrustChoices(&arena, SVL("/home/dev"), false, options, choices);
@@ -127,19 +105,15 @@ void TestTrustChoiceMenu() {
     CHECK(choices[i] != TrustChoice::TrustSession &&
           choices[i] != TrustChoice::UntrustSession);
 
-  // Without a parent directory there is no parent-scoped choice to offer.
   u32 noParent = BuildTrustChoices(&arena, StrView{}, true, options, choices);
   CHECK(noParent < full);
 
-  // Trusting the parent supersedes any saved entry for the child, so the child
-  // path is removed rather than left to shadow the new decision.
   TrustDecision parent =
       ResolveTrustChoice(TrustChoice::TrustParent, SVL("/home/dev/app"), SVL("/home/dev"));
   CHECK_ALL(parent.Trusted, parent.Persist,
             StrView_EqCStr(parent.DecisionPath, "/home/dev"),
             StrView_EqCStr(parent.RemovePath, "/home/dev/app"));
 
-  // Session-only choices never touch the store.
   TrustDecision session =
       ResolveTrustChoice(TrustChoice::TrustSession, SVL("/home/dev/app"), SVL("/home/dev"));
   CHECK_ALL(session.Trusted, !session.Persist);
@@ -148,7 +122,6 @@ void TestTrustChoiceMenu() {
       ResolveTrustChoice(TrustChoice::UntrustSession, SVL("/home/dev/app"), SVL("/home/dev"));
   CHECK_ALL(!untrustSession.Trusted, !untrustSession.Persist);
 
-  // Untrusting the current folder is a persisted decision about that folder.
   TrustDecision untrust =
       ResolveTrustChoice(TrustChoice::UntrustCurrent, SVL("/home/dev/app"), SVL("/home/dev"));
   CHECK_ALL(!untrust.Trusted, untrust.Persist,
@@ -158,8 +131,6 @@ void TestTrustChoiceMenu() {
 }
 
 void TestCommandResultMapping() {
-  // A failing SessionResult reports its own message and never the caller's
-  // success text -- that mix-up would announce success on a failed command.
   AppCommandHandlerResult ok = CommandResult(SessionResult_Ok(), SVL("done"));
   CHECK_ALL(ok.Status == AppCommandHandlerStatus::Success,
             StrView_EqCStr(ok.Message, "done"));
@@ -213,11 +184,9 @@ bool NoRuntimeAuth(void*, Arena*, StrView, volatile i32*, ProviderAuth*) {
   return false;
 }
 
-}  // namespace
+}
 
-// Command results allocate from CommandMem, which a zero-initialized runtime
-// does not have. A hand-built runtime that skips InteractiveRuntime_Init traps
-// in ArenaAlloc the first time a handler formats a message.
+// A runtime that skips InteractiveRuntime_Init has no CommandMem and traps in ArenaAlloc.
 void TestRuntimeCommandArena() {
   Arena arena = ArenaCreate();
   InteractiveRuntime rt = {};
@@ -227,11 +196,8 @@ void TestRuntimeCommandArena() {
   AppCommandHandlerResult failure = RuntimeOwnedFailure(&rt, SVL("boom"));
   CHECK_ALL(failure.Status == AppCommandHandlerStatus::Failed,
             StrView_EqCStr(failure.Message, "boom"));
-  // The message is owned by CommandMem, not by the caller's string.
   CHECK(rt.CommandMem.Used > 0);
 
-  // Dispatching recycles it, which is what keeps repeated commands from
-  // accumulating in a process-lifetime arena.
   AppCommandHandlers handlers = {};
   handlers.User = &rt;
   AppCommandUx ux = {};
@@ -839,8 +805,6 @@ void TestRuntimeReviewerProviderIndependence() {
             harness.Config.PermissionReviewer.Review == reviewer.Review,
             harness.Config.PermissionReviewer.User == reviewer.User);
 
-  // A rebuilt harness can also install a missing callback without borrowing
-  // the closing harness's arenas.
   harness.Config.PermissionReviewer = {};
   CHECK(RuntimeResetSession(&rt, &ux));
   CHECK_ALL(StrView_EqCStr(harness.Config.PermissionReviewerModel, "jev-1.12.0"),
@@ -1085,9 +1049,6 @@ void TestRuntimeSelectionPrecedence() {
   ArenaRelease(&arena);
 }
 
-// The seam must never block a run that has no user behind it. `-p` and
-// `--mode json` both set Interactive = false, and this is the only thing
-// standing between that and a headless run parked on a modal forever.
 void TestRuntimeAskUserNonInteractive() {
   Arena arena = ArenaCreate();
   InteractiveRuntime rt = {};
@@ -1110,8 +1071,6 @@ void TestRuntimeAskUserNonInteractive() {
   response = AgentAskUser_Invoke(&ask, &arena, &freeText);
   CHECK(response.Status == AgentAskStatus::Unavailable);
 
-  // An empty question is refused even with a user present, since there is
-  // nothing to put on screen.
   rt.Interactive = true;
   AgentAskRequest empty = {};
   response = AgentAskUser_Invoke(&ask, &arena, &empty);
@@ -1163,8 +1122,6 @@ void TestEventPumpTranscriptLifecycle() {
   HarnessEventSink sink = {&tui, TuiBridge_HarnessEvent};
   CHECK(SessionResult_IsOk(
       StartHarnessEventPump(&harness, sink, &tui, &pump)));
-  // Hydration has completed when Start returns, and its arena is already gone.
-  // The idle transcript closes its run with a footer.
   CHECK_ALL(pump.Started, arena.Used == baseline,
             tui.Model.Entries.Count == 3);
   if (tui.Model.Entries.Count == 3) {
@@ -1176,8 +1133,7 @@ void TestEventPumpTranscriptLifecycle() {
   }
 
   if (pump.Started) {
-    // Inject a lag marker deterministically instead of racing a producer
-    // against the queue capacity. Recovery must replace, not append history.
+    // Inject a lag marker deterministically instead of racing a producer against queue capacity.
     Tui_CommandNotice(&tui, SVL("stale display"));
     Mutex_Lock(&pump.WatchGuard);
     Mutex_Lock(&pump.Watch.Lock);
@@ -1404,7 +1360,6 @@ void TestJsonOutput() {
       Sleep_Ms(5);
     CHECK(Atomic_LoadI32(&capture.Paused) == 1);
     CHECK(Atomic_LoadI32(&burst.Emitted) == 3);
-    // A stalled writer stops the producer, not just its queue consumer.
     Sleep_Ms(10);
     CHECK(Atomic_LoadI32(&burst.Emitted) == 3);
     Atomic_StoreI32(&capture.Resume, 1);
@@ -1437,8 +1392,6 @@ void TestJsonOutput() {
   }
   CHECK(SessionResult_IsOk(AgentHarness_WatchClose(watch)));
 
-  // An output failure cancels the producer, is sticky, and cannot be hidden by
-  // a successful run or by attempting to append a success-shaped terminator.
   capture.FailAt = capture.Writes + 4;
   Atomic_StoreI32(&burst.Emitted, 0);
   CHECK(SessionResult_IsOk(StartHarnessJsonOutput(
@@ -1451,7 +1404,6 @@ void TestJsonOutput() {
   CHECK_ALL(capture.Writes == capture.FailAt, capture.Results == 1,
             output.Scratch.Base == nullptr);
 
-  // Final-line failures also override a successful run's exit verdict.
   capture.FailAt = capture.Writes + 1;
   CHECK(SessionResult_IsOk(StartHarnessJsonOutput(
       &harness, &output, {&capture, CaptureJsonLine})));
@@ -1498,7 +1450,6 @@ void TestJsonOutput() {
   CHECK(StrView_EqCStr(capture.Lines.Data[capture.Lines.Count - 1],
                       "{\"type\":\"result\",\"ok\":true}\n"));
 
-  // Exercise the actual stdio writer without replacing this test's stdout.
 #if defined(_WIN32)
   FILE* readOnly = fopen("NUL", "rb");
 #else
@@ -1523,7 +1474,6 @@ void TestJsonOutput() {
     if (brokenPipe) {
       CHECK(SessionResult_IsOk(StartHarnessJsonOutput(&harness, &output)));
       output.Writer.User = brokenPipe;
-      // Buffered fwrite succeeds; flush fails with EPIPE, not SIGPIPE death.
       CHECK(FinishHarnessJsonOutput(&output, SessionResult_Ok()).Status ==
             SessionStatus::IoError);
       fclose(brokenPipe);
@@ -1716,8 +1666,6 @@ void TestSecretSettingsCommands() {
   CHECK(StrView_EqCStr(read.ApiKey, "synthetic-private-key-updated"));
 
 
-  // `/auth` signs in through OpenRouter's browser flow; the masked entry it
-  // used to open is still how other credentials are entered.
   remove(authPath);
   CHECK(AuthStore_Write(&fixture, SV(authPath), SVL("typesafe"), &key));
   run.DirectEntry = true;
@@ -1884,7 +1832,7 @@ void TestPlainTextInputPrivacy() {
   remove(path);
 }
 
-}  // namespace
+}
 
 void TestApp() {
   TestSessionProjectKey();

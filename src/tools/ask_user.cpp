@@ -4,14 +4,9 @@
 #include "json/json.h"
 #include "tools/tools.h"
 
-// Bounded so a malformed call cannot ask the user to pick from an unusable
-// list. Well above anything a real question needs.
 static constexpr u32 ASK_USER_MAX_CHOICES = 16;
 
-// Every schema property is optional and nullable, so a model that fills the
-// unused half of the call with explicit nulls still clears argument validation.
-// A null is "not supplied"; the real exclusivity is enforced below, where it
-// can be explained.
+// Explicit nulls mean "not supplied"; exclusivity is enforced below.
 static const JsonValue* AskUserArg(const ToolArgs* args, const char* key) {
   const JsonValue* value = ToolArgs_Get(args, key);
   return value && value->Kind != JsonKind::Null ? value : nullptr;
@@ -101,9 +96,7 @@ static bool AskUserExec(void* ctx, Arena* arena, StrView id, const ToolArgs* arg
       AgentAskUser_Invoke(context ? &context->Ask : nullptr, arena, &request);
 
   if (response.Status == AgentAskStatus::Unavailable) {
-    // An error result rather than a fastfail: a headless run should be able to
-    // continue and work the problem out on its own, and the model can only do
-    // that if it is told why the question went unanswered.
+    // Error, not fastfail: a headless run continues once the model knows why.
     StrBuf_AppendCStr(err,
                       "no user is available to answer questions in this "
                       "session; proceed without asking");
@@ -139,8 +132,7 @@ Tool AskUserTool(AskUserToolContext* context) {
       "\"permission_request_id\":{\"type\":[\"string\",\"null\"],\"description\":"
       "\"Permission request ID returned by a denied tool call; send it on its "
       "own, with no question or choices\"}},\"additionalProperties\":false}");
-  // A batch runs in parallel by default, and there is only one user and one
-  // modal: two concurrent questions would race for it.
+  // One user, one modal: concurrent questions would race for it.
   t.ExecMode = ToolExecMode::Sequential;
   t.PermissionEffect = ToolPermissionEffect::UserInteraction;
   t.Ctx = context;

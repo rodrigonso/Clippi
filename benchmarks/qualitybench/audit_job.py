@@ -1,5 +1,3 @@
-"""Audit a Pier job for benchmark-integrity failures and estimate API cost."""
-
 from __future__ import annotations
 
 import argparse

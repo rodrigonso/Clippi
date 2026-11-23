@@ -3,8 +3,7 @@
 #include "app/extensions.h"
 #include "app/runtime.h"
 
-// Presentation delivery, including ordered extension event delivery. Machine
-// output uses the synchronous observer below, not this deliberately lossy watch.
+// Deliberately lossy watch; machine output uses the synchronous observer below.
 struct HarnessEventPump {
   AgentHarnessWatch Watch;
   AgentHarness* Harness;
@@ -20,9 +19,7 @@ struct HarnessEventPump {
   bool Started;
 };
 
-// Replaces the TUI transcript synchronously before starting event delivery;
-// other consumers subscribe without copying history. Every event also reaches
-// `extensions`, before the sink sees it.
+// Every event reaches `extensions` before the sink sees it.
 SessionResult StartHarnessEventPump(AgentHarness* harness,
                                     HarnessEventSink sink, Tui* tuiView,
                                     HarnessEventPump* pump,
@@ -31,8 +28,7 @@ void StopHarnessEventPump(HarnessEventPump* pump);
 
 struct HarnessJsonWriter {
   void* User;
-  // Consumes a complete newline-terminated line before returning, including
-  // flushing any buffered output. False means delivery failed.
+  // Must consume the whole line, including flushing, before returning.
   bool (*Write)(void* user, StrView line);
 };
 
@@ -45,18 +41,14 @@ struct HarnessJsonOutput {
   bool Started;
 };
 
-// Start/finish only while idle. A null writer uses stdout. No watch, queue, or
-// worker is allocated; stdout backpressure reaches the producer directly.
+// Start/finish only while idle.
 SessionResult StartHarnessJsonOutput(AgentHarness* harness,
                                      HarnessJsonOutput* output,
                                      HarnessJsonWriter writer = {},
                                      AppExtensions* extensions = nullptr);
-// Detaches, writes the final result, and releases scratch. The returned verdict
-// includes encoding/write/flush failures and determines the process exit code.
 SessionResult FinishHarnessJsonOutput(HarnessJsonOutput* output,
                                       SessionResult result);
 
-// Renders the watch stream to stdout for the plain (non-TUI) REPL.
 void ReplSink(void* user, const AgentHarnessEvent* ev);
 
 void ReportHarnessResult(SessionResult result);

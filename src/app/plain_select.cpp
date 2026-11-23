@@ -92,7 +92,7 @@ StrView TrimLine(char* text) {
   return StrView{text + start, end - start};
 }
 
-}  // namespace
+}
 
 bool Plain_Select(StrView title, const StrView* options, u32 optionCount, u32* selected) {
   if (!options || optionCount == 0) return false;

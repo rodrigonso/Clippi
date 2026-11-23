@@ -415,7 +415,7 @@ void Cleanup(const char* root) {
   RemoveDir(root);
 }
 
-}  // namespace
+}
 
 void TestSkills() {
   Arena scratch = ArenaCreate((usize)64 << 20);

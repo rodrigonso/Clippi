@@ -5,10 +5,9 @@
 #include "json/schema.h"
 #include "llm/types.h"
 
-// Result returned by a tool on success.
 struct ToolResult {
   ContentArray Content;
-  bool Terminate;  // hint the agent to stop after this batch
+  bool Terminate;
 };
 
 struct ToolArgs {
@@ -40,22 +39,18 @@ inline void ToolUpdateSink_Emit(const ToolUpdateSink* sink,
     sink->OnUpdate(sink->User, partial);
 }
 
-// How a tool participates in batch execution. `Default` tools may run
-// concurrently with others; a `Sequential` tool forces the whole batch to run
-// one-at-a-time (mirrors pi's `executionMode === "sequential"`).
+// A `Sequential` tool forces the whole batch to run serially (as in pi).
 enum class ToolExecMode : u8 { Default, Sequential };
 
-// Permission metadata is conservative by default: a zero-initialized or
-// extension-defined tool is Sensitive and requires Ask/Auto review.
+// Zero-initialized must stay Sensitive so unknown tools require review.
 enum class ToolPermissionEffect : u8 {
   Sensitive,
   Inspection,
   UserInteraction,
 };
 
-// `Action` is the complete human-readable projection of the call. The engine
-// bounds it for display; an action too long to show in full is never sent to
-// the automatic reviewer.
+// `Action` must be the complete projection of the call; one too long to show
+// in full is never sent to the automatic reviewer.
 struct ToolPermissionInfo {
   StrView Action;
   StrView GrantKey;
@@ -63,31 +58,23 @@ struct ToolPermissionInfo {
   bool ReviewIncomplete;
 };
 
-// Where a tool's mutations count as in scope. Relative paths resolve against
-// WorkingDirectory; a target inside it, or inside any WritableRoots entry, is
-// contained, which Auto mode allows without review.
+// Targets inside these roots are allowed by Auto mode without review.
 struct ToolPermissionScope {
   StrView WorkingDirectory;
   const StrView* WritableRoots;
   u32 WritableRootCount;
 };
 
-// A tool the agent can execute. The harness prepares and validates `ToolArgs`
-// before `Execute`; failures become isError tool results.
 struct Tool {
   StrView Name;
   StrView Label;
   StrView Description;
-  // System-prompt contributions, mirroring pi's `promptSnippet` /
-  // `promptGuidelines`. `Description` is the model-facing schema text; these
-  // are the prose the prompt builder renders. A tool is listed under
-  // "Available tools" only when it supplies a `PromptSnippet`. Prefer
-  // `Tool_SetPromptGuidelines` over assigning the pointer and count directly.
+  // pi's `promptSnippet` / `promptGuidelines`; prompt-visible parity text.
   StrView PromptSnippet;
   const StrView* PromptGuidelines;
   u32 PromptGuidelineCount;
   StrView ParamsJsonSchema;
-  ToolExecMode ExecMode;  // Default => may run in parallel; Sequential => forces serial batch
+  ToolExecMode ExecMode;
   ToolPermissionEffect PermissionEffect;
   void* Ctx;
   bool (*PrepareArguments)(void* ctx, Arena* arena, JsonValue* input,
@@ -105,7 +92,6 @@ struct ToolRuntime {
   JsonSchema Schema;
 };
 
-// Binds a guideline array to a tool so the pointer and its count cannot drift.
 template <usize N>
 inline void Tool_SetPromptGuidelines(Tool* tool,
                                      const StrView (&guidelines)[N]) {

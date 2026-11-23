@@ -164,7 +164,7 @@ HttpResponse ResponsesHttpFetch(void*, Arena* arena, const HttpRequest* request,
   return Http_Fetch(arena, request, abort);
 }
 
-}  // namespace
+}
 
 Provider Responses_Provider() {
   Provider provider = {};

@@ -13,9 +13,7 @@ SessionResult EnsureIdleLocked(const AgentHarness* harness, StrView busyMessage)
   return SessionResult_Ok();
 }
 
-// Clones whichever payload the event's kind actually uses. Dispatching on kind
-// (rather than duping every field unconditionally) is required now that the
-// payloads share storage: touching an inactive member would read garbage.
+// Clone only the active member: payloads share storage.
 SessionResult CloneHarnessEvent(Arena* arena, const AgentHarnessEvent* source,
                                 AgentHarnessEvent* out) {
   AgentHarnessEvent clone = *source;
@@ -77,15 +75,12 @@ void MarkWatcherLagged(AgentHarnessWatch* watch) {
   Cond_Broadcast(&watch->Changed);
 }
 
-// Text deltas are the only high-rate event, and consumers concatenate them
-// anyway, so merging an incoming delta into the pending tail keeps a slow
-// consumer from exhausting the ring during a fast response. Only adjacent
-// deltas on the same content block merge, so ordering is unaffected.
+// Merging adjacent same-block text deltas keeps a slow consumer from exhausting
+// the ring; ordering is unaffected.
 constexpr u32 WATCH_COALESCE_LIMIT = (u32)64 << 10;
 
-// The ring's arena is only reclaimed when the ring drains, and a consumer that
-// has stopped draining entirely never gets there. Degrade to the recoverable
-// lagged path well before ArenaAlloc would trap on the reservation.
+// The ring's arena is only reclaimed on drain: go lagged well before ArenaAlloc
+// would trap on the reservation.
 constexpr usize WATCH_ARENA_SOFT_LIMIT = (usize)32 << 20;
 
 bool CoalesceStreamDelta(AgentHarnessWatch* watch, const AgentHarnessEvent* event) {
@@ -101,8 +96,6 @@ bool CoalesceStreamDelta(AgentHarnessWatch* watch, const AgentHarnessEvent* even
   u64 merged = (u64)tail->Stream.Delta.Length + event->Stream.Delta.Length;
   if (merged > WATCH_COALESCE_LIMIT) return false;
 
-  // Grow geometrically so a tail built from N deltas costs O(N) arena in total
-  // rather than O(N^2), then append in place.
   if (merged > slot->StreamCapacity) {
     u32 capacity = slot->StreamCapacity ? slot->StreamCapacity : 256;
     while (capacity < merged) capacity *= 2;
@@ -118,10 +111,7 @@ bool CoalesceStreamDelta(AgentHarnessWatch* watch, const AgentHarnessEvent* even
   return true;
 }
 
-// Discards the oldest transient event to make room. Durable records are never
-// dropped: they are the consumer's copy of the session tree, and a hole in them
-// could only be repaired by a full re-snapshot. Returns false when every queued
-// event is durable, which is the one case that still forces the lagged path.
+// Durable records are never dropped. False when every queued event is durable.
 bool DropOldestTransient(AgentHarnessWatch* watch) {
   for (u32 i = 0; i < watch->Count; i++) {
     u32 index = (watch->Head + i) % watch->Capacity;
@@ -147,9 +137,8 @@ void EnqueueWatcherEvent(AgentHarnessWatch* watch, const AgentHarnessEvent* even
     Cond_Signal(&watch->Changed);
     return;
   }
-  // Dropping the oldest event frees a slot but reclaims no arena, so a consumer
-  // that never drains would otherwise grow Mem until ArenaAlloc trapped on the
-  // reservation. Hand it the recoverable lagged path instead.
+  // Dropping reclaims no arena: a never-draining consumer must go lagged before
+  // ArenaAlloc traps.
   if (watch->Mem.Used > WATCH_ARENA_SOFT_LIMIT) {
     MarkWatcherLagged(watch);
     return;
@@ -165,8 +154,7 @@ void EnqueueWatcherEvent(AgentHarnessWatch* watch, const AgentHarnessEvent* even
     MarkWatcherLagged(watch);
     return;
   }
-  // The clone is exact-fit, so any capacity the slot's previous occupant had is
-  // gone with it.
+  // The clone is exact-fit; the previous occupant's capacity is gone.
   slot->StreamCapacity = 0;
   watch->Count++;
   if (event->Kind == AgentHarnessEventKind::DurableRecord) watch->Cursor = event->Cursor;
@@ -234,8 +222,6 @@ SessionResult BuildTranscriptLocked(Arena* arena, AgentHarness* harness,
   for (u32 i = first; i < transcript.Count; i++)
     Array_Push(&snapshot.Transcript, Message_Clone(arena, transcript.Data[i]));
   snapshot.HeadId = harness->Reduction.HeadId;
-  // The materialized context cannot say whether its newest usage predates a
-  // compaction, so the measurement walks the raw records instead.
   Array<const SessionRecord*> records = {};
   if (SessionResult_IsOk(SessionReducer_Ancestry(
           &harness->Reduction, &scratch, harness->Reduction.HeadId, &records)))
@@ -280,9 +266,7 @@ void PublishToWatchersLocked(AgentHarness* harness, AgentHarnessEvent* event) {
   }
 }
 
-// Observe synchronously, then publish to presentation watches.
-// Takes only WatcherLock, so a streamed token never waits on snapshot work.
-// Safe to call with StateLock already held; that is the declared lock order.
+// Takes only WatcherLock; safe with StateLock held (declared lock order).
 void PublishToWatchers(AgentHarness* harness, AgentHarnessEvent* event) {
   ScopedLock lock(&harness->WatcherLock);
   PublishToWatchersLocked(harness, event);
@@ -313,13 +297,8 @@ void ResetQueuesIfEmptyLocked(AgentHarness* harness) {
   harness->Queues.NextTurn = Array_Make<Message>(&harness->Queued, 4);
 }
 
-// Ends the run: publishes agent_end, then recycles Work and hands its pages
-// back. `result` is rewritten in place because its message may point into Work
-// -- a hook's error, or the driver's automatic-compaction wrapper -- and both
-// callers return it after this. ArenaReset alone left those bytes mapped, so a
-// stale read happened to work; trimming actually unmaps them. The copy goes to
-// LastResult, not State: State is append-only, so putting it there would retain
-// one message per failure for the life of the harness.
+// `result` is rewritten in place because its message may point into Work, which
+// is trimmed here. Copied to LastResult, not append-only State.
 void CompleteAgentTurnLocked(AgentHarness* harness, AgentTurnKind turn,
                              SessionResult* result) {
   AgentTurnOutcome outcome =
@@ -347,7 +326,7 @@ void ApplyAcceptedCancellationLocked(AgentHarness* harness,
   }
 }
 
-}  // namespace
+}
 
 SessionResult AgentHarness_Append(AgentHarness* harness, SessionRecord* records,
                                   u32 count, bool rejectIfCancelled) {
@@ -365,13 +344,8 @@ SessionResult AgentHarness_Append(AgentHarness* harness, SessionRecord* records,
   }
   if (!SessionResult_IsOk(result)) return result;
 
-  // The log has assigned Seq/EntryId/CreatedAt into records[i]. Never trust
-  // that its payload (message/content text) is safe to read beyond this call
-  // -- backends differ in whether the echoed struct's strings live in the
-  // repository's own arena or the caller's. Always take our own O(1),
-  // self-contained clone into `harness->State`, sourced from records[i] right
-  // now while it is still valid; this never re-clones or re-validates any
-  // earlier history.
+  // The echoed payload may live in the repository's arena: clone into State now,
+  // while it is still valid.
   for (u32 i = 0; i < count; i++) {
     SessionRecord persistent = {};
     SessionResult cloned = SessionRecord_Clone(&harness->State, &records[i], &persistent);
@@ -620,12 +594,7 @@ SessionResult AgentHarness_Init(AgentHarness* harness, SessionLog log,
     }
   }
 
-  // The one and only ReadAll for this harness instance: SessionLog_ReadAll
-  // already deep-clones every record into the arena it is given, so passing
-  // `harness->State` directly makes the loaded array self-contained with no
-  // extra copy. SessionReducer_Reduce then does its one-time O(n) bulk
-  // validation + index build; every append from here on is O(1) incremental
-  // (SessionReducer_Fold / SessionReducer_ValidateAppend), never a reload.
+  // The only ReadAll: it already deep-clones into State, so no extra copy.
   Array<SessionRecord> loaded = {};
   SessionResult read = SessionLog_ReadAll(&harness->Log, &harness->State, &loaded);
   if (!SessionResult_IsOk(read)) {
@@ -739,14 +708,8 @@ static SessionResult StartWatch(Arena* arena, AgentHarness* harness, u32 capacit
 
   SessionResult result = {};
   {
-    // The snapshot and the registration have to be atomic with respect to
-    // appends: a record landing between them would reach neither the snapshot
-    // nor the watcher. Appends publish durable records under StateLock, so
-    // holding it across both is enough; WatcherLock is taken only to check and
-    // register, which keeps streamed tokens from waiting on the snapshot copy.
-    // Registration also requires StateLock, so the count checked here cannot
-    // grow before this watch registers, and a rejected watch never touches
-    // the caller's arena.
+    // Snapshot and registration must be atomic w.r.t. appends, which publish under
+    // StateLock; holding it across both suffices.
     ScopedLock lock(&harness->StateLock);
     bool full = false;
     {
@@ -807,9 +770,6 @@ SessionResult AgentHarness_WatchNext(Arena* arena, AgentHarnessWatch* watch,
     return SessionResult_Error(SessionStatus::WatcherLagged,
                                SVL("watcher fell behind; take a new snapshot"));
   }
-  // The gap is reported at the head, which is where the discarded events were.
-  // Nothing durable was lost, so the consumer keeps its transcript and only
-  // needs to note that progress rendering skipped ahead.
   if (watch->DroppedTransient) {
     AgentHarnessEvent dropped = {};
     dropped.Kind = AgentHarnessEventKind::TransientEventsDropped;
@@ -821,9 +781,7 @@ SessionResult AgentHarness_WatchNext(Arena* arena, AgentHarnessWatch* watch,
     Mutex_Unlock(&watch->Lock);
     return SessionResult_Ok(dropped.Cursor);
   }
-  // Closing stops further publication; it does not discard what was already
-  // published. Drain the buffer first so a consumer shutting down right after a
-  // run still receives that run's trailing turn_end/agent_end.
+  // Drain before closing so a consumer still gets trailing turn_end/agent_end.
   if (watch->Count == 0) {
     watch->Waiting--;
     Mutex_Unlock(&watch->Lock);
@@ -834,8 +792,6 @@ SessionResult AgentHarness_WatchNext(Arena* arena, AgentHarnessWatch* watch,
   if (SessionResult_IsOk(copied)) {
     watch->Head = (watch->Head + 1) % watch->Capacity;
     watch->Count--;
-    // Every queued event has been handed over, so the ring's backing memory can
-    // go back to the caller-visible high-water mark instead of growing forever.
     if (watch->Count == 0) {
       watch->Head = 0;
       ArenaReset(&watch->Mem);
@@ -894,7 +850,6 @@ SessionResult AgentHarness_Run(AgentHarness* harness, StrView prompt) {
     SessionResult idle = EnsureIdleLocked(harness, SVL("agent harness is already running"));
     if (!SessionResult_IsOk(idle)) return idle;
     harness->Running = true;
-    // Last operation is over; its message is no longer promised to the caller.
     ArenaReset(&harness->LastResult);
     Atomic_StoreI32(&harness->AbortFlag, 0);
   }
@@ -964,7 +919,6 @@ SessionResult AgentHarness_Compact(AgentHarness* harness, StrView instructions) 
     SessionResult idle = EnsureIdleLocked(harness, SVL("agent harness is already running"));
     if (!SessionResult_IsOk(idle)) return idle;
     harness->Running = true;
-    // Last operation is over; its message is no longer promised to the caller.
     ArenaReset(&harness->LastResult);
     Atomic_StoreI32(&harness->AbortFlag, 0);
   }
@@ -989,7 +943,6 @@ SessionResult AgentHarness_Navigate(AgentHarness* harness, DurableId targetEntry
     SessionResult idle = EnsureIdleLocked(harness, SVL("agent harness is already running"));
     if (!SessionResult_IsOk(idle)) return idle;
     harness->Running = true;
-    // Last operation is over; its message is no longer promised to the caller.
     ArenaReset(&harness->LastResult);
     Atomic_StoreI32(&harness->AbortFlag, 0);
   }
@@ -1099,7 +1052,6 @@ SessionResult AgentHarness_SetModel(AgentHarness* harness, Model model, Provider
     SessionResult idle = EnsureIdleLocked(harness, SVL("agent harness is running"));
     if (!SessionResult_IsOk(idle)) return idle;
     harness->Running = true;
-    // Last operation is over; its message is no longer promised to the caller.
     ArenaReset(&harness->LastResult);
     head = harness->Reduction.HeadId;
   }

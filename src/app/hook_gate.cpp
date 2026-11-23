@@ -5,16 +5,12 @@
 
 namespace {
 
-// A blocked call's reason becomes model-visible text on every retry, so a
-// chatty hook is capped rather than allowed to fill the context window.
 constexpr u32 HOOK_GATE_REASON_MAX_BYTES = 4096;
 
-// A verdict is a handful of fields; more than this is a hook logging to the
-// wrong stream, and output that cannot be read blocks.
+// Output that cannot be read blocks.
 constexpr u32 HOOK_GATE_JSON_MAX_BYTES = 1u << 16;
 
-// One byte of headroom, so output clipped at the cap stays distinguishable from
-// output that merely fit it.
+// One byte of headroom distinguishes clipped output from output that fit.
 constexpr u32 HOOK_GATE_CAPTURE_MAX_BYTES = HOOK_GATE_JSON_MAX_BYTES + 1u;
 
 StrView BoundedTrim(StrView value) {
@@ -41,7 +37,7 @@ void BlockWith(Arena* arena, AgentToolGateDecision* out, StrView summary, StrVie
   out->Terminate = false;
 }
 
-}  // namespace
+}
 
 struct HookGate {
   const HookConfig* Config;
@@ -53,9 +49,7 @@ struct HookGate {
 HookGate* HookGate_Create(Arena* arena, const HookConfig* config,
                           const HookSessionInfo* session, volatile i32* abort) {
   if (!arena || !config || !config->CommandCount) return nullptr;
-  // An empty subject cannot be narrowed by a matcher, so this asks only whether
-  // any PreToolUse command exists at all. None means no policy, and no policy
-  // must leave a tool call costing exactly what it did before.
+  // No PreToolUse command means no policy and no added cost.
   const HookCommand* probe = nullptr;
   if (!HookConfig_Select(config, HookEvent_Name(HookEvent::PreToolUse), StrView{}, &probe, 1))
     return nullptr;
@@ -96,10 +90,7 @@ void HookGate_Decide(Arena* arena, const ExecResult* result, AgentToolGateDecisi
     return;
   }
 
-  // Only an explicit boolean `block` is a verdict, and it outranks the exit
-  // code in both directions. An object without one is another tool's permission
-  // schema or a hook logging JSON; reading it as consent would let a denial
-  // spelled any other way through.
+  // Only a boolean `block` is a verdict; other JSON must not read as consent.
   if (result->Output.Length) {
     JsonValue* root = Json_Parse(arena, result->Output);
     JsonValue* blocked = Json_IsObject(root) ? Json_Get(root, "block") : nullptr;
@@ -125,9 +116,6 @@ void HookGate_BeforeTool(void* user, Arena* arena, StrView toolName, StrView too
   HookGate* gate = (HookGate*)user;
   if (!gate) return;
 
-  // Default reservation rather than a small one: the capture is capped, but
-  // StrBuf grows by doubling into fresh blocks, so the ceiling is loose. The
-  // reserve is virtual; an ordinary verdict commits a single page.
   Arena scratch = ArenaCreate();
   u32 capacity = gate->Config->CommandCount;
   const HookCommand** commands = ArenaPushArray(&scratch, const HookCommand*, capacity);
@@ -152,8 +140,7 @@ void HookGate_BeforeTool(void* user, Arena* arena, StrView toolName, StrView too
   StrBuf payload = StrBuf_Make(&scratch, 1024);
   HookRunner_BuildPayload(&payload, HookEvent::PreToolUse, &session, &tool);
   if (payload.Length >= EXEC_INPUT_PIPE_BYTES) {
-    // Dropped whole rather than truncated: half a JSON object is not a JSON
-    // object.
+    // Dropped whole: half a JSON object is not a JSON object.
     tool.InputJson = StrView{};
     tool.InputOmitted = true;
     StrBuf_Clear(&payload);

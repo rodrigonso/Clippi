@@ -25,9 +25,6 @@ bool RuntimeRestartWatch(InteractiveRuntime* rt,
   return true;
 }
 
-// Writes the menu into `outOptions`/`outChoices` (each at least
-// TRUST_CHOICE_CAPACITY long) and returns the number of entries. `/trust`
-// exists to persist a decision, so it omits the session-only choices.
 u32 BuildTrustChoices(Arena* arena, StrView parent, bool includeSessionOnly,
                              StrView* outOptions, TrustChoice* outChoices) {
   u32 count = 0;
@@ -140,10 +137,7 @@ bool RuntimeRestorePreviousSession(
   open.Writable = true;
   SessionResult restored =
       rt->Sessions->Open(rt->Sessions->Ctx, &scratch, &open, &log, &info);
-  // A session that never received a user message was never written, so closing
-  // it earlier in the switch discarded it for good. It held nothing durable by
-  // definition, so a fresh session restores a usable runtime instead of
-  // leaving the caller with no log at all.
+  // A session with no user message was never written; start a fresh one.
   bool created = restored.Status == SessionStatus::NotFound;
   if (created) {
     SessionCreateOptions create = {};
@@ -238,8 +232,6 @@ SessionResult RuntimeSwitchToLog(InteractiveRuntime* rt,
   const ProviderSpec* targetSpec = rt->Spec;
   Model targetModel = rt->CurrentModel;
   ModelRequestProfile targetProfile = config.Stream.Profile;
-  // SessionInfo carries the target branch's provider/model (falling back to its
-  // last assistant message), which is exactly what a full reduction would give.
   if (targetInfo->CurrentProvider.Length && targetInfo->CurrentModel.Length) {
     {
       targetSpec = ProviderRegistry_Find(targetInfo->CurrentProvider);
@@ -272,8 +264,7 @@ SessionResult RuntimeSwitchToLog(InteractiveRuntime* rt,
   }
   config.WorkingDirectory =
       StrView_Dup(rt->Mem, targetInfo->WorkingDirectory);
-  // The engine's atomic mode is authoritative: the TUI can cycle it from the
-  // input thread, so the copied config field is not a reliable source here.
+  // The engine's atomic mode is authoritative: the TUI cycles it off-thread.
   config.PermissionMode = AgentHarness_GetPermissionMode(rt->Harness);
   StrView reviewerId = rt->PermissionReviewerModel.Length
                            ? rt->PermissionReviewerModel
@@ -388,8 +379,6 @@ SessionResult RuntimeSwitchToLog(InteractiveRuntime* rt,
     Tui_LoadStartupContext(rt->TuiView);
   }
 
-  // The switch replaced the durable session, so everything that reports or
-  // writes beside it moves with it.
   RuntimeAnnounceSession(rt, targetInfo->ProjectKey, targetInfo->SessionId);
 
   ArenaRelease(&scratch);

@@ -58,23 +58,11 @@ static void OnSigint(int) {
   if (g_activeHarness) Atomic_StoreI32(&g_activeHarness->AbortFlag, 1);
 }
 
-// ---- auth wiring ---------------------------------------------------------
-
 struct HarnessEventPump;
 struct PromptContextLifetime {
   PromptContext* Context;
   ~PromptContextLifetime() { PromptContext_Release(Context); }
 };
-
-
-
-// ---- REPL renderer -------------------------------------------------------
-
-
-
-
-
-
 
 static void MaybeReportMem() {
   if (getenv("CLIPPI_PRINT_MEM")) {
@@ -90,10 +78,6 @@ static void StartUpdateCheck(InteractiveRuntime* rt, const AppCommandUx* ux) {
   UpdateCheck_Start(&g_updateCheck, rt->Mem);
   if (g_updateCheck.Notice.Length) EmitCommandNotice(ux, g_updateCheck.Notice);
 }
-
-// ---- command UX ----------------------------------------------------------
-
-
 
 static void PrintHelp() {
   printf(
@@ -143,7 +127,6 @@ static void PrintHelp() {
       "/auth, /model, /permissions, /skill:<name>, /clear, /exit.\n");
 }
 
-// Plain line REPL (non-TTY / fallback): the original fgets loop.
 static void RunPlainRepl(InteractiveRuntime* rt) {
   EnableTerminal();
   rt->TuiView = nullptr;
@@ -212,15 +195,10 @@ static void RunPlainRepl(InteractiveRuntime* rt) {
   rt->EventPump = nullptr;
 }
 
-// Full-screen TUI REPL. Falls back to the plain REPL if not a TTY.
 static void MaybeCompactTuiSession(InteractiveRuntime* rt, Tui* tui) {
   if (!Tui_SessionMemoryWantsCompaction(tui)) return;
-  // The transcript is rebuilt from the harness, which is the authority, so the
-  // copy is what the user was already looking at.
   Arena snapshotMem = ArenaCreate();
   AgentTranscriptSnapshot snapshot = {};
-  // Match the existing scrollback rebuild policy without copying the history
-  // that the TUI would immediately discard.
   const u32 kMaxRebuiltMessages = 400;
   SessionResult taken = AgentHarness_SnapshotTranscript(
       &snapshotMem, rt->Harness, kMaxRebuiltMessages, &snapshot);
@@ -492,8 +470,6 @@ int main(int argc, char** argv) {
                strcmp(argv[i], "--no-tools") == 0 ||
                strcmp(argv[i], "-nbt") == 0 ||
                strcmp(argv[i], "--no-builtin-tools") == 0) {
-      // clippi has no extension registry, so "no builtin tools" and "no tools"
-      // describe the same empty set. Both spellings are accepted for parity.
       noTools = true;
     } else if (strcmp(argv[i], "-a") == 0 ||
                strcmp(argv[i], "--approve") == 0) {
@@ -561,8 +537,6 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // JSON is a machine surface for a single non-interactive run; there is no
-  // meaningful interactive form of it without a bidirectional protocol.
   if (jsonMode && !onePrompt) {
     fprintf(stderr, "error: --mode json requires -p <prompt>\n");
     ArenaRelease(&arena);
@@ -727,12 +701,8 @@ int main(int argc, char** argv) {
                            ? selected.Settings.PermissionReviewerModel
                            : AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
   FileLock_Init();
-  // Repointed whenever the durable session changes, so shell overflow logs
-  // always land beside the log they belong to. Stays empty under
-  // `--no-session`, which falls the tool back to the OS temp directory.
+  // Empty under `--no-session`: the tool falls back to the OS temp directory.
   ShellToolContext shellContext = {};
-  // Filled in once the renderer exists; until then the tool reports that no
-  // user is available, which is exactly right for `-p` and for startup.
   AskUserToolContext askContext = {};
   Tool allTools[] = {ReadTool(),  WriteTool(), EditTool(),
                      LsTool(),    FindTool(),  GrepTool(),
@@ -822,7 +792,6 @@ int main(int argc, char** argv) {
       TypeSafePermissionReviewer_Make(&arena, reviewerId,
                                       selected.Settings.PermissionReviewerThreshold, authPath);
   harnessConfig.WorkingDirectory = workingDirectory;
-  // Overrides whatever settings.json configured. 0 means "never stop to ask".
   if (hasMaxTurnsOverride) {
     harnessConfig.TurnLimit.Enabled = maxTurnsOverride != 0;
     harnessConfig.TurnLimit.MaxTurns = maxTurnsOverride;
@@ -996,18 +965,11 @@ int main(int argc, char** argv) {
   RuntimeSetPromptOptions(&runtime, &promptOptions);
   runtime.Auth = &appAuth;
   runtime.Interactive = trustInteractive;
-  // Installed here rather than in harnessConfig because the seam points at the
-  // runtime, which does not exist until now. Both consumers -- the `ask_user`
-  // tool and the turn-limit prompt -- go through the same callback so a
-  // question looks identical whichever one raised it.
   askContext.Ask = RuntimeAskUser(&runtime);
   askContext.Permissions = &harness.Permissions;
   harness.Config.AskUser = askContext.Ask;
 
-  // Features that attach to the agent. The hooks.json config is read regardless
-  // of `--no-session` because it also carries the PreToolUse gate, and a policy
-  // deciding whether a tool may run must not switch itself off just because the
-  // transcript is not durable.
+  // Read even under `--no-session`: hooks.json carries the PreToolUse gate.
   AppExtensions extensions = {};
   ShellDirectoryExtension shellDirectory = {};
   HookExtension hookExtension = {};

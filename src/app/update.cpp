@@ -27,8 +27,7 @@ const char* INSTALL_COMMAND =
     "\"[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; "
     "irm " CLIPPI_INSTALL_SCRIPT_BASE_URL "install.ps1 | iex\"";
 #else
-// Download before running: in a plain `curl | sh` pipeline a failed download
-// still exits 0, because sh succeeds on empty input.
+// Download first: in `curl | sh` a failed download still exits 0.
 const char* INSTALL_COMMAND =
     "script=$(curl -fsSL " CLIPPI_INSTALL_SCRIPT_BASE_URL "install.sh) && "
     "printf '%s\\n' \"$script\" | sh";
@@ -72,7 +71,6 @@ void RunUpdateCheck(void* arg) {
   request.TimeoutMs = UPDATE_CHECK_TIMEOUT_MS;
   request.Isolated = true;
   HttpResponse response = Http_Fetch(&mem, &request, &check->Abort);
-  // An interrupted check is retried on the next start rather than recorded.
   if (!Atomic_LoadI32(&check->Abort)) {
     UpdateCache cache = {NowMillis(), check->Cached.Latest};
     if (response.Status >= 200 && response.Status < 300) {
@@ -84,7 +82,7 @@ void RunUpdateCheck(void* arg) {
   ArenaRelease(&mem);
 }
 
-}  // namespace
+}
 
 bool Version_Parse(StrView text, u32 out[3]) {
   u32 i = 0;
@@ -164,8 +162,7 @@ int RunUpgrade(Arena* arena, const char* version) {
   SetEnv("CLIPPI_INSTALL_DIR", StrView_DupCStr(arena, prefix));
   SetEnv("CLIPPI_INSTALL_VERSION", version);
 #if defined(_WIN32)
-  // Windows PowerShell cannot load PowerShell 7's modules, which it would
-  // inherit when `clippi upgrade` runs from a pwsh terminal.
+  // Windows PowerShell cannot load the PowerShell 7 modules it would inherit.
   SetEnv("PSModulePath", nullptr);
 #endif
   fflush(stdout);
@@ -201,8 +198,7 @@ StrView UpdateCache_Format(Arena* arena, const UpdateCache* cache) {
 }
 
 bool UpdateCache_IsStale(const UpdateCache* cache, u64 nowMs) {
-  // A timestamp from the future (clock moved back) would otherwise suppress
-  // checks until the clock caught up.
+  // A future timestamp (clock moved back) must not suppress checks.
   return !cache->CheckedAtMs || nowMs < cache->CheckedAtMs ||
          nowMs - cache->CheckedAtMs >= UPDATE_CHECK_INTERVAL_MS;
 }

@@ -1,8 +1,5 @@
 #include "tui/internal.h"
 
-// Modal selection and text entry: the overlay itself, the keys it consumes
-// while it owns input, and the blocking helpers callers use to drive it.
-
 namespace TuiInternal {
 
 bool ModalOptionMatches(const Tui* t, u32 optionIndex) {
@@ -35,9 +32,8 @@ void ResetModalMatches(Tui* t) {
   t->ModalFirst = 0;
 }
 
-// The modal title and prompt are painted as a single clipped row, so control
-// characters would silently swallow everything after them. Flatten to spaces
-// so a multi-line caller string degrades to one readable line instead.
+// Title and prompt paint as one clipped row, where a control character would
+// swallow everything after it.
 StrView DupModalLine(Arena* arena, StrView text) {
   StrBuf line = StrBuf_Make(arena, text.Length + 1);
   for (u32 i = 0; i < text.Length; i++) {
@@ -84,9 +80,6 @@ void PaintModalEdit(const UiNode* node, UiCanvas* canvas, Tui* t, u16 textX,
   UiCanvas_SetCursor(canvas, node->Id, true, cursorX, editY);
 }
 
-// Two borders, a title, and one row of content is the least worth painting. The
-// panel is carved out of the transcript, so it also never grows past half the
-// screen, nor past the maximum.
 constexpr u16 kModalMinHeight = 4;
 constexpr u16 kModalMaxHeight = 16;
 
@@ -94,8 +87,6 @@ u16 ModalPanelHeight(const Tui* t, u16 rows) {
   if (!t || t->ModalKind == TuiModalKind::None ||
       t->ModalResult != TuiModalResult::Pending)
     return 0;
-  // The status row, the sticky context line, and one transcript row are not the
-  // panel's to take.
   if (rows < kModalMinHeight + 3) return 0;
   u32 matches = ModalMatchCount(t);
   u32 desired =
@@ -189,9 +180,6 @@ void PaintModalNode(UiContext*, const UiNode* node, UiCanvas* canvas) {
 
   Style prompt = panel;
   prompt.Attr |= ATTR_DIM;
-  // The composer is a bordered box with plain text inside, so the answer field
-  // matches it. That needs three rows; below that fall back to the single
-  // reversed row, which still gives a short terminal a usable field.
   bool boxed = panelH >= 6;
   u16 boxTop = (u16)(y1 - 3);
   if (!compactText && (!boxed || boxTop > (u16)(y0 + 2)))
@@ -218,8 +206,6 @@ void PaintModalNode(UiContext*, const UiNode* node, UiCanvas* canvas) {
     textEnd = (u16)(x1 - 2);
   }
 
-  // One row, so the field pans horizontally to keep the caret visible rather
-  // than wrapping the way the composer does.
   PaintModalEdit(node, canvas, t, textX, textEnd, editY, edit);
 }
 
@@ -244,9 +230,7 @@ static void TakeModalText(Tui* t, Arena* arena, StrView* out) {
 void FinishModal(Tui* t, TuiModalResult result) {
   if (result != TuiModalResult::Confirmed) ResetModalInput(t);
   t->ModalResult = result;
-  // The modal is no longer on screen. Leaving Kind set made it look permanently
-  // open, which silently disabled session-memory compaction for the rest of the
-  // process after the first picker the user confirmed.
+  // Leaving Kind set looked permanently open and disabled session-memory compaction.
   t->ModalKind = TuiModalKind::None;
   Cond_Broadcast(&t->ModalCv);
 }
@@ -378,7 +362,7 @@ void HandleTextKey(Tui* t, const Key& k) {
   }
 }
 
-}  // namespace TuiInternal
+}
 
 using namespace TuiInternal;
 

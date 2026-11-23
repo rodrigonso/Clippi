@@ -45,8 +45,8 @@ void OwnMutableMessage(Arena* arena, Message* message) {
   message->ToolName = MutableText(arena, message->ToolName);
 }
 
-// Hooks may replace owned fields with borrowed slices/arrays. Recheck at each
-// mutable boundary, but keep already detached Work storage across retries.
+// Hooks may swap owned fields for borrowed slices: recheck at each mutable
+// boundary, but keep already detached Work storage across retries.
 void OwnMutableMessages(Arena* arena, Array<Message>* messages) {
   OwnMutableArray(arena, messages);
   for (u32 i = 0; i < messages->Count; i++)
@@ -111,9 +111,6 @@ bool ResolveProviderInput(AgentHarnessProviderInput* input) {
   return true;
 }
 
-// Forwards every provider StreamEvent to watchers as a transient harness
-// event, exactly once per event, in delivery order. The watch stream is the
-// only delivery path; consumers subscribe through AgentHarness_Watch.
 void OnProviderStreamEvent(void* user, const StreamEvent& event) {
   AgentHarness* harness = (AgentHarness*)user;
   AgentHarness_PublishStream(harness, &event);
@@ -159,11 +156,8 @@ struct TurnRunResult {
   bool ProviderOk;
 };
 
-// Per-run, memory-only state: the messages this run has appended so far, plus
-// the replacement model/effort/context PrepareNextTurn asked for. None of this
-// is persisted and none of it touches AgentHarnessConfig, so overrides expire
-// when the run returns. Only NewMessages uses RunMem: replacement owners must
-// be reclaimable without discarding that run-long list of State-owned messages.
+// Memory-only; overrides expire when the run returns. Only NewMessages uses
+// RunMem so override owners can be reclaimed without discarding it.
 struct AgentRunState {
   Array<Message> NewMessages;
   bool HasContext;
@@ -177,14 +171,9 @@ struct AgentRunState {
   Arena ModelMem;
   bool HasProfile;
   ModelRequestProfile Profile;
-  // Consecutive turns the model drove on its own. Reset whenever the user
-  // supplies steering or follow-up, so the budget bounds runaway loops rather
-  // than long interactive sessions. Lives here, not in Work, because
-  // ContinueRun resets Work on every iteration.
+  // Outside Work because ContinueRun resets Work every iteration.
   u32 AutonomousTurns;
-  // Of those, how many are already covered by budgets the user granted at the
-  // limit prompt. Subtracted out so each grant buys a fresh MaxTurns while
-  // AutonomousTurns stays the true count the notice reports.
+  // Turns covered by user grants, kept apart so AutonomousTurns stays the true count.
   u32 GrantedTurns;
 };
 
@@ -192,10 +181,7 @@ void AgentRunState_RecordMessages(AgentRunState* run, const Message* messages, u
   if (!run) return;
   for (u32 i = 0; i < count; i++) {
     Array_Push(&run->NewMessages, messages[i]);
-    // A live context override accumulates exactly like the branch it replaced,
-    // matching pi's currentContext.messages.push(...): without this, every
-    // later turn would re-send the frozen snapshot and a non-terminating tool
-    // batch would repeat the identical request forever.
+    // Must accumulate like pi's currentContext, or a frozen snapshot is re-sent forever.
     if (run->HasContext) Array_Push(&run->Context, messages[i]);
   }
 }
@@ -275,9 +261,6 @@ SessionResult AgentRunState_Apply(AgentRunState* run,
 
 typedef SessionResult (*AgentMessageSourceFn)(void* user, Arena* arena, Array<Message>* out);
 
-// Polls a hook message source (pi's getSteeringMessages / getFollowUpMessages)
-// and appends whatever it returns onto the branch exactly like a drained
-// queue, so both sources reach the model at the same checkpoint.
 SessionResult DrainMessageSource(AgentHarness* harness, AgentMessageSourceFn source,
                                  const char* failure, DurableId* ioHead,
                                  AgentRunState* run, u32* outCount) {
@@ -304,11 +287,6 @@ SessionResult DrainMessageSource(AgentHarness* harness, AgentMessageSourceFn sou
   return SessionResult_Ok();
 }
 
-// A checkpoint drains the in-memory queue first and the hook source second, so
-// a caller wiring up both sees queue-before-hook order on the branch. The
-// returned count drives the same continue decision either source alone would.
-// Both paths feed AgentRunState, so a queued message reaches a live context
-// override just like a hook-sourced one does.
 SessionResult FlushQueueIntoRun(AgentHarness* harness, Array<Message>* queue, DurableId* ioHead,
                                 AgentRunState* run, u32* outCount) {
   Array<Message> drained = Array_Make<Message>(&harness->Work, 4);
@@ -346,14 +324,6 @@ SessionResult FlushFollowUp(AgentHarness* harness, DurableId* ioHead, AgentRunSt
   return SessionResult_Ok();
 }
 
-// Builds the active-branch context (linear in branch length, never full
-// history), runs the BeforeContext/ConvertToLlm/BeforeProvider/AfterProvider
-// hooks, and drives the assistant-turn retry layer (Config.Retry /
-// AgentRetryPolicy), emitting transient retry_start/retry_end events around
-// each backoff. `run`, when given, supplies this run's PrepareNextTurn
-// overrides. Never appends anything -- the caller decides what a
-// successful/failed attempt means for the tree (a plain assistant message for
-// a run turn, or a Compaction entry for compaction).
 SessionResult RunAssistantTurn(AgentHarness* harness, AgentTurnKind turnKind, DurableId headId,
                                const Message* extraTrailingMessage,
                                const AgentRunState* run, TurnRunResult* out) {
@@ -476,13 +446,8 @@ SessionResult RunAssistantTurn(AgentHarness* harness, AgentTurnKind turnKind, Du
   }
 }
 
-// Resolves each tool call's effective arguments (BeforeTool hook), runs the
-// batch (parallel by default), then appends every tool-result message in
-// assistant/source order as one batch. Every prepared call always receives
-// exactly one finalized result -- including a live cancellation, which still
-// runs each already-dispatched call to a normal (possibly error) completion
-// before this function returns -- so the harness never leaves a live tool
-// call without a result before the next provider request.
+// Every prepared call gets exactly one result, even on cancellation, so no tool
+// call is left without a result before the next provider request.
 SessionResult RunToolBatch(AgentHarness* harness, DurableId* ioHead, const Message* assistant,
                           AgentRunState* run, bool* outAnyTool, bool* outAllTerminate,
                           Array<Message>* outToolResults) {
@@ -587,8 +552,7 @@ SessionResult RunToolBatch(AgentHarness* harness, DurableId* ioHead, const Messa
              : committed;
 }
 
-// Only Text blocks form the summary, as in pi: reasoning is the model's
-// working, not part of the answer.
+// Only Text blocks form the summary, as in pi.
 StrView ExtractSummaryText(Arena* arena, const Message* assistant) {
   StrBuf text = StrBuf_Make(arena, 256);
   for (u32 i = 0; i < assistant->Content.Count; i++) {
@@ -607,10 +571,7 @@ struct CompactionTurnResult {
   DurableId NewHead;
 };
 
-// Runs one compaction turn over the inclusive branch span [base..through] and
-// appends the resulting Compaction entry chained from `head`. Publishes only
-// turn-level events, so an inline compaction never emits a nested agent
-// lifecycle inside the enclosing run.
+// Publishes only turn-level events so inline compaction never nests an agent lifecycle.
 SessionResult PerformCompaction(AgentHarness* harness, DurableId head,
                                 DurableId baseEntryId, DurableId throughEntryId,
                                 StrView instructions,
@@ -621,8 +582,7 @@ SessionResult PerformCompaction(AgentHarness* harness, DurableId head,
       SVL("Summarize the conversation for future continuation. Preserve goals, "
           "decisions, constraints, unresolved work, and important tool results.");
   if (instructions.Length) {
-    // pi's separator, byte for byte, so a summary written against pi's
-    // instructions reads the same here.
+    // pi's separator, byte for byte.
     StrBuf directed =
         StrBuf_Make(&harness->Work, summarizeText.Length + instructions.Length + 24);
     StrBuf_Append(&directed, summarizeText);
@@ -632,9 +592,7 @@ SessionResult PerformCompaction(AgentHarness* harness, DurableId head,
   }
   Message summarizePrompt = Message_User(&harness->Work, summarizeText);
 
-  // The summarizer sees only the span being folded, as the model sees it now.
-  // The retained tail stays verbatim after the summary, so including it would
-  // duplicate it and spend the very headroom compaction exists to recover.
+  // Only the folded span: including the retained tail would duplicate it.
   AgentRunState span = {};
   span.HasContext = true;
   SessionReduction reduction = AgentHarness_ReduceSnapshot(harness);
@@ -661,9 +619,6 @@ SessionResult PerformCompaction(AgentHarness* harness, DurableId head,
       result = SessionResult_Error(
           aborted ? SessionStatus::Cancelled : SessionStatus::ProviderError, error);
     } else {
-      // The span being folded away is the last place these paths appear, so
-      // they are collected before the summary is sealed and carried on the
-      // record for the next compaction to reseed from.
       AgentFileLists files = {};
       reduction = AgentHarness_ReduceSnapshot(harness);
       Array<const SessionRecord*> branch = {};
@@ -709,10 +664,6 @@ SessionResult PerformCompaction(AgentHarness* harness, DurableId head,
   return result;
 }
 
-// The window the next provider request will actually be sized against: the
-// explicitly selected tier when the model exposes one, else its fixed window.
-// A run's PrepareNextTurn overrides are what the request will carry, so they
-// take precedence over the config here too.
 u32 ActiveContextWindow(const AgentHarness* harness, const AgentRunState* run) {
   u32 window = run && run->HasProfile ? run->Profile.ContextWindow
                                       : harness->Config.Stream.Profile.ContextWindow;
@@ -721,12 +672,7 @@ u32 ActiveContextWindow(const AgentHarness* harness, const AgentRunState* run) {
                               : harness->Config.ModelInfo.ContextWindow;
 }
 
-// Decides whether the next provider request for `head` would eat into the
-// window's reserved headroom, and if so which branch span to fold away.
-// Measurement materializes the branch context once, the same O(branch) cost the
-// turn itself pays -- or reads a live context override directly, since that is
-// what the request will actually carry. The cut point is always selected from
-// the durable branch, which is what compaction folds.
+// The cut point always comes from the durable branch, which is what compaction folds.
 bool ShouldAutoCompact(AgentHarness* harness, DurableId head, const AgentRunState* run,
                        AgentCompactionCut* outCut) {
   const AgentCompactionPolicy* policy = &harness->Config.Compaction;
@@ -736,10 +682,8 @@ bool ShouldAutoCompact(AgentHarness* harness, DurableId head, const AgentRunStat
   SessionReduction reduction = AgentHarness_ReduceSnapshot(harness);
   u32 tokens = 0;
   if (run && run->HasContext) {
-    // A hook-supplied context may keep an assistant message while dropping the
-    // history it was billed against, so the reported-usage anchor's invariant
-    // ("this usage paid for everything before it") no longer holds. Only the
-    // byte estimate is meaningful for an array the harness did not assemble.
+    // A hook-supplied context breaks the reported-usage anchor's invariant; only the
+    // byte estimate is meaningful.
     tokens = AgentCompaction_EstimateContextTokens(run->Context.Data, run->Context.Count);
   } else {
     Array<Message> messages = {};
@@ -758,9 +702,6 @@ bool ShouldAutoCompact(AgentHarness* harness, DurableId head, const AgentRunStat
                                         policy->KeepRecentTokens, outCut);
 }
 
-// Materializes the state pi hands to prepareNextTurn / shouldStopAfterTurn.
-// Only built when one of them is installed, since the context array costs
-// O(branch) to materialize.
 SessionResult BuildTurnContext(AgentHarness* harness, DurableId head, const Message* assistant,
                                Array<Message> toolResults, const AgentRunState* run,
                                AgentTurnContext* out) {
@@ -777,13 +718,7 @@ SessionResult BuildTurnContext(AgentHarness* harness, DurableId head, const Mess
   return SessionResult_Ok();
 }
 
-// The turn budget is spent. Ask whether to keep going, and grant a fresh budget
-// when the user says yes.
-//
-// Deliberately called with no harness lock held: this blocks until the user
-// answers, and blocking under StateLock or WatcherLock would stall every
-// watcher and wedge the process. Allocates from Work, which the caller has just
-// reset, so the question and answer cost one turn's scratch and no more.
+// Called with no harness lock held: this blocks until the user answers.
 bool AskToContinuePastTurnLimit(AgentHarness* harness, u32 turnsUsed) {
   StrBuf question = StrBuf_Make(&harness->Work, 160);
   StrBuf_AppendCStr(&question, "The agent has run ");
@@ -807,18 +742,11 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
     if (Atomic_LoadI32(&harness->AbortFlag))
       return SessionResult_Error(SessionStatus::Cancelled, SVL("run cancelled"));
 
-    // Nothing this loop allocates from Work survives an iteration: every
-    // message it produces is appended first, and AgentHarness_Append rewrites
-    // each record with a State-owned clone. Without this a run that takes N
-    // turns stacks N materialized contexts and N request bodies, which is what
-    // took one real session's Work arena to 62 MB. Anything that does span
-    // turns lives in RunMem or the run's replaceable override owners instead.
+    // Nothing allocated from Work survives an iteration; anything spanning turns
+    // lives in RunMem or the run's override owners.
     ArenaReset(&harness->Work);
     ArenaTrim(&harness->Work, WORK_ARENA_KEEP_BYTES);
 
-    // Runaway guard. Checked here, before anything for this turn is built, so a
-    // turn that would exceed the budget is never started and no provider
-    // request is paid for only to be discarded.
     if (run && AgentTurnLimit_Reached(&harness->Config.TurnLimit,
                                       run->AutonomousTurns - run->GrantedTurns)) {
       u32 spent = run->AutonomousTurns;
@@ -827,20 +755,14 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
         StrBuf_AppendCStr(&notice, "stopped after ");
         StrBuf_AppendU64(&notice, spent);
         StrBuf_AppendCStr(&notice, " turns without input");
-        // A graceful stop, not a failure: the branch is intact and an ordinary
-        // follow-up prompt resumes from exactly here. Returning Ok *with* a
-        // message is what carries the reason to the UI --
-        // CompleteAgentTurnLocked publishes agent_end with it and copies it out
-        // of Work first, so nothing here has to publish or own the string.
+        // Graceful stop: Ok with a message, which CompleteAgentTurnLocked copies out of Work.
         return SessionResult{SessionStatus::Ok, StrBuf_View(&notice), 0};
       }
       run->GrantedTurns = spent;
     }
     if (run) run->AutonomousTurns++;
 
-    // Automatic compaction runs before the next provider request, at most once
-    // per iteration. If it succeeds but the context still exceeds the budget we
-    // continue anyway and let the provider decide, rather than loop.
+    // At most once per iteration; if still over budget, continue rather than loop.
     AgentCompactionCut cut = {};
     if (ShouldAutoCompact(harness, *ioHead, run, &cut)) {
       if (harness->Config.Hooks.BeforeCompaction) {
@@ -851,8 +773,7 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
         if (!SessionResult_IsOk(hooked)) return hooked;
       }
       CompactionTurnResult compaction = {};
-      // Automatic compaction never inherits `/compact` instructions; pi
-      // discards them after the invocation that supplied them.
+      // Automatic compaction never inherits `/compact` instructions, as in pi.
       SessionResult compacted = PerformCompaction(harness, *ioHead, cut.BaseEntryId,
                                                   cut.ThroughEntryId, StrView{},
                                                   &compaction);
@@ -867,11 +788,7 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
         return SessionResult_Error(compacted.Status, StrBuf_View(&message));
       }
       *ioHead = compaction.NewHead;
-      // Compaction rewrote the branch the override was derived from, so the
-      // override is stale and there is no sound way to rebase it: fall back to
-      // the compacted branch. Because ShouldAutoCompact sizes against the
-      // override itself, this only happens when the override genuinely
-      // outgrew the window, never because the branch behind it did.
+      // Compaction made the override stale and it cannot be rebased.
       if (run) AgentRunState_DropContext(run);
     }
 
@@ -887,9 +804,7 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
       return generated;
     }
 
-    // message_end: append exactly one assistant message, regardless of stop
-    // reason (Stop/ToolUse/Error/Aborted all become a durable message; only
-    // the *next* provider request is what an error/abort short-circuits).
+    // Every stop reason becomes exactly one durable assistant message.
     SessionRecord assistantRecord = NewMessageRecord(*ioHead, turn.Assistant);
     SessionResult committed = AgentHarness_Append(harness, &assistantRecord, 1);
     if (!SessionResult_IsOk(committed)) {
@@ -910,9 +825,8 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
                                  turn.Assistant.ErrorMessage);
     }
 
-    // Truncation drops the tool call the model was mid-way through emitting:
-    // the provider never closes that block, so the batch below would see no
-    // tools and end the run as though the model had finished.
+    // The provider never closes a truncated tool-call block, so the batch would see
+    // no tools and end the run as though the model had finished.
     if (turn.Assistant.Stop == StopReason::Length) {
       StrView truncated =
           SVL("assistant response hit the output token limit before completing");
@@ -936,8 +850,7 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
     }
     AgentHarness_PublishTurnEnd(harness, AgentTurnKind::Run, AgentTurnOutcome::Succeeded, StrView{});
 
-    // pi's prepareNextTurn then shouldStopAfterTurn: both observe the finished
-    // turn after turn_end and before either steering source is polled.
+    // pi's order: prepareNextTurn, then shouldStopAfterTurn, before steering is polled.
     if (harness->Config.Hooks.PrepareNextTurn || harness->Config.Hooks.ShouldStopAfterTurn) {
       AgentTurnContext turnContext = {};
       SessionResult built = BuildTurnContext(harness, *ioHead, &assistantRecord.MessageEntry.Value,
@@ -947,8 +860,7 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
       if (harness->Config.Hooks.PrepareNextTurn) {
         OwnMutableTurnContext(&harness->Work, &turnContext);
         AgentNextTurnUpdate update = {};
-        // Construction scratch only; Apply owns the accepted fields before
-        // Work is recycled, and abandoned hook allocations die with this turn.
+        // Construction scratch only; Apply copies accepted fields before Work is recycled.
         SessionResult hooked = AgentHook_Failure(
             harness->Config.Hooks.PrepareNextTurn(harness->Config.Hooks.User, &harness->Work,
                                                   &turnContext, &update),
@@ -956,8 +868,7 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
         if (!SessionResult_IsOk(hooked)) return hooked;
         SessionResult applied = AgentRunState_Apply(run, &update);
         if (!SessionResult_IsOk(applied)) return applied;
-        // pi hands shouldStopAfterTurn the already-updated context, so a stop
-        // decision sees what the next request would actually carry.
+        // pi hands shouldStopAfterTurn the already-updated context.
         if (run && run->HasContext) turnContext.Context = run->Context;
       }
 
@@ -969,21 +880,15 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
                                                       &turnContext, &stop),
             "should-stop-after-turn hook failed");
         if (!SessionResult_IsOk(hooked)) return hooked;
-        // A graceful stop: the run ends here without polling either queue and
-        // without starting another provider request.
         if (stop) return SessionResult_Ok();
       }
     }
 
-    // Steering folds onto the tree right after this tool-result batch, before
-    // any further provider request (whether that request continues this
-    // turn or starts the next one).
     u32 steerCount = 0;
     SessionResult steered = FlushSteering(harness, ioHead, run, &steerCount);
     if (!SessionResult_IsOk(steered)) return steered;
-    // Steering and follow-up are the only user-driven inputs mid-run, so they
-    // are the only things that refill the budget. Resetting on any appended
-    // message instead would make the cap unreachable, since every turn appends.
+    // Only user-driven inputs refill the budget; resetting on any append would make
+    // the cap unreachable.
     if (steerCount && run) {
       run->AutonomousTurns = 0;
       run->GrantedTurns = 0;
@@ -1003,7 +908,7 @@ SessionResult ContinueRun(AgentHarness* harness, DurableId* ioHead, AgentRunStat
   }
 }
 
-}  // namespace
+}
 
 bool AgentDriver_ReviewPermission(
     void* user, Arena* arena, const AgentPermissionReviewRequest* request,
@@ -1064,8 +969,7 @@ SessionResult AgentDriver_Run(AgentHarness* harness, StrView prompt) {
     }
   }
 
-  // pi polls steering once before the first turn, picking up anything the user
-  // typed while the previous run was still finishing.
+  // pi polls steering once before the first turn.
   if (SessionResult_IsOk(result)) {
     u32 steerCount = 0;
     result = FlushSteering(harness, &head, &run, &steerCount);
@@ -1117,8 +1021,6 @@ SessionResult AgentDriver_Compact(AgentHarness* harness, StrView instructions) {
   StrView error = {};
 
   if (SessionResult_IsOk(result)) {
-    // Manual compaction always folds the whole branch: base is the session
-    // root, which is a tree node on every branch.
     CompactionTurnResult compaction = {};
     result = PerformCompaction(
         harness, head, initial.RecordCount ? initial.Records[0].EntryId : DurableId{},

@@ -85,7 +85,6 @@ endif()
 if(CLIPPI_BUILD_CLI)
   include(cmake/curl.cmake)
   include(cmake/pcre2.cmake)
-  # Compile CLI implementation once, shared by the executable and its tests.
   add_library(clippi_cli OBJECT
     src/net/http_curl.cpp
     src/net/loopback.cpp

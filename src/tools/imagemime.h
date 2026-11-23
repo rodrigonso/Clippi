@@ -2,10 +2,6 @@
 #include "base/basics.h"
 #include "base/str.h"
 
-// Image MIME detection for the read tool. Two strategies: sniff magic bytes
-// (most reliable) and map a file extension. Both return an empty StrView when
-// the input is not a recognized image type.
-
 inline StrView Img_SniffMime(const byte* d, u32 n) {
   if (n >= 8 && d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G' && d[4] == 0x0D &&
       d[5] == 0x0A && d[6] == 0x1A && d[7] == 0x0A)
@@ -21,7 +17,6 @@ inline StrView Img_SniffMime(const byte* d, u32 n) {
   return StrView{nullptr, 0};
 }
 
-// `ext` is a file extension slice including the leading dot, any case.
 inline StrView Img_MimeForExt(StrView ext) {
   if (StrView_EqInsensitiveAscii(ext, SVL(".png"))) return SVL("image/png");
   if (StrView_EqInsensitiveAscii(ext, SVL(".jpg")) ||

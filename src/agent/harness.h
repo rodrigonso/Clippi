@@ -19,38 +19,25 @@ struct AgentHarnessConfig {
   ToolExecution ToolExec;
   u32 MaxParallelTools;
   AgentRetryPolicy Retry;
-  // Bounds consecutive autonomous turns. Zero-initialized means unlimited, so
-  // an embedding caller keeps pi's behaviour unless it opts in; the CLI enables
-  // it by default.
+  // Zero-initialized means unlimited (pi's behaviour).
   AgentTurnLimitPolicy TurnLimit;
-  // Automatic compaction. Zero-initialized means disabled, so a harness only
-  // compacts on its own when a caller opts in; the CLI enables it by default.
   AgentCompactionPolicy Compaction;
   AgentHarnessHooks Hooks;
   AgentHarnessEventObserver Events;
-  // How the harness reaches the user mid-run. Null means nobody is there to
-  // ask, which every caller must tolerate.
   AgentAskUser AskUser;
-  // Built-in tool admission. The CLI supplies Auto plus a dedicated reviewer;
-  // Yolo is the embedding default so a zero-initialized legacy config preserves
-  // its previous "run every tool" behavior.
+  // Yolo default keeps zero-initialized embedding configs running every tool.
   AgentPermissionMode PermissionMode = AgentPermissionMode::Yolo;
   StrView PermissionReviewerModel;
   f64 PermissionReviewerThreshold = AGENT_PERMISSION_DEFAULT_REVIEWER_THRESHOLD;
   AgentPermissionReviewer PermissionReviewer;
   StrView WorkingDirectory;
-  // Directories outside WorkingDirectory that file mutations may target as
-  // freely as the working directory itself. Copied at Init.
   const StrView* WritableRoots;
   u32 WritableRootCount;
   void* AuthUser;
   AgentResolveAuthFn ResolveAuth;
 };
 
-// In-memory-only steer/follow-up/next-turn message queues (Pi semantics):
-// held only in harness memory and folded into the tree at their checkpoint.
-// Lost if the process exits before that checkpoint is reached; nothing here
-// is ever itself persisted.
+// Memory-only (pi semantics): lost if the process exits before a checkpoint.
 struct AgentHarnessQueues {
   Array<Message> Steering;
   Array<Message> FollowUp;
@@ -60,45 +47,28 @@ struct AgentHarnessQueues {
 struct AgentHarness {
   SessionLog Log;
   AgentHarnessConfig Config;
-  Arena Runtime;  // tool schemas; lives for the harness lifetime
-  Arena State;    // maintained Records + Reduction/index; append-only, never reloaded
-  Arena Queued;   // queued message text; recycled whenever all queues drain
-  // Per-turn scratch: the materialized context, the built request, the
-  // provider's response, and every per-turn hook allocation. Reset at the top
-  // of each turn of a run and trimmed after spikes, keeping cost proportional
-  // to one turn rather than to the number of turns times the conversation.
-  // Nothing allocated here may outlive the turn that allocated it.
+  Arena Runtime;
+  Arena State;    // append-only
+  Arena Queued;   // recycled whenever all queues drain
+  // Reset every turn: nothing allocated here may outlive its turn.
   Arena Work;
-  // Per-run scratch for the accumulated list of State-owned messages.
-  // PrepareNextTurn overrides have separate, replaceable per-run owners.
   // Reset with Work at the end of each Run/Compact/Navigate.
   Arena RunMem;
-  // Holds only the returned SessionResult's message, which callers read after
-  // Work has been handed back. Separate from State because State is append-only
-  // and a run that fails without persisting anything would otherwise leave a
-  // permanent copy behind on every failure.
+  // Not State: State is append-only and would leak a copy per failure.
   Arena LastResult;
   ToolRuntime* RuntimeTools;
   Mutex StateLock;  // guards Records/Reduction/Queues/Running/Faulted/Watchers
-  // Serializes event observation and guards PublishedCursor and the watcher
-  // registry. Split from StateLock because publishing happens once
-  // per streamed token while StateLock is also held for O(history) snapshot
-  // work; sharing one lock made token delivery wait on it.
-  //
-  // Lock order is StateLock -> WatcherLock -> AgentHarnessWatch::Lock. Nothing
-  // may acquire them in the other direction.
+  // Guards PublishedCursor and watchers. Lock order is
+  // StateLock -> WatcherLock -> AgentHarnessWatch::Lock, never the reverse.
   Mutex WatcherLock;
 
-  // Loaded once at Init (SessionLog_ReadAll -> SessionReducer_Reduce) and
-  // folded in O(1) per appended record thereafter -- never reloaded from the
-  // repository on a per-turn/per-append path. See AgentHarness_Append.
+  // Loaded once at Init, then folded per append; never reloaded.
   Array<SessionRecord> Records;
   SessionReduction Reduction;
   AgentHarnessQueues Queues;
   AgentPermissionEngine Permissions;
 
-  // Set with Atomic_StoreI32 and read with Atomic_LoadI32; see base/thread.h.
-  // The pointer is handed to providers and tools, which poll it the same way.
+  // Access only via Atomic_StoreI32 / Atomic_LoadI32.
   volatile i32 AbortFlag;
   bool Running;
   bool Faulted;
@@ -109,27 +79,18 @@ struct AgentHarness {
   bool Initialized;
 };
 
-// Takes ownership of log. Loads and reduces the log exactly once; there is no
-// suspended-operation state to resume or abort -- a crash can only ever leave
-// a persisted assistant tool call without its result, which context
-// preparation papers over transiently (see session/replay.h). Storage
-// failure still faults the harness and aborts the current call.
+// Takes ownership of log.
 SessionResult AgentHarness_Init(AgentHarness* harness, SessionLog log,
                                 const AgentHarnessConfig* config);
 SessionResult AgentHarness_Close(AgentHarness* harness);
 
-// Copies the complete tree and index for metadata and branch browsing. Costs
-// the session's full history; prefer Summarize/DescribeSession/
-// SnapshotTranscript for anything that needs less than the tree itself.
 SessionResult AgentHarness_Snapshot(Arena* arena, AgentHarness* harness,
                                     SessionReduction* out);
 
-// The handful of scalars callers usually want from a snapshot. Copies only the
-// provider and model strings.
 struct AgentHarnessSummary {
   DurableId SessionId;
   DurableId HeadId;
-  StrView Provider;  // active branch's provider; empty if never set
+  StrView Provider;
   StrView Model;
   u32 RecordCount;
   u64 Cursor;
@@ -138,20 +99,14 @@ struct AgentHarnessSummary {
 };
 SessionResult AgentHarness_Summarize(Arena* arena, AgentHarness* harness,
                                      AgentHarnessSummary* out);
-// Session metadata (title, usage, counts) built from the live records without
-// copying them.
 SessionResult AgentHarness_DescribeSession(Arena* arena, AgentHarness* harness,
                                            SessionInfo* out);
-// Copies only the active, compaction-aware transcript into arena. maxMessages
-// selects an exact suffix (0 means all); it limits message count, not bytes.
-// All returned content is caller-owned and survives harness close.
+// Returned content is caller-owned and survives harness close.
 SessionResult AgentHarness_SnapshotTranscript(Arena* arena, AgentHarness* harness,
                                               u32 maxMessages,
                                               AgentTranscriptSnapshot* out);
-// Subscribes from the current durable cursor without copying any history.
 SessionResult AgentHarness_Watch(AgentHarness* harness, u32 capacity,
                                  AgentHarnessWatch* outWatch);
-// Snapshot and registration are atomic with respect to durable appends.
 SessionResult AgentHarness_WatchTranscript(Arena* arena, AgentHarness* harness,
                                            u32 capacity, u32 maxMessages,
                                            AgentTranscriptSnapshot* outSnapshot,
@@ -160,9 +115,8 @@ SessionResult AgentHarness_WatchNext(Arena* arena, AgentHarnessWatch* watch,
                                      AgentHarnessEvent* out);
 SessionResult AgentHarness_WatchRequestClose(AgentHarnessWatch* watch);
 SessionResult AgentHarness_WatchClose(AgentHarnessWatch* watch);
-// A returned operation result's Message stays valid until the next accepted
-// run, compaction, navigation, metadata change, fork, or Close. Copy it if it
-// must outlive that; operation scratch is reclaimed before returning.
+// A result's Message stays valid only until the next accepted run, compaction,
+// navigation, metadata change, fork, or Close.
 SessionResult AgentHarness_Run(AgentHarness* harness, StrView prompt);
 SessionResult AgentHarness_Compact(AgentHarness* harness,
                                    StrView instructions = StrView{});
@@ -185,9 +139,7 @@ AgentPermissionMode AgentHarness_SetPermissionMode(AgentHarness* harness,
 AgentPermissionMode AgentHarness_CyclePermissionMode(AgentHarness* harness);
 AgentPermissionMode AgentHarness_ResetPermissions(AgentHarness* harness);
 u32 AgentHarness_PermissionGrantCount(AgentHarness* harness);
-// Replaces the configured writable roots for later tool calls. `roots` is
-// copied for the permission engine but also kept as the config's view, so it
-// must stay valid while this harness or a copy of its config is in use.
+// `roots` must stay valid while this harness or a copy of its config is in use.
 void AgentHarness_SetWritableRoots(AgentHarness* harness, const StrView* roots,
                                    u32 count);
 bool AgentHarness_ResolvePermissionRequest(AgentHarness* harness, Arena* arena,
@@ -195,11 +147,6 @@ bool AgentHarness_ResolvePermissionRequest(AgentHarness* harness, Arena* arena,
                                            volatile i32* abort,
                                            StrView* outMessage, StrBuf* error);
 
-// Memory-only queues: each call appends to the in-process queue and returns
-// once it is recorded there (no session-log append, no durable record).
-// Steering is folded onto the tree after the next tool-result batch;
-// follow-up after a run's turn-loop would otherwise stop; next-turn before
-// the next accepted prompt. See AgentHarnessQueues.
 SessionResult AgentHarness_QueueSteering(AgentHarness* harness, StrView text);
 SessionResult AgentHarness_QueueFollowUp(AgentHarness* harness, StrView text);
 SessionResult AgentHarness_QueueNextTurn(AgentHarness* harness, StrView text);

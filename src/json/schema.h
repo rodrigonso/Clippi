@@ -6,8 +6,7 @@ struct JsonSchema {
   const JsonValue* Root;
 };
 
-// Parses a schema once and rejects unsupported behavioral keywords so callers
-// never mistake partial validation for full validation.
+// Rejects unsupported behavioral keywords so partial validation is never mistaken for full.
 bool JsonSchema_Compile(Arena* arena, StrView schemaJson, JsonSchema* out,
                         StrBuf* err);
 

@@ -47,8 +47,7 @@ inline SessionCreateOptions SessionCreateOptions_ForFork(
   return create;
 }
 
-// The root record every session opens with. Views are borrowed from `options`;
-// backends that outlive the caller clone it before storing.
+// Views are borrowed from `options`; backends clone before storing.
 inline SessionRecord SessionRecord_MakeStarted(DurableId sessionId,
                                                const SessionCreateOptions* options) {
   SessionRecord started = {};
@@ -66,18 +65,14 @@ inline SessionRecord SessionRecord_MakeStarted(DurableId sessionId,
   return started;
 }
 
-// Results allocated into a caller arena remain owned by that arena. Parallel
-// calls must use independent caller arenas (never the backend's own arena).
-// Close requires all operations using the log, including forks reading its
-// live records, to have completed. Close the repository only after its calls
-// and all log handles have finished.
+// Parallel calls need independent caller arenas. Close only after every
+// operation on the log (including forks reading it) and all handles finish.
 struct SessionLog {
   void* Ctx;
   bool Writable;
   SessionResult (*ReadAll)(void* ctx, Arena* arena, Array<SessionRecord>* out);
   SessionResult (*Append)(void* ctx, SessionRecord* record);
-  // Invalid batches leave records, sequence, metadata and storage unchanged,
-  // including the caller's input. References may target earlier batch records.
+  // Atomic: an invalid batch changes nothing, including the caller's input.
   SessionResult (*AppendBatch)(void* ctx, SessionRecord* records, u32 count);
   void (*Close)(void* ctx);
 };

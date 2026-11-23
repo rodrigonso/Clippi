@@ -12,8 +12,7 @@ bool Term_IsInteractive() {
 
 bool Term_SystemAccent(u8* r, u8* g, u8* b) {
   const wchar_t* key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent";
-  // AccentPalette is the shade ramp behind UISettings; entry 3 is the accent
-  // itself. DWM's AccentColor goes stale when title bars do not use it.
+  // AccentPalette entry 3 is the accent itself; DWM's AccentColor goes stale when title bars do not use it.
   BYTE palette[32];
   DWORD size = sizeof(palette);
   if (RegGetValueW(HKEY_CURRENT_USER, key, L"AccentPalette", RRF_RT_REG_BINARY, nullptr,
@@ -53,8 +52,7 @@ bool Term_Enter(Term* t) {
 
   SetConsoleOutputCP(CP_UTF8);
   SetConsoleMode(ho, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN);
-  // Raw VT input: deliver the ANSI/VT byte stream (arrows, bracketed paste, etc.)
-  // with no line buffering, echo, or Ctrl+C signal processing.
+  // No line buffering, echo, or Ctrl+C signal processing.
   SetConsoleMode(hi, ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_EXTENDED_FLAGS);
 
   t->Active = true;

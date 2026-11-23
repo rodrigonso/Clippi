@@ -2,17 +2,8 @@
 
 #include "app/runtime.h"
 
-// Switching the live harness onto a different session log, and the project-trust
-// decisions that gate it.
-//
-// A switch is not a fresh start: the event pump, prompt context, trust state,
-// and every extension point at the old session and have to be moved together,
-// and any step can fail with the harness already half-moved. RuntimeSwitchToLog
-// owns that sequencing and rolls back rather than leaving a mixed state.
+// RuntimeSwitchToLog moves everything together and rolls back on failure.
 
-// One project-trust menu, shared by startup, `/trust`, and cross-project
-// resume. The session-only choices apply to the running process instead of
-// being written to the trust store.
 enum class TrustChoice : u8 {
   TrustCurrent,
   TrustParent,
@@ -36,9 +27,7 @@ struct SessionOptionList {
   u32 Count;
 };
 
-// Writes the menu into `outOptions`/`outChoices` (each at least
-// TRUST_CHOICE_CAPACITY long) and returns the number of entries. `/trust`
-// exists to persist a decision, so it omits the session-only choices.
+// Each out array must hold at least TRUST_CHOICE_CAPACITY entries.
 u32 BuildTrustChoices(Arena* arena, StrView parent, bool includeSessionOnly,
                       StrView* outOptions, TrustChoice* outChoices);
 TrustDecision ResolveTrustChoice(TrustChoice choice, StrView cwd, StrView parent);
@@ -47,14 +36,12 @@ SessionResult ResolveRuntimeProjectTrust(InteractiveRuntime* rt, Arena* scratch,
                                          StrView workingDirectory, bool* trusted,
                                          bool* hasResources);
 
-// Startup trust prompt. Returns false when the user declined to continue.
 bool ResolveStartupProjectTrust(Arena* arena, StrView trustPath,
                                 StrView workingDirectory,
                                 DefaultProjectTrust defaultTrust,
                                 ProjectTrustOverride overrideValue, bool interactive,
                                 bool* trusted, bool* hasResources);
 
-// Restarts the watch/event pump against the harness's current session.
 bool RuntimeRestartWatch(InteractiveRuntime* rt, const AppCommandUx* ux);
 bool RuntimeRestorePreviousSession(InteractiveRuntime* rt, DurableId previousSessionId,
                                    const AgentHarnessConfig* config,
@@ -64,16 +51,10 @@ bool RuntimeRollbackSessionSwitch(InteractiveRuntime* rt,
                                   DurableId previousSessionId,
                                   const AgentHarnessConfig* previousConfig,
                                   const AppCommandUx* ux);
-// The target's provider and model come from `targetInfo`; when it names none
-// (a fresh session), the current selection carries over.
 SessionResult RuntimeSwitchToLog(InteractiveRuntime* rt, SessionLog target,
                                  const SessionInfo* targetInfo,
                                  const AppCommandUx* ux);
 
-// ---- session listing / formatting ---------------------------------------
-
-// "YYYY-MM-DD HH:MM:SS" in local time, or "(unknown)" for zero or an
-// unconvertible time.
 StrView FormatLocalTime(Arena* arena, u64 timestampMs);
 StrView SessionTitle(const SessionInfo* info);
 StrView SessionStatusText(const SessionInfo* info);

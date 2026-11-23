@@ -129,8 +129,6 @@ function verifyExtracted(prefix, source, version, platform) {
   }
 }
 
-// Runs the real install script against the local archive under an isolated
-// home, using its default install location, then reruns it as an upgrade.
 function smokeInstall(source, archive, home, version) {
   fs.mkdirSync(home);
   const windows = process.platform === 'win32';
@@ -171,7 +169,6 @@ async function smoke(source, directory, platform) {
   const names = validateAssets(directory, version, [platform]);
   const archive = names.find(name => !name.endsWith('.sha256'));
   const rootName = archive.replace(/\.(zip|tar\.gz)$/, '');
-  // With checkout under source/, this relative directory is outside the checkout.
   const work = path.join('out', `ci-smoke-${crypto.randomBytes(8).toString('hex')}`);
   const relative = path.relative(source, path.resolve(work));
   assert(relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative),

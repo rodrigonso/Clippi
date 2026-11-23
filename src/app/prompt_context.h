@@ -40,9 +40,7 @@ struct PromptContextOptions {
   u32 PromptTemplatePathCount;
   const StrView* SettingsPromptTemplatePaths;
   u32 SettingsPromptTemplatePathCount;
-  // Folder holding every repository's memory wiki (normally
-  // `~/.clippi/memory`). Empty disables memory, leaving the prompt exactly as
-  // it is without the feature.
+  // Empty disables memory, leaving the prompt byte-identical.
   StrView MemoryStore;
 };
 
@@ -55,20 +53,17 @@ struct PromptContext {
   Array<PromptContextFile> ContextFiles;
   SkillSet Skills;
   Array<StrView> SettingsSkillPaths;
-  // Templates are never shown to the model; they live here so `/reload` swaps
-  // them atomically with everything else the project can contribute.
+  // Never shown to the model; here so `/reload` swaps them atomically.
   PromptTemplateSet Templates;
   Array<StrView> SettingsPromptTemplatePaths;
-  // The working directory's wiki pages folder when memory is enabled, and the
-  // `<memory_wiki>` block built from it. The block is absent without `read`.
+  // The block is absent without `read`.
   StrView MemoryPages;
   StrView MemoryBlock;
   u32 MemoryPageCount;
   Array<PromptDiagnostic> Diagnostics;
 };
 
-// Builds a fully owned prompt context. On failure `out` remains releasable and
-// `error` receives a human-readable reason.
+// On failure `out` remains releasable.
 bool PromptContext_Build(const PromptContextOptions* options, PromptContext* out,
                          StrBuf* error);
 void PromptContext_Release(PromptContext* context);

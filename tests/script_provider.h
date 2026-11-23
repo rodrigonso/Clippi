@@ -2,16 +2,7 @@
 #include "base/str.h"
 #include "llm/types.h"
 
-// Scripted provider for the offline suite.
-//
-// Each step produces exactly one assistant message: optional text, then either
-// zero or more tool calls or an error. Sequence steps to drive a multi-turn run
-// (e.g. step 0 calls a tool, step 1 replies). Running past the last step yields
-// an empty assistant message with StopReason::Stop.
-//
-// This lives under tests/ on purpose: the shipping tree carries no test
-// doubles. `Provider` is just a context pointer plus a stream function, so a
-// test-owned implementation needs no support from src/.
+// Each step yields one assistant message; running past the last step yields an empty Stop message.
 struct ScriptToolCall {
   StrView Name;
   StrView Id;
@@ -22,9 +13,9 @@ struct ScriptStep {
   StrView Text;
   const ScriptToolCall* Tools;
   u32 ToolCount;
-  StrView Error;    // non-empty => error result (Stop=Error, ErrorMessage=Error)
-  StopReason Stop;  // used when the step makes no tool call
-  Usage Use;        // reported verbatim, so token thresholds stay deterministic
+  StrView Error;
+  StopReason Stop;
+  Usage Use;
 };
 
 struct ScriptProvider {
@@ -55,9 +46,6 @@ inline bool ScriptProvider_Stream(void* ctx, Arena* arena, const Model* model,
   message.Provider = SVL("script");
   message.Use = step.Use;
 
-  // Simulate a provider error (e.g. to exercise auto-retry): emit an Error
-  // stream event, set Stop=Error plus ErrorMessage, and return false with no
-  // content, exactly as a real provider does.
   if (step.Error.Length) {
     message.Stop = StopReason::Error;
     message.ErrorMessage = StrView_Dup(arena, step.Error);

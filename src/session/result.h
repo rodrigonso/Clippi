@@ -38,8 +38,6 @@ inline bool SessionResult_IsOk(SessionResult result) {
   return result.Status == SessionStatus::Ok;
 }
 
-// Shorthands for the two statuses that every session/agent layer raises from
-// literal messages.
 inline SessionResult SessionResult_Invalid(const char* message) {
   return SessionResult_Error(SessionStatus::InvalidArgument, SV(message));
 }

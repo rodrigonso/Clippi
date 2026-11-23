@@ -6,9 +6,6 @@ struct MemoryLogHandle;
 
 struct MemorySession {
   Array<SessionRecord> Records;
-  // Persistent fold state: built once (CreateSessionLocked) and updated in
-  // O(1) per appended record (SessionReducer_Fold). Never rebuilt via
-  // SessionReducer_Reduce on a hot append/open path.
   SessionReduction Reduction;
   MemoryLogHandle* Writer;
 };
@@ -99,9 +96,6 @@ SessionResult CloneRecords(Arena* arena, const Array<SessionRecord>* source,
   return SessionResult_Ok(source->Count ? source->Data[source->Count - 1].Seq : 0);
 }
 
-// Callers should prefer folded SessionReduction state over ReadAll for any
-// per-turn/hot-path need; this exists for callers that genuinely need a full
-// snapshot (e.g. export, or the one-time load at harness Init).
 SessionResult ReadAll(void* context, Arena* arena, Array<SessionRecord>* out) {
   MemoryLogHandle* handle = (MemoryLogHandle*)context;
   if (!handle || !arena || !out) return SessionResult_Invalid("read arguments are invalid");
@@ -144,11 +138,6 @@ SessionResult AppendBatch(void* context, SessionRecord* input, u32 count) {
   Array<SessionRecord> prepared = Array_Make<SessionRecord>(&scratch, count);
   u64 firstSeq = (u64)session->Records.Count + 1;
 
-  // Two-phase: validate every new record against the already-folded
-  // reduction plus the small in-flight batch prepared so
-  // far (bounded by `count`, never the historical log). Only after the
-  // whole batch validates do we mutate the persistent records/reduction, so
-  // a failure partway through the batch leaves prior history untouched.
   for (u32 i = 0; i < count; i++) {
     SessionRecord record = {};
     SessionResult prep = PrepareRecord(session, firstSeq + i, &input[i], &record);
@@ -288,9 +277,6 @@ SessionResult Open(void* context, Arena* arena, const SessionOpenOptions* option
     return SessionResult_Error(SessionStatus::NotFound, SVL("session was not found"));
   if (options->Writable && session->Writer)
     return SessionResult_Error(SessionStatus::Busy, SVL("session already has a writer"));
-  // The in-memory session object is already validated and folded (built at
-  // Create time, kept current on every append); no linear re-validation on
-  // this Open path.
   MemoryLogHandle* handle = NewHandleLocked(repository, session, options->Writable);
   *outLog = LogInterface(handle);
   SessionResult built = BuildInfo(arena, session, outInfo);
@@ -442,7 +428,7 @@ void CloseRepository(void* context) {
   MemoryRepository_Destroy((MemoryRepository*)context);
 }
 
-}  // namespace
+}
 
 void MemoryRepository_Init(MemoryRepository* repository) {
   if (!repository) return;

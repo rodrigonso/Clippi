@@ -54,9 +54,7 @@ static void* RegexAlloc(usize size, void* user) {
 }
 
 static void RegexFree(void*, void*) {
-  // PCRE2 retains its geometrically grown backtracking buffer in MatchData.
-  // No per-line allocation occurs after that buffer reaches its high-water mark;
-  // abandoned growth buffers and compile workspace count against the same cap.
+  // No-op: arena-owned; abandoned growth buffers count against the cap.
 }
 
 static int RegexCompileGuard(u32, void* user) {
@@ -68,8 +66,7 @@ static int RegexCallout(pcre2_callout_block*, void* user) {
   SearchRegexState* state = (SearchRegexState*)user;
   if (state->Abort && Atomic_LoadI32(state->Abort))
     return PCRE2_ERROR_CALLOUT;
-  // PCRE2's match limit restarts at each candidate start position. This budget
-  // spans the entire line, including all unanchored attempts.
+  // PCRE2's match limit resets per start position; this budget spans the line.
   if (++state->Callouts > RegexCalloutLimit)
     return PCRE2_ERROR_MATCHLIMIT;
   if ((state->Callouts & 255) == 0 &&
@@ -108,8 +105,7 @@ bool SearchRegex_Compile(Arena* arena, StrView pattern, bool literal,
   *state = allocator;
   state->Abort = abort;
 
-  // Escape instead of PCRE2_LITERAL: literal mode cannot be combined with the
-  // auto-callouts that enforce cancellation and the whole-line work budget.
+  // Not PCRE2_LITERAL: it cannot be combined with the auto-callouts.
   if (literal) {
     u32 escapes = 0;
     for (u32 i = 0; i < pattern.Length; i++)
@@ -161,7 +157,6 @@ bool SearchRegex_Compile(Arena* arena, StrView pattern, bool literal,
     return false;
   }
 
-  // Only the overall match matters; captures stay in PCRE2's bounded frames.
   state->MatchData = pcre2_match_data_create(1, general);
   state->MatchContext = pcre2_match_context_create(general);
   if (!state->MatchData || !state->MatchContext)

@@ -1,7 +1,5 @@
 #pragma once
 
-// Path to the test executable itself. Suites that need to re-exec the harness
-// as a child process (e.g. the cross-process file lock test) use this.
 extern const char* g_test_executable;
 
 int RunAgentBenchmark(int argc, char** argv);

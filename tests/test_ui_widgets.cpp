@@ -7,7 +7,7 @@ namespace {
 
 void ActivateList(void* user, u32 index) { *(u32*)user = index; }
 
-}  // namespace
+}
 
 void TestUiWidgets() {
   Arena arena = ArenaCreate();

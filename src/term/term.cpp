@@ -6,8 +6,6 @@
 
 #include "crypto/base64.h"
 
-// Shared (platform-independent) terminal output + exit-restore tracking.
-
 static Term* g_active = nullptr;
 static bool g_atexitArmed = false;
 
@@ -18,11 +16,8 @@ void Term_Write(const char* data, u32 len) {
 
 void Term_WriteStr(const char* s) { Term_Write(s, (u32)strlen(s)); }
 
-// Alt screen, clear, home, bracketed paste, SGR all-motion mouse tracking, and
-// enhanced keyboard reporting. The keyboard requests are what make Shift+Enter
-// distinguishable from Enter: the legacy stream sends a bare CR for both. We
-// ask for xterm modifyOtherKeys level 2 and push kitty keyboard protocol flag
-// 1; terminals implementing neither ignore them and keep sending legacy bytes.
+// The keyboard requests make Shift+Enter distinguishable from Enter (legacy sends CR for both);
+// terminals implementing neither ignore them.
 static const char kSetup[] =
     "\x1b[?1049h\x1b[2J\x1b[H\x1b[?2004h\x1b[?1003h\x1b[?1006h"
     "\x1b[>4;2m\x1b[>1u";

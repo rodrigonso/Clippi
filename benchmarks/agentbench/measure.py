@@ -1,5 +1,3 @@
-"""`measure` -- the benchmark proper."""
-
 from __future__ import annotations
 
 import json
@@ -49,8 +47,7 @@ def run_once(tool: Tool, sessions: int, cwd: Path,
     daemon_pids: list[int] = []
     daemon_pgids: list[int] = []
 
-    # Every tool gets a throwaway HOME, so none is charged for whatever
-    # sessions and configuration happen to be in the real profile.
+    # Throwaway HOME so no tool is charged for the real profile's state.
     root = tempfile.mkdtemp(prefix=f"agentbench-{tool.name}-")
     try:
         env = os.environ.copy()
@@ -88,9 +85,7 @@ def run_once(tool: Tool, sessions: int, cwd: Path,
 
         rss_mb, count = proc.tree_rss_mb([s.pid for s in launched] + daemon_pids,
                                          pgids + daemon_pgids)
-        # The failure this guards against is silent: a daemon that detaches
-        # itself out of both the tree and the process group is simply not
-        # charged, and the tool reports a number that is too good.
+        # A daemon detached from both tree and group would silently go uncounted.
         expected = len(launched) + len(daemon_pids)
         if count < expected:
             notes.append(f"counted {count} processes, expected at least {expected}")
@@ -168,8 +163,6 @@ def main(args) -> int:
             try:
                 run = run_once(tool, args.sessions, cwd, args.timeout, args.settle)
             except RuntimeError as err:
-                # A tool whose daemon never came up has no number worth
-                # reporting, but the rest of the table is still good.
                 print(f"    !! {err}\n    skipping {tool.name}", flush=True)
                 break
             print(f"    {run.rss_mb:.1f} MiB RSS   {run.process_count} proc   "

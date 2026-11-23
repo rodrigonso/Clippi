@@ -3,7 +3,6 @@ set(CLIPPI_CURL_ARCHIVE "" CACHE FILEPATH "Offline copy of the pinned curl relea
 set(curl_version 8.11.1)
 set(curl_hash c7ca7db48b0909743eaef34250da02c19bc61d4f1dcedd6603f109409536ab56)
 
-# Keep dependency policy here, not in the platform wrappers.
 foreach(option
     BUILD_CURL_EXE BUILD_SHARED_LIBS BUILD_TESTING BUILD_EXAMPLES
     BUILD_LIBCURL_DOCS BUILD_MISC_DOCS ENABLE_CURL_MANUAL CURL_ENABLE_EXPORT_TARGET

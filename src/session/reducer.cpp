@@ -9,11 +9,6 @@ const SessionRecord* FindEntry(const SessionReduction* reduction, DurableId id) 
   return SessionRecord_IsTreeNode(record->Kind) ? record : nullptr;
 }
 
-// Walks backward from `reduction->HeadId` to the session root, recomputing
-// the branch-scoped Provider/Model/ThinkingLevel/ToolNames from whichever
-// Model/Thinking/Tools record is nearest to the head. O(branch); only called
-// when a Leaf record explicitly relocates the head (checkout), never on the
-// ordinary append-onto-head path.
 void RecomputeBranchSettings(SessionReduction* reduction) {
   reduction->Provider = StrView{};
   reduction->Model = StrView{};
@@ -43,7 +38,7 @@ void RecomputeBranchSettings(SessionReduction* reduction) {
   }
 }
 
-}  // namespace
+}
 
 void SessionReducer_Fold(SessionReduction* reduction, const SessionRecord* records, u32 count) {
   reduction->Records = records;
@@ -71,7 +66,7 @@ void SessionReducer_Fold(SessionReduction* reduction, const SessionRecord* recor
 
   DurableId parent = SessionRecord_ParentId(record);
   bool chainsOntoHead = reduction->HeadIsSet && DurableId_Eq(parent, reduction->HeadId);
-  if (!chainsOntoHead) return;  // appended onto an inactive branch; indexed, not the new head
+  if (!chainsOntoHead) return;
 
   reduction->HeadId = record->EntryId;
   reduction->HeadIsSet = true;
@@ -99,7 +94,7 @@ const SessionRecord* FindPending(const SessionRecord* pending, u32 pendingCount,
   return nullptr;
 }
 
-}  // namespace
+}
 
 SessionResult SessionReducer_ValidateAppend(const SessionReduction* reduction,
                                             const SessionRecord* candidate,
@@ -160,9 +155,8 @@ SessionResult SessionReducer_ValidateAppend(const SessionReduction* reduction,
     if (base->Seq > through->Seq)
       return SessionResult_Invalid("compaction span ends before it begins");
 
-    // Earlier records already have valid parents. Walking the candidate's
-    // ancestry, not the active head, admits inactive branches and pending
-    // batch nodes without allocating or scanning unrelated history.
+    // Walk the candidate's ancestry, not the head's, so inactive branches and
+    // pending batch nodes are admitted.
     const SessionRecord* current = parentRecord;
     bool foundThrough = false;
     while (current && current->Seq >= base->Seq) {
@@ -209,11 +203,10 @@ SessionResult SessionReducer_Ancestry(const SessionReduction* reduction, Arena* 
   return SessionResult_Ok();
 }
 
-// How one branch entry contributes to the materialized context.
 enum class ContextSlot : u8 {
-  Own,        // emit the entry's own message, when it has one
-  Suppressed, // folded into some compaction's summary
-  Summary,    // anchor position for a compaction's summary
+  Own,
+  Suppressed,
+  Summary,
 };
 
 SessionResult SessionReducer_Context(Arena* arena, const SessionReduction* reduction,
@@ -254,12 +247,7 @@ SessionResult SessionReducer_ContextThrough(Arena* arena, const SessionReduction
     return SessionResult_Ok();
   }
 
-  // Each compaction folds the inclusive branch span [Base..Through] into a
-  // single summary anchored at Base. Applying them in branch order means a
-  // later compaction that spans an earlier anchor correctly supersedes it.
-  // Only span endpoints need branch positions, so they are indexed rather
-  // than every entry: a long, often-compacted branch has thousands of entries
-  // but only a handful of distinct endpoints.
+  // Branch order: a later compaction spanning an earlier anchor supersedes it.
   DurableIdIndex endpoints = {};
   DurableIdIndex_Init(&endpoints, arena, compactionCount * 2);
   u32* endpointPosition = ArenaPushArray(arena, u32, compactionCount * 2);

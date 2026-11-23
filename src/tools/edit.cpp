@@ -7,9 +7,8 @@
 #include "tools/fs.h"
 #include "tools/tools.h"
 
-// Fuzzy matching intentionally omits pi's full NFKC Unicode normalization: this
-// C++ port has no Unicode database/ICU. It implements whitespace-run tolerance
-// plus the targeted smart-character mappings required by the edit contract.
+// Divergence from pi: no NFKC (no ICU); only whitespace-run tolerance plus the
+// smart-character mappings the edit contract needs.
 
 struct EditSpec {
   StrView OldText;
@@ -353,8 +352,6 @@ bool EditExec(void* ctx, Arena* arena, StrView id, const ToolArgs* args,
   StrView realPath = Fs_RealPath(arena, path);
   FileLockToken lock = FileLock_Acquire(realPath);
   bool ok = false;
-  // The file and its working copies (normalized, edited, re-encoded, diffed)
-  // are several times its size; only the result text outlives the call.
   Arena scratch = ArenaCreate();
 
   StrView fileBytes = {};

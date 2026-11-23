@@ -69,10 +69,6 @@ static Message AbortedAssistantMessage(Arena* arena, u64 timestamp) {
   return message;
 }
 
-// ---------------------------------------------------------------------------
-// v2 record codec: schema-version gating, per-kind payload round trips.
-// ---------------------------------------------------------------------------
-
 static void TestDurableIds() {
   DurableId id = TestId(3);
   CHECK_ALL(DurableId_IsSet(id), DurableId_View(&id).Length == DURABLE_ID_CHAR_COUNT);
@@ -123,9 +119,6 @@ static void TestRecordCodec(Arena* arena) {
   CHECK(SessionRecord_Decode(arena, StrBuf_View(&trailing), &decoded).Status ==
         SessionStatus::Corrupt);
 
-  // A record written before the vendor-native protocols were removed carries
-  // `signature`, `redacted`, and `cacheWrite`. Those fields are gone, but the
-  // extra keys must not stop an existing session log from loading.
   const char* preMigration =
       "{\"schemaVersion\":2,\"sessionId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"seq\":2,"
       "\"entryId\":\"FBUWFxgZGhscHR4fICEiIw\",\"type\":\"message\","
@@ -185,8 +178,6 @@ static void TestRecordCodec(Arena* arena) {
   CHECK(!StrView_Contains(StrBuf_View(&noUsageJson), "\"usage\""));
   CHECK(SessionResult_IsOk(SessionRecord_Decode(arena, StrBuf_View(&noUsageJson), &decoded)));
   CHECK(!decoded.CompactionEntry.HasUsage);
-  // A compaction written before file tracking existed carries neither key and
-  // must still decode, as empty lists.
   CHECK_ALL(!StrView_Contains(StrBuf_View(&noUsageJson), "\"readFiles\""),
             !StrView_Contains(StrBuf_View(&noUsageJson), "\"modifiedFiles\""),
             decoded.CompactionEntry.ReadFiles.Count == 0,
@@ -233,8 +224,6 @@ static void TestRecordCodec(Arena* arena) {
   CHECK_ALL(decoded.Kind == SessionRecordKind::Leaf, DurableId_Eq(decoded.LeafEntry.LeafId, TestId(1)));
 }
 
-// Explicit structural clone must not depend on the source's arena: releasing
-// it after cloning must not corrupt (or crash reading) the clone.
 static void TestRecordClone() {
   Arena scratch = ArenaCreate();
   Arena dest = ArenaCreate();
@@ -314,7 +303,7 @@ static void TestRecordValidation(Arena* arena) {
       BaseRecord(records.Data[0].SessionId, 5, 90, SessionRecordKind::Compaction);
   badCompaction.CompactionEntry.ParentId = records.Data[3].EntryId;
   badCompaction.CompactionEntry.BaseEntryId = records.Data[0].EntryId;
-  badCompaction.CompactionEntry.ThroughEntryId = TestId(77);  // never appended
+  badCompaction.CompactionEntry.ThroughEntryId = TestId(77);
   badCompaction.CompactionEntry.SourceHeadId = records.Data[3].EntryId;
   badCompaction.CompactionEntry.Summary = UserMessage(arena, "summary");
   Array<SessionRecord> withBadCompaction = Array_Make<SessionRecord>(arena, 5);
@@ -342,9 +331,6 @@ static void TestReducer(Arena* arena) {
   CHECK_ALL(context.Count == 3, context.Data[0].Kind == Role::User,
             context.Data[1].Kind == Role::Assistant, context.Data[2].Kind == Role::ToolResult);
 
-  // Appending onto the active head is validated in O(1) via the index --
-  // never a rescan of the whole log -- then folds in O(1) too (ordinary,
-  // non-Leaf record).
   SessionRecord model = {};
   model.SchemaVersion = SESSION_SCHEMA_VERSION;
   model.SessionId = records.Data[0].SessionId;
@@ -360,8 +346,6 @@ static void TestReducer(Arena* arena) {
   CHECK_ALL(DurableId_Eq(reduction.HeadId, model.EntryId),
             StrView_EqCStr(reduction.Provider, "anthropic"));
 
-  // A duplicate entryId or a parent that was never appended is rejected
-  // without rescanning history (index lookups only).
   SessionRecord duplicate = model;
   duplicate.Seq = 6;
   duplicate.EntryId = records.Data[1].EntryId;
@@ -379,8 +363,6 @@ static void TestReducer(Arena* arena) {
   CHECK(SessionReducer_ValidateAppend(&reduction, &orphan).Status ==
         SessionStatus::InvalidArgument);
 
-  // Same-batch references may target only tree nodes. Non-tree IDs still
-  // participate in duplicate detection, but never become valid parents.
   SessionRecord pendingName =
       BaseRecord(records.Data[0].SessionId, 6, 52,
                  SessionRecordKind::SessionName);
@@ -400,9 +382,6 @@ static void TestReducer(Arena* arena) {
                                       &pendingName, 1)
             .Status == SessionStatus::InvalidArgument);
 
-  // Thinking/Tools chain onto the new head; checking out (Leaf) an older
-  // entry recomputes inherited branch settings in O(branch), and clears them
-  // once none of the ancestors set them.
   SessionRecord thinking = {};
   thinking.SchemaVersion = SESSION_SCHEMA_VERSION;
   thinking.SessionId = records.Data[0].SessionId;
@@ -462,13 +441,6 @@ static void TestReducer(Arena* arena) {
   CHECK(ancestry.Count == 4);
 }
 
-// ---------------------------------------------------------------------------
-// Replay normalization (session/replay.h): orphan tool-call synthesis and
-// omission of aborted/errored assistant turns. Transient/request-time only --
-// exercised here directly against SessionReplay_TransformMessages, never
-// touching a session log.
-// ---------------------------------------------------------------------------
-
 static void TestReplay(Arena* arena) {
   CHECK(StrView_EqCStr(SessionReplay_NoResultMessage(), "No result provided"));
 
@@ -483,12 +455,10 @@ static void TestReplay(Arena* arena) {
 
   messages[2] = Message_ToolResult(arena, SVL("call-a"), SVL("read"), SVL("result-a"), false);
   messages[2].Timestamp = 150;
-  // call-b never gets a result before the next user message: it is
-  // interrupted and must be synthesized right before that next message.
 
   messages[3] = UserMessage(arena, "second");
 
-  messages[4] = AbortedAssistantMessage(arena, 200);  // omitted entirely, including from pending
+  messages[4] = AbortedAssistantMessage(arena, 200);
 
   messages[5] = UserMessage(arena, "third");
 
@@ -496,8 +466,6 @@ static void TestReplay(Arena* arena) {
   messages[6].Timestamp = 250;
   messages[6].Stop = StopReason::ToolUse;
   Array_Push(&messages[6].Content, Content_ToolCall(SVL("call-c"), SVL("shell"), SVL("{}")));
-  // call-c is interrupted at end-of-array (process exit) and must be
-  // synthesized as a trailing entry.
 
   Array<Message> transformed = SessionReplay_TransformMessages(arena, messages, 7);
   CHECK(transformed.Count == 8);
@@ -523,7 +491,6 @@ static void TestReplay(Arena* arena) {
             StrView_EqCStr(syntheticC.ToolName, "shell"), syntheticC.IsError,
             StrView_EqCStr(syntheticC.Content.Data[0].Text, "No result provided"));
 
-  // An errored assistant is omitted exactly like an aborted one.
   Message errorPair[2];
   errorPair[0] = Message_AssistantEmpty(arena);
   errorPair[0].Stop = StopReason::Error;
@@ -532,7 +499,6 @@ static void TestReplay(Arena* arena) {
   Array<Message> afterError = SessionReplay_TransformMessages(arena, errorPair, 2);
   CHECK_ALL(afterError.Count == 1, afterError.Data[0].Kind == Role::User);
 
-  // A clean tool-use turn whose result is already present needs no synthesis.
   Message complete[3];
   complete[0] = Message_AssistantEmpty(arena);
   complete[0].Stop = StopReason::ToolUse;
@@ -617,9 +583,6 @@ static SessionResult RepositoryCreate(SessionRepository* repository, Arena* aren
   return repository->Create(repository->Ctx, arena, &options, outLog, outInfo);
 }
 
-// Shared v2 contract exercised against both MemoryRepository and
-// JsonlRepository: create/open exclusivity, append + duplicate-parent
-// rejection, naming, fork, and project-scoped listing.
 static void RunRepositoryContract(Arena* arena, SessionRepository* repository, StrView projectKey,
                                   u8 seed) {
   DurableId sessionId = TestId(seed);
@@ -735,9 +698,6 @@ static void TestMemoryRepository(Arena* arena) {
   RunRepositoryContract(arena, &repository, SVL("clippi-memory-contract"), 70);
   repository.Close(repository.Ctx);
 
-  // Deterministic counter: ReadAll only increments for an actual
-  // SessionLog_ReadAll call; ordinary appends never trigger one, matching
-  // "repository ReadAll remains initialization/browsing only".
   MemoryRepository_Init(&memory);
   repository = MemoryRepository_AsRepository(&memory);
   DurableId countedId = TestId(85);
@@ -1043,8 +1003,6 @@ static void RunCompactionAdmissionContract(Arena* arena, SessionRepository* repo
     }
   }
 
-  // All endpoints and parents may be historical or earlier in this batch.
-  // Overlapping/nested spans are legal; metadata and root are tree nodes.
   SessionRecord valid[9] = {};
   valid[0].EntryId = TestId(50);
   valid[0].Kind = SessionRecordKind::SessionName;
@@ -1132,8 +1090,6 @@ static void RunCompactionAdmissionContract(Arena* arena, SessionRepository* repo
       CHECK(SessionResult_IsOk(SessionRecord_Encode(&bytes, &corrupt)));
       if (variant == 1) StrBuf_AppendChar(&bytes, '\n');
       if (variant == 2) StrBuf_AppendCStr(&bytes, "\n{\"schema");
-      // Neither a missing newline nor a torn tail may be repaired before
-      // validating the complete prefix, including its compaction topology.
       CHECK(ConfigFile_WriteAtomic(arena, path, StrBuf_View(&bytes)));
       for (u32 writable = 0; writable < 2; writable++) {
         open.Writable = writable != 0;
@@ -1376,10 +1332,7 @@ static bool ChildSeesLockBusy(Arena* arena, StrView lockPath) {
   return system(StrBuf_CStr(&command)) == 0;
 }
 
-// Gives a freshly created session the user message that makes it durable. A
-// session with no user content is deliberately never written to disk, so any
-// fixture that must survive a close -- or be visible to listing, resolution,
-// or another process -- has to say something first.
+// A session with no user content is never written to disk; durable fixtures must say something.
 static void PersistWithUserMessage(Arena* arena, SessionLog* log,
                                    DurableId entryId) {
   Array<SessionRecord> records = {};
@@ -1430,8 +1383,6 @@ static void TestJsonlRepository(Arena* arena) {
   JsonlRepository_Init(&jsonl, root);
   SessionRepository repository = JsonlRepository_AsRepository(&jsonl);
 
-  // The shell tool's overflow directory is the session log path without its
-  // extension, so per-session artifacts sit beside the transcript.
   StrView artifactDir =
       JsonlRepository_SessionDir(arena, &jsonl, contractProject, contractId);
   StrView logPath =
@@ -1442,7 +1393,6 @@ static void TestJsonlRepository(Arena* arena) {
   CHECK_ALL(artifactDir.Length > 0,
             Fs_PathEquals(StrBuf_View(&expectedLog), logPath),
             StrView_Contains(artifactDir, "clippi-jsonl-contract"));
-  // An unusable repository or key yields nothing rather than a bare root path.
   JsonlRepository uninitialized = {};
   CHECK_ALL(JsonlRepository_SessionDir(arena, &uninitialized, contractProject,
                                        contractId)
@@ -1481,8 +1431,6 @@ static void TestJsonlRepository(Arena* arena) {
   CHECK(SessionResult_IsOk(repository.Resolve(repository.Ctx, arena, scopeIdB, &scopeResolved)));
   CHECK(StrView_Eq(scopeResolved.ProjectKey, scopeProjectB));
 
-  // A session the user never speaks to must not leave a log behind: that is
-  // what put one orphan file per launch beside every project's transcripts.
   SessionLog abandoned = {};
   SessionInfo abandonedInfo = {};
   CHECK(SessionResult_IsOk(RepositoryCreate(&repository, arena, abandonedId,
@@ -1495,8 +1443,6 @@ static void TestJsonlRepository(Arena* arena) {
   CHECK(!Fs_Exists(abandonedPath));
   Array<SessionRecord> abandonedRoot = {};
   CHECK(SessionResult_IsOk(SessionLog_ReadAll(&abandoned, arena, &abandonedRoot)));
-  // The harness records the selected model at startup. That is bookkeeping
-  // rather than user intent, so it must not author the file on its own.
   SessionRecord startupModel = {};
   startupModel.EntryId = TestId(201);
   startupModel.Kind = SessionRecordKind::Model;
@@ -1505,8 +1451,6 @@ static void TestJsonlRepository(Arena* arena) {
   startupModel.ModelEntry.Model = SVL("claude-sonnet-4-6");
   CHECK(SessionResult_IsOk(SessionLog_Append(&abandoned, &startupModel)));
   CHECK(!Fs_Exists(abandonedPath));
-  // Buffered does not mean unowned: the id is still claimed, so a second
-  // writer is turned away as busy rather than told the session is missing.
   SessionOpenOptions abandonedOpen = {};
   abandonedOpen.SessionId = abandonedId;
   abandonedOpen.ProjectKey = deferProject;
@@ -1519,14 +1463,11 @@ static void TestJsonlRepository(Arena* arena) {
             .Status == SessionStatus::Busy);
   SessionLog_Close(&abandoned);
   CHECK_ALL(!Fs_Exists(abandonedPath), !Fs_Exists(abandonedLock));
-  // Once released the id really is gone, so the same open now reports missing.
   CHECK(repository
             .Open(repository.Ctx, arena, &abandonedOpen, &abandonedSecond,
                   &abandonedSecondInfo)
             .Status == SessionStatus::NotFound);
 
-  // The append that trips the trigger carries the whole buffer with it, so
-  // records written before the first user message are not lost.
   SessionLog deferred = {};
   SessionInfo deferredInfo = {};
   CHECK(SessionResult_IsOk(RepositoryCreate(&repository, arena, deferredId,
@@ -1570,8 +1511,6 @@ static void TestJsonlRepository(Arena* arena) {
             deferredRecords.Data[2].Seq == 3);
   SessionLog_Close(&reopened);
 
-  // Forking a source that has not yet earned a file must read it from the live
-  // writer instead of reporting the session missing.
   SessionLog bufferedSource = {};
   SessionInfo bufferedSourceInfo = {};
   CHECK(SessionResult_IsOk(RepositoryCreate(&repository, arena, forkSourceId,
@@ -1602,8 +1541,6 @@ static void TestJsonlRepository(Arena* arena) {
   SessionLog_Close(&forkedLog);
   SessionLog_Close(&bufferedSource);
 
-  // Forking through the harness derives the source session/head/project from
-  // the harness's own maintained state -- no ReadAll is issued to build it.
   SessionLog harnessLog = {};
   SessionInfo harnessInfo = {};
   CHECK(SessionResult_IsOk(
@@ -1641,8 +1578,6 @@ static void TestJsonlRepository(Arena* arena) {
   StrView repairLockPath =
       JsonlArtifactPath(arena, root, repairProject, repairId, ".lock");
   CHECK(ChildSeesLockBusy(arena, repairLockPath));
-  // The sentinel exists only while the writer holds it; releasing the lock
-  // must not leave one lock file per session behind next to the log.
   CHECK(Fs_Exists(repairLockPath));
   Array<SessionRecord> rootRecords = {};
   CHECK(SessionResult_IsOk(SessionLog_ReadAll(&writer, arena, &rootRecords)));
@@ -1665,9 +1600,6 @@ static void TestJsonlRepository(Arena* arena) {
   Array<SessionRecord> repaired = {};
   CHECK(SessionResult_IsOk(SessionLog_ReadAll(&writer, arena, &repaired)));
   CHECK(repaired.Count == 2);
-  // An open handle retains only record envelopes, so message bodies have to
-  // come back from the file -- both those loaded at open and those appended
-  // through this handle afterwards.
   CHECK_ALL(repaired.Data[1].MessageEntry.Value.Content.Count == 1,
             StrView_Eq(repaired.Data[1].MessageEntry.Value.Content.Data[0].Text,
                        SVL("before crash")));
@@ -1695,8 +1627,6 @@ static void TestJsonlRepository(Arena* arena) {
 
   CHECK(SessionResult_IsOk(
       RepositoryCreate(&repository, arena, corruptId, corruptProject, &writer, &info)));
-  // The fixture is a valid log with a corrupt line appended, so the session
-  // has to be given content before it exists on disk to be corrupted.
   PersistWithUserMessage(arena, &writer, TestId(151));
   SessionLog_Close(&writer);
   StrView corruptPath = JsonlArtifactPath(arena, root, corruptProject, corruptId, ".jsonl");
@@ -1755,8 +1685,6 @@ static void TestJsonlRepository(Arena* arena) {
 static void TestCompactionReplay(Arena* arena) {
   DurableId sessionId = TestId(1);
 
-  // root -> user -> assistant -> toolResult -> user -> assistant, plus a
-  // sibling of the first user message so an off-branch reference can be tested.
   SessionRecord root = BaseRecord(sessionId, 1, 10, SessionRecordKind::SessionStarted);
   root.SessionStarted.WorkingDirectory = SVL("C:\\work\\clippi");
   root.SessionStarted.ProjectKey = SVL("clippi-compaction");
@@ -1812,8 +1740,6 @@ static void TestCompactionReplay(Arena* arena) {
     return records;
   };
 
-  // A compaction whose span stops before the trailing user turn keeps that
-  // turn and everything after it verbatim.
   SessionRecord retained = BaseRecord(sessionId, 8, 24, SessionRecordKind::Compaction);
   retained.CompactionEntry.ParentId = assistantTwo.EntryId;
   retained.CompactionEntry.BaseEntryId = root.EntryId;
@@ -1835,9 +1761,6 @@ static void TestCompactionReplay(Arena* arena) {
                 StrView_EqCStr(context.Data[2].Content.Data[0].Text, "reply"));
     }
 
-    // A prefix keeps the compaction applied even though the compaction entry
-    // itself lies past the limit: what the model sees of [root..userTwo] is
-    // the summary and "two", never the raw turns the summary replaced.
     Array<Message> prefix = {};
     CHECK(SessionResult_IsOk(SessionReducer_ContextThrough(
         arena, &reduction, retained.EntryId, userTwo.EntryId, &prefix)));
@@ -1860,8 +1783,6 @@ static void TestCompactionReplay(Arena* arena) {
               .Status == SessionStatus::InvalidArgument);
   }
 
-  // A legacy whole-branch span (root through the head) still collapses to the
-  // summary alone, so pre-retention sessions replay unchanged.
   SessionRecord legacy = BaseRecord(sessionId, 8, 26, SessionRecordKind::Compaction);
   legacy.CompactionEntry.ParentId = assistantTwo.EntryId;
   legacy.CompactionEntry.BaseEntryId = root.EntryId;
@@ -1881,8 +1802,6 @@ static void TestCompactionReplay(Arena* arena) {
       CHECK(StrView_EqCStr(context.Data[0].Content.Data[0].Text, "legacy summary"));
   }
 
-  // A later compaction whose span covers an earlier summary anchor supersedes
-  // it: only the newest summary and the messages after it survive.
   SessionRecord userThree = BaseRecord(sessionId, 9, 28, SessionRecordKind::Message);
   userThree.MessageEntry.ParentId = retained.EntryId;
   userThree.MessageEntry.Value = UserMessage(arena, "three");
@@ -1911,8 +1830,6 @@ static void TestCompactionReplay(Arena* arena) {
     }
   }
 
-  // A span endpoint that exists in the session but is not an ancestor of the
-  // head is rejected at admission/load, before context hydration.
   SessionRecord offBranch = BaseRecord(sessionId, 8, 34, SessionRecordKind::Compaction);
   offBranch.CompactionEntry.ParentId = assistantTwo.EntryId;
   offBranch.CompactionEntry.BaseEntryId = root.EntryId;
@@ -1928,15 +1845,12 @@ static void TestCompactionReplay(Arena* arena) {
         SessionReducer_Reduce(arena, records.Data, records.Count - 1, &reduction)));
     CHECK(SessionReducer_ValidateAppend(&reduction, &offBranch).Status ==
           SessionStatus::InvalidArgument);
-    // Internal corruption can bypass repository admission; projection keeps
-    // its defensive error rather than materializing an invalid span.
     SessionReducer_Fold(&reduction, records.Data, records.Count);
     Array<Message> context = {};
     CHECK(SessionReducer_Context(arena, &reduction, offBranch.EntryId, &context).Status ==
           SessionStatus::Corrupt);
   }
 
-  // An inverted span is rejected too.
   SessionRecord inverted = BaseRecord(sessionId, 8, 36, SessionRecordKind::Compaction);
   inverted.CompactionEntry.ParentId = assistantTwo.EntryId;
   inverted.CompactionEntry.BaseEntryId = toolResult.EntryId;

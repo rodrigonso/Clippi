@@ -71,8 +71,7 @@ ProjectTrustReloadResolution ProjectTrust_ResolveReload(
     bool hasGatedResourcesNow, bool trustCoversProjectResources,
     ProjectTrustOverride overrideValue, bool currentTrusted);
 
-// Reloads and updates the store while holding a cross-process lock. If
-// `removePath` is non-empty, that exact entry is removed before writing.
+// Holds a cross-process lock while reloading and updating the store.
 bool ProjectTrustStore_Update(Arena* scratch, StrView storePath,
                               StrView decisionPath, bool trusted,
                               StrView removePath, StrBuf* error);

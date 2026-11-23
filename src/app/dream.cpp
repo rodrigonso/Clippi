@@ -100,8 +100,7 @@ void AppendClipped(StrBuf* out, StrView text, u32 maxBytes) {
   StrBuf_AppendCStr(out, " more bytes]");
 }
 
-// Names of the entries of `dir` that satisfy the filter, sorted ascending.
-// Dot names are skipped, which is what keeps staged copies out of sight.
+// Dot names are skipped, hiding staged copies.
 Array<StrView> SortedNames(Arena* arena, StrView dir, bool directories,
                            bool* listedOut = nullptr) {
   bool listed = false;
@@ -124,8 +123,7 @@ bool CopyPages(Arena* arena, StrView from, StrView to, u32* copied) {
   if (!Fs_MkdirP(arena, to)) return false;
   bool listed = false;
   Array<StrView> names = SortedNames(arena, from, false, &listed);
-  // A missing source is an empty wiki; one that exists but cannot be listed
-  // must not be mistaken for one.
+  // An existing source that cannot be listed is not an empty wiki.
   if (!listed && Fs_Exists(from)) return false;
   for (u32 i = 0; i < names.Count; i++) {
     StrView content = {};
@@ -166,9 +164,7 @@ StrView Timestamp(Arena* arena, u64 nowMs) {
   return StrView_Dup(arena, SV(text));
 }
 
-// Copies `pages` into a new snapshot and keeps only the newest few. The copy is
-// staged under a dot name and renamed into place only once complete; a partial
-// snapshot would otherwise be the newest one, and the one a restore reads.
+// Staged under a dot name: a partial snapshot must never be the newest one.
 bool Snapshot(Arena* arena, StrView snapshots, StrView pages, u64 nowMs) {
   StrView base = Timestamp(arena, nowMs);
   StrView name = base;
@@ -179,8 +175,7 @@ bool Snapshot(Arena* arena, StrView snapshots, StrView pages, u64 nowMs) {
     StrBuf_AppendU64(&numbered, n);
     name = StrBuf_View(&numbered);
   }
-  // Staging left by a pass that died mid-copy. The dream lock is held, so no
-  // other snapshot is in progress.
+  // The dream lock is held, so no other snapshot is in progress.
   bool listed = false;
   Array<FsEntry> entries = Fs_ListDir(arena, snapshots, &listed);
   for (u32 i = 0; i < entries.Count; i++)
@@ -245,7 +240,6 @@ void RenderMessage(StrBuf* out, const Message* message) {
       for (u32 i = 0; i < message->Content.Count; i++) {
         const Content& content = message->Content.Data[i];
         if (content.Kind != ContentKind::Text) continue;
-        // Failures are where corrections come from, so they are kept whole.
         AppendClipped(out, content.Text,
                       message->IsError ? DREAM_MESSAGE_MAX_BYTES
                                        : DREAM_TOOL_RESULT_MAX_BYTES);
@@ -265,7 +259,7 @@ bool HasReplayableContent(const Message* message) {
   return message->ErrorMessage.Length > 0;
 }
 
-}  // namespace
+}
 
 StrView Dream_ExpandPrompt(Arena* arena, StrView prompt, const WikiLocation* location) {
   struct Substitution {
@@ -302,7 +296,6 @@ void Dream_RenderDigest(Arena* arena, const SessionRecord* records, u32 count,
                         u32 maxBytes, DreamDigest* out) {
   *out = {};
   out->LastSeq = afterSeq;
-  // Room for the header written once the covered range is known.
   const u32 kHeaderReserve = 256 + sessionId.Length + workingDirectory.Length;
   StrBuf body = StrBuf_Make(arena, 4096);
   StrBuf piece = StrBuf_Make(arena, 1024);
@@ -405,8 +398,6 @@ namespace {
 const StrView kPhaseNames[] = {SVL("preparing"), SVL("dreaming"), SVL("finished")};
 const StrView kOutcomeNames[] = {SVL("dreamed"), SVL("nothing"), SVL("busy"),
                                  SVL("failed")};
-// The report itself is in the session and last-report.md; this only has to
-// say how the pass ended.
 constexpr u32 kProgressMessageMaxBytes = 1024;
 
 template <typename T, usize N>
@@ -419,7 +410,7 @@ bool ParseName(StrView text, const StrView (&names)[N], T* out) {
   return false;
 }
 
-}  // namespace
+}
 
 bool DreamProgress_Load(Arena* arena, StrView path, DreamProgress* out) {
   *out = {};
@@ -488,8 +479,6 @@ DreamPaths PathsFor(Arena* arena, const WikiLocation* location) {
   return paths;
 }
 
-// Confines the dreaming agent's writes to the pages folder. Reads stay free:
-// checking a page against the repository is half the job.
 struct DreamSandbox {
   StrView Root;
   StrView Pages;
@@ -596,8 +585,6 @@ StrView LastAssistantText(Arena* arena, AgentHarness* harness) {
   return {};
 }
 
-// Runs the agent over the prepared inbox. False with `*error` when the pass
-// could not complete.
 bool RunAgent(Arena* arena, const DreamRun* run, const DreamPaths* paths,
               StrView firstMessage, DreamProgress* progress, DreamResult* out,
               StrView* error) {
@@ -724,7 +711,6 @@ void ExecuteLocked(Arena* arena, const DreamRun* run, const DreamPaths* paths,
     if (entry.TimeMs > known->SeenMs) known->SeenMs = entry.TimeMs;
   }
 
-  // Forget watermarks nobody will revisit, unless the journal just named them.
   u32 kept = 0;
   for (u32 i = 0; i < state.Sessions.Count; i++)
     if (JournaledInRange(&journal, state.Sessions.Data[i].SessionId) ||
@@ -735,8 +721,6 @@ void ExecuteLocked(Arena* arena, const DreamRun* run, const DreamPaths* paths,
   Fs_RemoveTree(arena, paths->Inbox);
   Fs_MkdirP(arena, paths->Inbox);
   Array<PendingSession> pending = Array_Make<PendingSession>(arena, state.Sessions.Count + 1);
-  // The inbox shares the dream model's window with the pages it reads and
-  // writes, so it gets at most a third of it. A backlog drains over passes.
   u64 budget = DREAM_INBOX_MAX_BYTES;
   u64 share = (u64)run->Profile.ContextWindow * AGENT_COMPACTION_BYTES_PER_TOKEN / 3;
   if (share && share < budget) budget = share < 16384 ? 16384 : share;
@@ -833,7 +817,6 @@ void ExecuteLocked(Arena* arena, const DreamRun* run, const DreamPaths* paths,
   }
 
   if (commit) {
-    // A session that just produced new entries stays in the recheck window.
     for (u32 i = 0; i < pending.Count; i++) {
       DreamSessionState* session = &state.Sessions.Data[pending.Data[i].StateIndex];
       if (pending.Data[i].NewSeq > session->Seq && run->NowMs > session->SeenMs)
@@ -848,7 +831,7 @@ void ExecuteLocked(Arena* arena, const DreamRun* run, const DreamPaths* paths,
   Fs_RemoveTree(arena, paths->Inbox);
 }
 
-}  // namespace
+}
 
 void Dream_Execute(Arena* arena, const DreamRun* run, DreamResult* out) {
   *out = {};
@@ -901,9 +884,7 @@ DreamRestoreResult Dream_RestoreLatestSnapshot(Arena* arena,
   if (locked == ProcessFileLockStatus::Busy) return DreamRestoreResult::Busy;
   if (locked != ProcessFileLockStatus::Acquired) return DreamRestoreResult::Failed;
   *snapshot = snapshots.Data[snapshots.Count - 1];
-  // Staged beside the pages first, so a copy that fails leaves the live wiki
-  // untouched. Past that point each page is replaced atomically, pages the
-  // snapshot lacks go last, and the snapshot remains to retry from.
+  // Staged beside the pages so a failed copy leaves the live wiki untouched.
   StrView staging = Fs_Join(arena, location->DreamDir, SVL("restoring"));
   Fs_RemoveTree(arena, staging);
   u32 copied = 0;
@@ -957,8 +938,8 @@ DreamWatchState Dream_WatchState(bool running, const DreamProgress* progress,
                                  u64 sinceMs, u64 nowMs) {
   bool current = progress && progress->StartedMs >= sinceMs;
   if (running) {
-    // A pass that holds the lock but still shows finished progress has yet
-    // to write its own (or is about to let go of the lock).
+    // Lock held with finished progress: the new pass has not written its own
+    // yet.
     if (!current || progress->Phase == DreamPhase::Finished)
       return DreamWatchState::Starting;
     return progress->Phase == DreamPhase::Preparing ? DreamWatchState::Preparing
@@ -1008,9 +989,7 @@ bool Dream_SpawnBackground(Arena* arena, StrView workingDirectory) {
 
 namespace {
 
-// A trusted repository's `.clippi/DREAM.md` wins over the user's
-// `~/.clippi/DREAM.md`, which wins over the built-in prompt. Dreaming runs
-// unattended, so an undecided repository counts as untrusted.
+// Dreaming runs unattended, so an undecided repository counts as untrusted.
 StrView DreamPromptTemplate(Arena* arena, const DreamCommandLine* options,
                             const WikiLocation* location,
                             DefaultProjectTrust defaultTrust, StrView* source) {
@@ -1039,7 +1018,7 @@ StrView DreamPromptTemplate(Arena* arena, const DreamCommandLine* options,
   return SV(kDefaultPrompt);
 }
 
-}  // namespace
+}
 
 int Dream_RunCommandLine(Arena* arena, const DreamCommandLine* options) {
   WikiLocation location = {};

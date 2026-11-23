@@ -63,7 +63,7 @@ UiNodeDesc BoxDesc(UiKey key, PaintBox* box, UiLayoutStyle layout,
   return desc;
 }
 
-}  // namespace
+}
 
 void TestUi() {
   UiContext ui;

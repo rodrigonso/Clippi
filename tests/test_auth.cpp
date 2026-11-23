@@ -41,8 +41,6 @@ static void TestStore() {
   CHECK(StrView_EqCStr(Auth_ResolveToken(&a, path, SVL("provider-a"), nullptr),
                        "sk-test-123"));
 
-  // A second provider does not disturb the first, and an unknown provider
-  // resolves to nothing rather than to some other provider's key.
   Credential other = {};
   other.ApiKey = SVL("sk-other");
   CHECK(AuthStore_Write(&a, path, SVL("anthropic"), &other));
@@ -50,7 +48,6 @@ static void TestStore() {
   CHECK(StrView_EqCStr(read.ApiKey, "sk-test-123"));
   CHECK(Auth_ResolveToken(&a, path, SVL("nope"), nullptr).Length == 0);
 
-  // Writing an existing provider replaces rather than appends.
   Credential replacement = {};
   replacement.ApiKey = SVL("sk-replaced");
   CHECK(AuthStore_Write(&a, path, SVL("provider-a"), &replacement));
@@ -63,8 +60,6 @@ static void TestStore() {
   CHECK(AuthStore_Read(&a, path, SVL("anthropic"), &read));
   CHECK(StrView_EqCStr(read.ApiKey, "sk-other"));
 
-  // An oauth entry without its refresh token and expiry is not a credential,
-  // and no malformed entry is ever read as a key.
   CHECK(ConfigFile_WriteAtomic(
       &a, path, SVL("{\"openai\":{\"type\":\"oauth\",\"access\":\"tok\"}}")));
   CHECK(!AuthStore_Read(&a, path, SVL("openai"), &gone));
@@ -100,11 +95,8 @@ static void TestOAuthStore() {
             StrView_EqCStr(read.RefreshToken, "refresh-1"),
             StrView_EqCStr(read.AccountId, "acct-1"),
             read.ExpiresAtMs == 1700000000123, read.ApiKey.Length == 0);
-  // A short-lived token is never handed out as a static key.
   CHECK(Auth_ResolveToken(&a, path, SVL("openai-codex"), nullptr).Length == 0);
 
-  // Rewriting the store for another provider keeps the sign-in intact, and an
-  // entry without an account id round-trips without one.
   Credential key = {};
   key.ApiKey = SVL("sk-key");
   CHECK(AuthStore_Write(&a, path, SVL("openrouter"), &key));
@@ -117,7 +109,6 @@ static void TestOAuthStore() {
   CHECK(AuthStore_Read(&a, path, SVL("openrouter"), &read));
   CHECK(StrView_EqCStr(read.ApiKey, "sk-key"));
 
-  // Nothing is written that could not be read back exactly.
   Credential unwritable = signedIn;
   unwritable.ExpiresAtMs = 9007199254740993ull;
   CHECK(!AuthStore_Write(&a, path, SVL("openai-codex"), &unwritable));
@@ -195,7 +186,6 @@ static void TestResolve() {
   StrView path = SVL("clippi_auth_resolve_test.json");
   remove("clippi_auth_resolve_test.json");
 
-  // A missing store is not an error; it just resolves to nothing.
   CHECK(Auth_ResolveToken(&a, path, SVL("provider-a"), nullptr).Length == 0);
 
   SetTestEnv("CLIPPI_TEST_AUTH_KEY", "env-key");
@@ -203,7 +193,6 @@ static void TestResolve() {
       Auth_ResolveToken(&a, path, SVL("provider-a"), "CLIPPI_TEST_AUTH_KEY"),
       "env-key"));
 
-  // A stored key wins over the environment.
   Credential key = {};
   key.ApiKey = SVL("sk-stored");
   CHECK(AuthStore_Write(&a, path, SVL("provider-a"), &key));
@@ -211,7 +200,6 @@ static void TestResolve() {
       Auth_ResolveToken(&a, path, SVL("provider-a"), "CLIPPI_TEST_AUTH_KEY"),
       "sk-stored"));
 
-  // An empty environment variable is treated as unset.
   CHECK(AuthStore_Delete(&a, path, SVL("provider-a")));
   SetTestEnv("CLIPPI_TEST_AUTH_KEY", nullptr);
   CHECK(Auth_ResolveToken(&a, path, SVL("provider-a"), "CLIPPI_TEST_AUTH_KEY")
@@ -228,8 +216,6 @@ static void TestTokenCache() {
 
   CHECK(!AuthTokenCache_Get(&cache, SVL("provider-a"), &cached));
 
-  // The cache copies its value, so mutating the caller's buffer afterwards
-  // cannot change what a later Get returns.
   char source[] = "cached-key";
   CHECK(AuthTokenCache_Store(&a, &cache, SVL("provider-a"), SV(source)));
   source[0] = 'X';
@@ -237,7 +223,6 @@ static void TestTokenCache() {
   CHECK(StrView_EqCStr(cached, "cached-key"));
   StrView previous = cached;
 
-  // One entry, keyed by provider.
   CHECK(!AuthTokenCache_Get(&cache, SVL("anthropic"), &cached));
   CHECK(AuthTokenCache_Store(&a, &cache, SVL("anthropic"), SVL("other-key")));
   for (u32 i = 0; i < previous.Length; i++) CHECK(previous.Data[i] == 0);
@@ -248,7 +233,6 @@ static void TestTokenCache() {
   CHECK(!AuthTokenCache_Store(&a, &cache, SVL("anthropic"), StrView{}));
   CHECK(!AuthTokenCache_Store(&a, &cache, StrView{}, SVL("key")));
 
-  // A signed-in token carries the account it is scoped to and its lapse time.
   CHECK(AuthTokenCache_Store(&a, &cache, SVL("openai-codex"), SVL("access"),
                              SVL("acct-1"), 1234));
   CHECK(AuthTokenCache_Get(&cache, SVL("openai-codex"), &cached));
@@ -274,7 +258,6 @@ static void TestOAuthUrls() {
       OpenRouterOAuth_AuthorizeUrl(&a, &pkce, SVL("http://localhost:5123/callback")),
       "https://openrouter.ai/auth?callback_url=http%3A%2F%2Flocalhost%3A5123%2Fcallback"
       "&code_challenge=chal-lenge_&code_challenge_method=S256&key_label=Clippi&state=st8"));
-  // Headless: no callback, and no state since OpenRouter only echoes it on a redirect.
   CHECK(StrView_EqCStr(OpenRouterOAuth_AuthorizeUrl(&a, &pkce, StrView{}),
                        "https://openrouter.ai/auth?code_challenge=chal-lenge_"
                        "&code_challenge_method=S256&key_label=Clippi"));
@@ -318,7 +301,6 @@ static void TestOAuthCallbackParse() {
   CHECK_ALL(denied.Status == OAuthCallbackStatus::Denied,
             StrView_EqCStr(denied.Error, "User declined"));
 
-  // ChatGPT redirects to its own registered path.
   StrView codexPath = SVL(OPENAI_CODEX_OAUTH_CALLBACK_PATH);
   OAuthCallback codex =
       OAuthCallback_Parse(&a, SVL("/auth/callback?code=c1&state=st8"), codexPath, state);
@@ -350,7 +332,6 @@ static void TestOAuthExchangeParse() {
   ArenaRelease(&a);
 }
 
-// An unsigned token with the given claims; only the payload is ever read.
 static StrView FakeJwt(Arena* a, const char* claims) {
   StrBuf jwt = StrBuf_Make(a, 256);
   StrBuf_AppendCStr(&jwt, "eyJhbGciOiJub25lIn0.");
@@ -406,8 +387,6 @@ static void TestCodexOAuth() {
             StrView_EqCStr(fresh.Refresh, "r2"), StrView_EqCStr(fresh.AccountId, "acct-1"),
             fresh.ExpiresAtMs == now + 3600000);
 
-  // A refresh that does not rotate keeps the previous refresh token, and
-  // without expires_in the token's own exp claim decides.
   OpenAICodexTokens kept =
       OpenAICodexOAuth_ParseTokens(&a, 200, TokenBody(&a, access, ""), StrView{},
                                    SVL("r1"), now);
@@ -467,7 +446,6 @@ static void TestCodexOAuth() {
   ArenaRelease(&a);
 }
 
-// The code a pasted value yields for state "st8", or empty when it is refused.
 static StrView PastedCode(Arena* a, const char* input) {
   StrView code = {};
   StrView error = {};
@@ -475,8 +453,6 @@ static StrView PastedCode(Arena* a, const char* input) {
   return ok && !error.Length ? code : StrView{};
 }
 
-// Why a pasted value was refused, or empty when it was accepted or a refusal
-// still leaked a code.
 static StrView PastedError(Arena* a, const char* input) {
   StrView code = {};
   StrView error = {};
@@ -542,8 +518,6 @@ static void RunLoopbackClient(void* arg) {
   client->Callback = Http_Fetch(&client->Mem, &request, nullptr);
 }
 
-// The listener is real (127.0.0.1, OS-assigned port), driven by curl as the
-// browser stand-in.
 static void TestLoopbackServer() {
   Arena a = ArenaCreate();
   Http_GlobalInit();
@@ -556,7 +530,6 @@ static void TestLoopbackServer() {
   }
   CHECK(server.Port != 0);
 
-  // Nothing connects, so these return without blocking for long.
   volatile i32 aborted = 1;
   LoopbackRequest request;
   CHECK(LoopbackServer_Accept(&server, &a, &aborted, 60000, &request) ==
@@ -612,10 +585,7 @@ static void WriteWhileLocked(void* user) {
 }
 #endif
 
-// A login's write waits for a refresh holding the store's lock, so it cannot
-// rewrite the file from a copy read before the refresh saved its new token.
-// Windows only: POSIX record locks belong to the process, so a second
-// acquisition from the same process is not refused there.
+// Windows only: POSIX record locks belong to the process, so same-process reacquire succeeds.
 static void TestStoreLock() {
 #if defined(_WIN32)
   Arena a = ArenaCreate();
@@ -644,7 +614,6 @@ static void TestStoreLock() {
   CHECK(StrView_EqCStr(read.RefreshToken, "refresh-2"));
   CHECK(AuthStore_Read(&a, path, SVL("openrouter"), &read));
   CHECK(StrView_EqCStr(read.ApiKey, "sk-login"));
-  // Without the lock the caller cannot claim to hold it.
   CHECK(!AuthStore_WriteLocked(&a, &held, path, SVL("openai-codex"), &rotated));
 
   remove("clippi_auth_lock_test.json");

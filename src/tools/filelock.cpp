@@ -43,12 +43,9 @@ static void FileLock_GuardUnlock() {
 }
 
 static u32 FileLock_CopyPath(char* dst, StrView path) {
-  // Paths at or beyond the fixed buffer size are compared by their truncated
-  // first 1024 bytes; this preserves safety but may over-serialize long paths.
   u32 n = path.Length < FILE_LOCK_MAX_PATH ? path.Length : FILE_LOCK_MAX_PATH;
-  // NTFS and APFS are case-insensitive by default, so `Foo.cpp` and `foo.cpp`
-  // are one file and must share a lock, or two parallel edits of it lose one.
-  // Folding on a case-sensitive volume only over-serializes distinct files.
+  // NTFS/APFS are case-insensitive by default: `Foo.cpp` and `foo.cpp` must
+  // share a lock or parallel edits lose one.
   for (u32 i = 0; i < n; i++) {
     char c = path.Data[i];
     dst[i] = c == '\\' ? '/' : Ascii_ToLower(c);
@@ -61,8 +58,7 @@ static bool FileLock_PathEq(const FileLockEntry* e, const char* path, u32 pathLe
 }
 
 void FileLock_Init() {
-  // Static storage is zero-initialized. Entry and fallback mutexes are created
-  // lazily under the atomic registry guard, so explicit init is optional.
+  // Mutexes are created lazily under the registry guard.
 }
 
 FileLockToken FileLock_Acquire(StrView path) {
@@ -94,8 +90,7 @@ FileLockToken FileLock_Acquire(StrView path) {
       entry->RefCount = 0;
       entry->InUse = true;
     } else {
-      // Registry exhaustion is rare; fall back to one shared mutex so
-      // correctness is preserved, at the cost of over-serializing overflow paths.
+      // Registry full: a shared mutex stays correct, just over-serializes.
       entry = &FileLock_Fallback;
       if (!FileLock_FallbackInit) {
         Mutex_Init(&entry->Lock);

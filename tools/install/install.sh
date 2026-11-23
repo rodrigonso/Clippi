@@ -72,8 +72,7 @@ tar -xzf "$archive" -C "$work"
 staged="$work/clippi-$version-$platform"
 [ -x "$staged/bin/clippi" ] || fail "$name does not contain bin/clippi"
 
-# Stage beside the destination so the final swap is a same-volume rename; a
-# running clippi keeps its open inode either way.
+# Stage beside the destination so the swap is a same-volume rename.
 mkdir -p "$(dirname "$install_dir")"
 rm -rf "$install_dir.new" "$install_dir.old"
 mv "$staged" "$install_dir.new"

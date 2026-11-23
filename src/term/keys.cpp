@@ -11,7 +11,7 @@ void KeyDecoder_Init(KeyDecoder* d) {
 
 void KeyDecoder_Push(KeyDecoder* d, const char* data, u32 n) {
   u32 room = (u32)sizeof(d->Buf) - d->Len;
-  if (n > room) n = room;  // defensive: chunked reads keep us well under capacity
+  if (n > room) n = room;
   memcpy(d->Buf + d->Len, data, n);
   d->Len += n;
 }
@@ -45,12 +45,10 @@ static void ApplyMods(u32 mods, Key* out) {
   out->Ctrl = (m & 4) != 0;
 }
 
-// Map a legacy control byte, or a Ctrl+letter recovered from an enhanced key
-// report, onto the shared key vocabulary. False for bytes with no binding.
 static bool MapControlByte(u32 b, Key* out) {
   switch (b) {
     case 0x0d: out->Kind = KeyKind::Enter; return true;
-    case 0x0a: out->Kind = KeyKind::Newline; return true;  // Ctrl+J
+    case 0x0a: out->Kind = KeyKind::Newline; return true;
     case 0x7f:
     case 0x08: out->Kind = KeyKind::Backspace; return true;
     case 0x09: out->Kind = KeyKind::Tab; return true;
@@ -61,19 +59,16 @@ static bool MapControlByte(u32 b, Key* out) {
     case 0x15: out->Kind = KeyKind::CtrlU; return true;
     case 0x0b: out->Kind = KeyKind::CtrlK; return true;
     case 0x17: out->Kind = KeyKind::CtrlW; return true;
-    case 0x01: out->Kind = KeyKind::Home; return true;  // Ctrl+A
-    case 0x05: out->Kind = KeyKind::End; return true;   // Ctrl+E
+    case 0x01: out->Kind = KeyKind::Home; return true;
+    case 0x05: out->Kind = KeyKind::End; return true;
     default: return false;
   }
 }
 
-const u32 kModsAlt = 3;  // the legacy meta prefix is exactly Alt
+const u32 kModsAlt = 3;
 const u32 kKeypadEnter = 57414;
 
-// Decode one key report carrying a code plus modifiers. Shared by the kitty and
-// modifyOtherKeys encodings and by the legacy ESC-prefixed (Alt) form, so all
-// three stay in agreement. Enabling either protocol re-encodes keys that were
-// previously plain bytes -- Escape, Ctrl+letter, Alt+key -- so every binding
+// Enabling kitty or modifyOtherKeys re-encodes Escape, Ctrl+letter and Alt+key, so every binding
 // has to survive this path.
 static void MapEnhancedKey(u32 code, u32 mods, Key* out) {
   Clear(out);
@@ -91,8 +86,7 @@ static void MapEnhancedKey(u32 code, u32 mods, Key* out) {
     case 0x7f: out->Kind = out->Alt ? KeyKind::CtrlW : KeyKind::Backspace; return;
     default: break;
   }
-  // Ctrl+Alt+<letter> must not alias onto the plain Ctrl binding, or
-  // Ctrl+Alt+D would quit; the legacy form decoded to a dropped Alt'd Char.
+  // Ctrl+Alt+<letter> must not alias onto the plain Ctrl binding, or Ctrl+Alt+D would quit.
   if (out->Ctrl && !out->Alt && code >= 'a' && code <= 'z') {
     if (!MapControlByte(code & 0x1f, out)) out->Kind = KeyKind::None;
     return;
@@ -109,7 +103,6 @@ static void MapEnhancedKey(u32 code, u32 mods, Key* out) {
   }
 }
 
-// Decode one UTF-8 scalar at the buffer front. Returns false if incomplete.
 static bool DecodeUtf8(KeyDecoder* d, Key* out) {
   unsigned char c = (unsigned char)d->Buf[0];
   u32 need;
@@ -129,15 +122,15 @@ static bool DecodeUtf8(KeyDecoder* d, Key* out) {
   } else {
     Consume(d, 1);
     out->Kind = KeyKind::None;
-    return true;  // invalid lead byte, skip
+    return true;
   }
-  if (d->Len < need) return false;  // wait for the rest
+  if (d->Len < need) return false;
   for (u32 i = 1; i < need; i++) {
     unsigned char cc = (unsigned char)d->Buf[i];
     if ((cc >> 6) != 0x2) {
       Consume(d, 1);
       out->Kind = KeyKind::None;
-      return true;  // malformed continuation, skip the lead
+      return true;
     }
     cp = (cp << 6) | (cc & 0x3f);
   }
@@ -147,14 +140,12 @@ static bool DecodeUtf8(KeyDecoder* d, Key* out) {
   return true;
 }
 
-// Does the buffer start with `s` (or a proper prefix of it, when shorter)?
 static bool StartsWithOrPrefix(KeyDecoder* d, const char* s, u32 slen) {
   u32 n = d->Len < slen ? d->Len : slen;
   return memcmp(d->Buf, s, n) == 0;
 }
 
 static bool ParseCsi(KeyDecoder* d, Key* out) {
-  // d->Buf[0] == ESC, d->Buf[1] in { '[', 'O' }
   u32 i = 2;
   u32 p[4] = {0, 0, 0, 0};
   u32 np = 0;
@@ -174,16 +165,16 @@ static bool ParseCsi(KeyDecoder* d, Key* out) {
       inSubParam = false;
       i++;
     } else if (ch == ':') {
-      inSubParam = true;  // kitty sub-parameters carry no binding we use
+      inSubParam = true;
       i++;
     } else {
       break;
     }
   }
-  if (i >= d->Len) return false;  // no final byte yet
+  if (i >= d->Len) return false;
   char fin = d->Buf[i];
   u32 total = i + 1;
-  u32 mod = (np >= 1 && haveDigit) ? p[1] : 0;  // second param carries modifiers
+  u32 mod = (np >= 1 && haveDigit) ? p[1] : 0;
 
   // Enhanced keyboard reports: kitty sends CSI <code> ; <mods> u, xterm's
   // modifyOtherKeys sends CSI 27 ; <mods> ; <code> ~.
@@ -238,9 +229,7 @@ static bool ParseCsi(KeyDecoder* d, Key* out) {
   return true;
 }
 
-// Parse an SGR mouse event: ESC [ < Cb ; Cx ; Cy (M|m).
 static bool ParseMouse(KeyDecoder* d, Key* out) {
-  // d->Buf[0] == ESC, d->Buf[1] == '[', d->Buf[2] == '<'
   u32 i = 3;
   u32 p[3] = {0, 0, 0};
   bool have[3] = {false, false, false};
@@ -259,7 +248,7 @@ static bool ParseMouse(KeyDecoder* d, Key* out) {
       break;
     }
   }
-  if (i >= d->Len) return false;  // final byte not yet arrived
+  if (i >= d->Len) return false;
   char fin = d->Buf[i];
   Clear(out);
   Consume(d, i + 1);
@@ -274,13 +263,12 @@ static bool ParseMouse(KeyDecoder* d, Key* out) {
   out->Alt = (cb & 0x08) != 0;
   out->Ctrl = (cb & 0x10) != 0;
 
-  if (cb & 0x40) {  // mouse wheel (bit 6 set); low 2 bits give direction
+  if (cb & 0x40) {
     u32 dir = cb & 0x03;
     if (dir == 0)
       out->Kind = KeyKind::ScrollUp;
     else if (dir == 1)
       out->Kind = KeyKind::ScrollDown;
-    // dir 2/3 (horizontal wheel) -> leave as None
   } else if (cb & 0x20) {
     out->Kind = KeyKind::MouseMove;
   } else if ((cb & 0x03) == 0) {
@@ -302,13 +290,13 @@ bool KeyDecoder_Next(KeyDecoder* d, Key* out) {
   if (d->InPaste) {
     if (c == 0x1b) {
       if (StartsWithOrPrefix(d, "\x1b[201~", 6)) {
-        if (d->Len < 6) return false;  // wait for the full end marker
+        if (d->Len < 6) return false;
         Consume(d, 6);
         d->InPaste = false;
         out->Kind = KeyKind::PasteEnd;
         return true;
       }
-      Consume(d, 1);  // stray ESC inside paste -> drop
+      Consume(d, 1);
       out->Kind = KeyKind::None;
       return true;
     }
@@ -333,7 +321,6 @@ bool KeyDecoder_Next(KeyDecoder* d, Key* out) {
     return DecodeUtf8(d, out);
   }
 
-  // ESC ...
   if (d->Len < 2) return false;  // lone ESC pends until the next byte
   unsigned char c1 = (unsigned char)d->Buf[1];
   if (c1 == 0x1b) {
@@ -351,7 +338,6 @@ bool KeyDecoder_Next(KeyDecoder* d, Key* out) {
     if (c1 == '[' && d->Len >= 3 && d->Buf[2] == '<') return ParseMouse(d, out);
     return ParseCsi(d, out);
   }
-  // ESC + <char> is the legacy meta prefix, i.e. Alt+<char>.
   Consume(d, 2);
   MapEnhancedKey(c1, kModsAlt, out);
   return true;

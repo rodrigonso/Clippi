@@ -99,7 +99,7 @@ bool WriteStore(Arena* scratch, StrView storePath,
   return ConfigFile_WriteAtomic(scratch, storePath, StrBuf_View(&json));
 }
 
-}  // namespace
+}
 
 StrView DefaultProjectTrust_Name(DefaultProjectTrust value) {
   switch (value) {

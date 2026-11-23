@@ -18,16 +18,13 @@ static int Ls_CompareEntries(const void* a, const void* b) {
   }
   if (ea->Name.Length < eb->Name.Length) return -1;
   if (ea->Name.Length > eb->Name.Length) return 1;
-  // Names equal under folding ("A" and "a") still get one fixed order, so the
-  // cut at `limit` does not depend on the order the directory streams them.
+  // Tiebreak folded-equal names so the `limit` cut ignores stream order.
   return StrView_Compare(ea->Name, eb->Name);
 }
 
-// The `Limit` first entries in sort order, found without holding the whole
-// directory: a max-heap whose top is the entry a smaller newcomer evicts.
 struct LsSelection {
   Array<FsEntry> Heap;
-  Arena Names;  // heap names, plus evicted ones until the next compaction
+  Arena Names;
   usize LiveBytes;
   usize DeadBytes;
   u64 Total;

@@ -2,8 +2,6 @@
 #include "base/basics.h"
 #include "base/str.h"
 
-// Terminal control: raw mode + alternate screen, size query, and raw output.
-// Internal fields are platform-specific but the header pulls in no OS headers.
 struct Term {
   bool Active;
 #if defined(_WIN32)
@@ -17,54 +15,36 @@ struct Term {
   int OutFd;
   int WakeReadFd;
   int WakeWriteFd;
-  // Opaque `struct termios`, which is 72 bytes on 64-bit macOS; sized with
-  // headroom so term.h need not include <termios.h>.
+  // Opaque `struct termios` (72 bytes on 64-bit macOS) with headroom, so term.h need not include <termios.h>.
   alignas(8) unsigned char SavedTermios[128];
 #endif
 };
 
-// True when both stdin and stdout are a real console/tty.
 bool Term_IsInteractive();
 
-// The OS accent colour (Windows Personalization > Colors, macOS Appearance) as
-// 24-bit RGB. False when the platform has none or it cannot be read.
 bool Term_SystemAccent(u8* r, u8* g, u8* b);
 
-// Enter raw mode + alternate screen + bracketed paste. Returns false (and does
-// nothing) if not interactive. Restoration is also armed via atexit.
+// Returns false (and does nothing) if not interactive. Restoration is also armed via atexit.
 bool Term_Enter(Term* t);
 
-// Restore the terminal to its prior state. Idempotent.
+// Idempotent.
 void Term_Exit(Term* t);
 
-// Current viewport size in character cells.
 void Term_Size(const Term* t, u16* cols, u16* rows);
 
-// Raw byte output to stdout (no newline translation), flushed immediately.
 void Term_Write(const char* data, u32 len);
 void Term_WriteStr(const char* s);
 
-// Mode strings written on enter/exit. Shared by every platform backend so that
-// each mode set on entry is reset on exit exactly once.
 const char* Term_SetupSequence();
 const char* Term_TeardownSequence();
 
-// Append an OSC 52 clipboard-set sequence using padded RFC 4648 base64.
-// Binary-safe. Reuse `out` across copies to avoid per-copy allocations.
-// Terminal integrations must call this on the render/output thread so the
-// sequence remains ordered with screen output.
+// Call on the render/output thread so the sequence stays ordered with screen output.
 void Term_AppendOSC52(StrBuf* out, StrView data);
 
-// Blocking read of up to `cap` raw input bytes (VT/ANSI stream). Returns the
-// number of bytes read, or 0 on EOF/error.
 u32 Term_ReadInput(const Term* t, char* buf, u32 cap);
 
-// Wait until raw input can be read without blocking, bounded by timeoutMs.
-// Used by the TUI input thread so shutdown cannot hang behind a blocking read.
 bool Term_WaitInput(const Term* t, u32 timeoutMs);
 
-// Wake a pending input wait/read during shutdown. Safe to call when inactive.
 void Term_WakeInput(const Term* t);
 
-// Internal: arrange Term_Exit to run on normal process exit.
 void Term_TrackForRestore(Term* t);

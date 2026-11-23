@@ -5,7 +5,6 @@
 
 #include "app/loader.h"
 
-// User-defined slash commands loaded from `.md` files.
 struct PromptTemplate {
   StrView Name;
   StrView Description;
@@ -40,13 +39,9 @@ bool PromptTemplates_ParseFile(Arena* arena, StrView filePath, StrView content,
 const PromptTemplate* PromptTemplates_Find(const PromptTemplateSet* templates,
                                            StrView name);
 
-// Quotes group arguments and are stripped; backslashes are literal.
 void PromptTemplates_SplitArgs(Arena* arena, StrView argsString,
                                Array<StrView>* out);
 
-// Expands `$1`, `$@`, `$ARGUMENTS`, `${N:-default}`, `${@:N}` and `${@:N:L}`.
-// A positional argument that was not supplied expands to the empty string, and
-// arguments a template never references are silently discarded.
 StrView PromptTemplates_Substitute(Arena* arena, StrView content,
                                    const StrView* args, u32 argCount);
 

@@ -19,7 +19,6 @@ StrView WriteEvent(Arena* arena, const AgentHarnessEvent* event, bool* wrote) {
   return StrBuf_View(&line);
 }
 
-// Every emitted line must be a standalone JSON object with a string "type".
 bool IsValidEventLine(Arena* arena, StrView line, const char* expectedType) {
   JsonValue* root = Json_Parse(arena, line);
   if (!Json_IsObject(root)) return false;
@@ -53,7 +52,6 @@ void TestTransientShapes(Arena* arena) {
                 line,
                 "{\"type\":\"agent_end\",\"turn\":\"run\",\"outcome\":\"failed\",\"error\":\"boom\"}"));
 
-  // A succeeded turn carries no error key at all.
   AgentHarnessEvent turnEnd = {};
   turnEnd.Kind = AgentHarnessEventKind::TransientTurnEnd;
   turnEnd.Turn.Kind = AgentTurnKind::Run;
@@ -63,7 +61,6 @@ void TestTransientShapes(Arena* arena) {
             StrView_EqCStr(line,
                            "{\"type\":\"turn_end\",\"turn\":\"run\",\"outcome\":\"succeeded\"}"));
 
-  // Text deltas carry payload; structural stream markers are not representable.
   AgentHarnessEvent delta = {};
   delta.Kind = AgentHarnessEventKind::TransientStream;
   delta.Stream.Kind = StreamEventKind::TextDelta;
@@ -79,7 +76,6 @@ void TestTransientShapes(Arena* arena) {
   StrBuf untouched = StrBuf_Make(arena, 32);
   StrBuf_AppendCStr(&untouched, "keep");
   CHECK(SessionResult_IsOk(AgentEventJson_Write(&untouched, &structural)));
-  // A skipped event must leave the buffer exactly as it was found.
   CHECK(StrView_EqCStr(StrBuf_View(&untouched), "keep"));
 
   AgentHarnessEvent toolStart = {};
@@ -93,7 +89,6 @@ void TestTransientShapes(Arena* arena) {
                            "{\"type\":\"tool_start\",\"id\":\"call-1\",\"name\":\"shell\","
                            "\"arguments\":{\"command\":\"ls\"}}"));
 
-  // Absent arguments still produce a valid object rather than a bare key.
   AgentHarnessEvent bareTool = toolStart;
   bareTool.Tool.ArgumentsJson = StrView{};
   line = WriteEvent(arena, &bareTool, &wrote);
@@ -214,8 +209,6 @@ bool EchoToolExec(void* context, Arena* arena, StrView id, const ToolArgs* args,
   return true;
 }
 
-// End-to-end: drive a real run and serialize every event the watch produces,
-// proving the whole chain emits well-formed NDJSON in the documented order.
 void TestRunStream(Arena* arena) {
   MemoryRepository memory = {};
   MemoryRepository_Init(&memory);
@@ -306,11 +299,8 @@ void TestRunStream(Arena* arena) {
       sawToolOutput = true;
   }
 
-  // Every line parsed, the run is bracketed by agent_start/agent_end, and the
-  // durable records plus tool lifecycle all made it through.
   CHECK_ALL(invalid == 0, agentStarts == 1, agentEnds == 1, toolStarts == 1,
             toolEnds == 1, deltas >= 1, sawWorkingDelta, sawToolOutput);
-  // user + assistant + tool result + assistant
   CHECK(records >= 4);
   CHECK_ALL(!trace.InvalidCursor, trace.Records == records, trace.Deltas == 2);
   CHECK_ALL(StrView_Contains(firstLine, "\"type\":\"agent_start\""),
@@ -322,7 +312,7 @@ void TestRunStream(Arena* arena) {
   repository.Close(repository.Ctx);
 }
 
-}  // namespace
+}
 
 void TestEventJson() {
   Arena arena = ArenaCreate((usize)32 << 20);

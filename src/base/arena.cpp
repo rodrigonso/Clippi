@@ -46,8 +46,7 @@ Arena ArenaCreate(usize reserveBytes) {
 void* ArenaAlloc(Arena* a, usize size, usize align) {
   usize mask = align - 1;
   usize pos = (a->Used + mask) & ~mask;
-  // Checked as a remainder: `pos + size` wraps for a huge size and would then
-  // compare below Reserved.
+  // Checked as a remainder: `pos + size` can wrap for a huge size.
   FFI(pos > a->Reserved || size > a->Reserved - pos);
   usize newUsed = pos + size;
   if (newUsed > a->Committed) ArenaCommitTo(a, newUsed);
@@ -64,23 +63,16 @@ void ArenaResetSecure(Arena* a) {
 
 void ArenaTrim(Arena* a, usize keepBytes) {
   if (!a->Base) return;
-  // Only ever safe once the arena's contents are dead: this hands the pages
-  // back to the OS, so anything still pointing into them is reading unmapped
-  // memory afterwards.
+  // Only safe once the contents are dead: the pages go back to the OS.
   FFI(a->Used > keepBytes);
-  // Compared before rounding: RoundUp overflows to 0 near SIZE_MAX, which would
-  // decommit the whole arena for a keep that covers all of it.
+  // Compared before rounding: RoundUp overflows to 0 near SIZE_MAX.
   if (keepBytes >= a->Committed) return;
   usize keep = RoundUp(keepBytes, ARENA_COMMIT_CHUNK);
   if (keep >= a->Committed) return;
 #if defined(_WIN32)
-  // Decommit leaves the range reserved, so Base stays valid and ArenaCommitTo
-  // can commit it again.
   if (!VirtualFree(a->Base + keep, a->Committed - keep, MEM_DECOMMIT)) CLIPPI_TRAP();
 #else
-  // MADV_DONTNEED drops the physical pages; PROT_NONE is what actually restores
-  // the "not committed" state this arena's commit model is written against, so
-  // ArenaCommitTo's mprotect on the next growth is not a no-op.
+  // PROT_NONE restores the uncommitted state, so ArenaCommitTo's next mprotect is not a no-op.
   if (mprotect(a->Base + keep, a->Committed - keep, PROT_NONE) != 0) CLIPPI_TRAP();
   madvise(a->Base + keep, a->Committed - keep, MADV_DONTNEED);
 #endif

@@ -41,7 +41,7 @@ void EmitUtf8(StrBuf* b, u32 cp) {
   StrBuf_AppendUtf8(b, cp);
 }
 
-}  // namespace
+}
 void Screen_Init(Screen* s, Arena* mem, ScreenWriter w, void* user) {
   memset(s, 0, sizeof(*s));
   s->Mem = mem;
@@ -70,8 +70,7 @@ void Screen_BeginFrame(Screen* s) { memset(s->Back, 0, (u32)s->Cols * s->Rows * 
 
 u32 Screen_PutChar(Screen* s, u16 x, u16 y, u32 cp, Style st) {
   if (x >= s->Cols || y >= s->Rows) return 1;
-  // Every glyph reaches the terminal through here, including model and user text
-  // that never went through Sanitize_Display; a control would be obeyed, not shown.
+  // Model and user text may bypass Sanitize_Display; a control would be obeyed, not shown.
   if (cp != 0 && Utf8IsControl(cp)) cp = 0xFFFD;
   u32 w = CharCellWidth(cp);
   u32 idx = (u32)y * s->Cols + x;
@@ -143,16 +142,15 @@ void Screen_Flush(Screen* s) {
         maxx = x;
       }
     }
-    if (minx < 0) continue;  // row unchanged
+    if (minx < 0) continue;
 
-    // Expand the span to whole glyphs: start on an owner, end past any tail.
     if (bb[minx].Ch == CELL_CONT && minx > 0) minx--;
     while ((u16)(maxx + 1) < s->Cols && bb[maxx + 1].Ch == CELL_CONT) maxx++;
 
     EmitCup(b, (u16)minx, y);
     for (i32 x = minx; x <= maxx; x++) {
       Cell c = bb[x];
-      if (c.Ch == CELL_CONT) continue;  // covered by its owner glyph
+      if (c.Ch == CELL_CONT) continue;
       if (!penValid || !StyleEq(pen, c.St)) {
         EmitSgr(b, c.St);
         pen = c.St;

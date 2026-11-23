@@ -117,7 +117,7 @@ void ReportHandlerResult(const AppCommandUx* ux, AppCommandKind kind, AppCommand
   }
 }
 
-}  // namespace
+}
 
 u32 AppCommandSpec_Count() { return sizeof(kCommands) / sizeof(kCommands[0]); }
 

@@ -49,7 +49,6 @@ void TestSettings() {
             loaded.PermissionReviewerThreshold == 0.95,
             !loaded.PermissionReviewerThresholdInvalid,
             !loaded.YoloAcknowledged);
-  // An absent compaction block leaves the built-in defaults in place.
   CHECK_ALL(loaded.Compaction.Enabled,
             loaded.Compaction.ReserveTokens ==
                 AGENT_COMPACTION_DEFAULT_RESERVE_TOKENS,
@@ -74,8 +73,6 @@ void TestSettings() {
     StrBuf_AppendChar(&content, '}');
     CHECK(ConfigFile_WriteAtomic(&a, SV(path), StrBuf_View(&content)));
     CHECK(AppSettings_Load(&a, SV(path), &loaded) == AppSettingsLoadResult::Malformed);
-    // A non-finite number is rejected by the JSON parser itself, before the
-    // threshold field can be singled out.
     bool parsable = !StrView_Contains(SV(threshold), "e999");
     CHECK(loaded.PermissionReviewerThresholdInvalid == parsable);
   }
@@ -176,7 +173,6 @@ void TestSettings() {
     CHECK(StrView_EqCStr(loaded.PermissionReviewerModel, "jev-1.12.0"));
   }
 
-  // A partial compaction block overrides only the keys it names.
   CHECK(ConfigFile_WriteAtomic(
       &a, SV(path),
       SVL("{\"provider\":\"anthropic\",\"model\":\"legacy\","
@@ -189,7 +185,6 @@ void TestSettings() {
             loaded.Compaction.KeepRecentTokens ==
                 AGENT_COMPACTION_DEFAULT_KEEP_RECENT_TOKENS);
 
-  // Malformed compaction values are rejected rather than silently defaulted.
   CHECK(ConfigFile_WriteAtomic(
       &a, SV(path),
       SVL("{\"provider\":\"anthropic\",\"model\":\"bad\",\"compaction\":8}")));
@@ -276,8 +271,6 @@ void TestSettings() {
   CHECK(AppSettings_Load(&a, SV(path), &loaded) ==
         AppSettingsLoadResult::Malformed);
 
-  // maxTurns 0 means "no cap" and must survive the loader rather than being
-  // rejected the way a zero token count is.
   CHECK(ConfigFile_WriteAtomic(
       &a, SV(path),
       SVL("{\"provider\":\"anthropic\",\"model\":\"legacy\","
@@ -417,15 +410,12 @@ void TestSettings() {
   CHECK(!loaded.Rounded);
   saved.Rounded = true;
 
-  // A disabled policy round-trips as disabled rather than reverting to the
-  // enabled default.
   saved.Compaction.Enabled = false;
   CHECK(AppSettings_Save(&a, SV(path), &saved));
   CHECK(AppSettings_Load(&a, SV(path), &loaded) == AppSettingsLoadResult::Success);
   CHECK_ALL(!loaded.Compaction.Enabled, loaded.Compaction.ReserveTokens == 4096,
             loaded.Compaction.KeepRecentTokens == 8192);
 
-  // A zero-initialized policy must still round-trip into a loadable file.
   AppSettings zeroed = saved;
   zeroed.Compaction = AgentCompactionPolicy{};
   zeroed.Retry = AgentRetryPolicy{};
@@ -440,8 +430,6 @@ void TestSettings() {
   CHECK_ALL(!loaded.Retry.Enabled, loaded.Retry.MaxRetries == 0,
             loaded.Retry.BaseDelayMs == AGENT_RETRY_DEFAULT_BASE_DELAY_MS,
             loaded.Retry.MaxDelayMs == AGENT_RETRY_DEFAULT_MAX_DELAY_MS);
-  // Unlike the delays, maxTurns has no floor to restore: 0 is a legal value
-  // that means unlimited, so it must come back as written.
   CHECK_ALL(!loaded.TurnLimit.Enabled, loaded.TurnLimit.MaxTurns == 0);
 
 #if !defined(_WIN32)

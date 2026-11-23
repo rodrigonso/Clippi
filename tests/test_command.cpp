@@ -516,7 +516,7 @@ void TestHandlerOutcomes() {
             exit.Action == AppLoopAction::Exit);
 }
 
-}  // namespace
+}
 
 void TestCommand() {
   TestParse();

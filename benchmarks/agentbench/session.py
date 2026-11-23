@@ -1,11 +1,4 @@
-"""Driving an interactive TUI on a pty.
-
-A coding agent's TUI probes the terminal on startup and, in several cases,
-blocks until it gets answers. Launching one on a bare pty and reading whatever
-comes out measures a half-initialised program. This module answers the probes
-a real terminal would, then establishes that the app is actually listening
-before anything is sampled.
-"""
+"""Drive a TUI on a pty, answering the terminal probes it blocks on at startup."""
 
 from __future__ import annotations
 
@@ -23,43 +16,38 @@ from pathlib import Path
 
 ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x1b\x07]*(?:\x07|\x1b\\))")
 
-# Typed to establish that the app is listening, never submitted. Deliberately
-# not a word: it has to be recognisable in a screen dump full of box drawing.
+# Typed, never submitted; not a word so it stands out in a screen dump.
 PROBE = "jqx92"
 PROBE_INTERVAL_S = 2.0
 
-# The pty's window size. Set on the slave via TIOCSWINSZ *and* reported in the
-# reply to CSI 18 t, because TUIs disagree about which to trust: most ask, but
-# an ioctl-based one reads a bare pty as 0x0 and draws nothing at all. The two
-# have to agree or a TUI that consults both lays out against the wrong size.
+# Set via TIOCSWINSZ *and* in the CSI 18 t reply: some TUIs ask, ioctl-based ones
+# read a bare pty as 0x0. Both must agree.
 ROWS, COLS = 24, 80
 
-# CSI/OSC queries with fixed replies. Values are what a modest xterm answers.
 _QUERIES = [
-    (b"\x1b[6n", b"\x1b[1;1R"),                                    # cursor position
-    (b"\x1b[c", b"\x1b[?62;c"),                                    # device attributes
-    (b"\x1b]10;?\x1b\\", b"\x1b]10;rgb:ffff/ffff/ffff\x1b\\"),      # fg colour
-    (b"\x1b]11;?\x1b\\", b"\x1b]11;rgb:0000/0000/0000\x1b\\"),      # bg colour
+    (b"\x1b[6n", b"\x1b[1;1R"),
+    (b"\x1b[c", b"\x1b[?62;c"),
+    (b"\x1b]10;?\x1b\\", b"\x1b]10;rgb:ffff/ffff/ffff\x1b\\"),
+    (b"\x1b]11;?\x1b\\", b"\x1b]11;rgb:0000/0000/0000\x1b\\"),
     (b"\x1b]10;?\x07", b"\x1b]10;rgb:ffff/ffff/ffff\x07"),
     (b"\x1b]11;?\x07", b"\x1b]11;rgb:0000/0000/0000\x07"),
-    (b"\x1b]4;0;?\x07", b"\x1b]4;0;rgb:0000/0000/0000\x07"),        # palette
-    (b"\x1b[14t", b"\x1b[4;600;800t"),                             # window px
-    (b"\x1b[16t", b"\x1b[6;16;8t"),                                # cell px
-    (b"\x1b[18t", f"\x1b[8;{ROWS};{COLS}t".encode()),              # window chars
-    (b"\x1b[?1016$p", b"\x1b[?1016;1$y"),                          # SGR pixel mouse
-    (b"\x1b[?2027$p", b"\x1b[?2027;1$y"),                          # grapheme clusters
-    (b"\x1b[?2031$p", b"\x1b[?2031;1$y"),                          # colour scheme
-    (b"\x1b[?1004$p", b"\x1b[?1004;1$y"),                          # focus reporting
-    (b"\x1b[?2004$p", b"\x1b[?2004;1$y"),                          # bracketed paste
-    (b"\x1b[?2026$p", b"\x1b[?2026;1$y"),                          # sync output
+    (b"\x1b]4;0;?\x07", b"\x1b]4;0;rgb:0000/0000/0000\x07"),
+    (b"\x1b[14t", b"\x1b[4;600;800t"),
+    (b"\x1b[16t", b"\x1b[6;16;8t"),
+    (b"\x1b[18t", f"\x1b[8;{ROWS};{COLS}t".encode()),
+    (b"\x1b[?1016$p", b"\x1b[?1016;1$y"),
+    (b"\x1b[?2027$p", b"\x1b[?2027;1$y"),
+    (b"\x1b[?2031$p", b"\x1b[?2031;1$y"),
+    (b"\x1b[?1004$p", b"\x1b[?1004;1$y"),
+    (b"\x1b[?2004$p", b"\x1b[?2004;1$y"),
+    (b"\x1b[?2026$p", b"\x1b[?2026;1$y"),
 ]
 
-# Delimited queries, answered "unsupported". opencode waits on several of
-# these, so leaving them unanswered strands it at a half-drawn screen.
+# Answered "unsupported": opencode stalls half-drawn if these go unanswered.
 _DELIMITED = [
-    (b"\x1bP+q", b"\x1b\\", b"\x1bP0+q\x1b\\"),                    # XTGETTINCAP
-    (b"\x1b_G", b"\x1b\\", b"\x1b_Gi=31337;ENOTSUP\x1b\\"),        # kitty graphics
-    (b"\x1b]1337;", b"\x07", b""),                                 # iTerm2 caps
+    (b"\x1bP+q", b"\x1b\\", b"\x1bP0+q\x1b\\"),
+    (b"\x1b_G", b"\x1b\\", b"\x1b_Gi=31337;ENOTSUP\x1b\\"),
+    (b"\x1b]1337;", b"\x07", b""),
 ]
 
 
@@ -105,20 +93,16 @@ class Session:
     pid: int
     pgid: int
     fd: int
-    visible: bool           # painted something
-    input_ready: bool       # echoed the probe back
+    visible: bool
+    input_ready: bool
     excerpt: str | None
     seconds_to_visible: float | None
 
 
 def launch(argv: list[str], cwd: Path, env: dict[str, str],
            timeout_s: float, settle_s: float) -> Session:
-    """Start a TUI on a pty and wait until it echoes a typed probe.
-
-    Readiness is echo, not paint. A TUI can draw a full screen well before it
-    is listening -- opencode in particular discards anything typed during
-    startup -- so the probe is re-sent on an interval rather than once.
-    """
+    """Readiness is echo, not paint: opencode drops input typed while it draws,
+    so the probe is re-sent on an interval."""
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
     proc = subprocess.Popen(
@@ -128,8 +112,7 @@ def launch(argv: list[str], cwd: Path, env: dict[str, str],
     )
     os.close(slave)
     os.set_blocking(master, False)
-    # setsid makes pid == pgid; reading it now avoids racing a process that
-    # exits before getpgid() is called.
+    # setsid makes pid == pgid; read now so an early exit can't race getpgid().
     pgid = proc.pid
 
     start = time.perf_counter()

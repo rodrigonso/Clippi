@@ -31,8 +31,6 @@
 #define CLIPPI_RMDIR rmdir
 #endif
 
-// ---- helpers -------------------------------------------------------------
-
 static void MakeFile(const char* path, const char* content) {
   FILE* f = fopen(path, "wb");
   if (f) {
@@ -126,8 +124,6 @@ static StrView WriteArgs(Arena* a, StrView path) {
   return StrBuf_View(&json);
 }
 
-// A writable root widens Auto's allowance to one directory outside the working
-// directory, and to nothing beside or above it.
 static void TestWritableRootPermissions(Arena* a, const Tool& write,
                                         StrView workingDirectory) {
   Fs_MkdirP(a, SV("clippi_tool_permission_memory/pages"));
@@ -219,8 +215,6 @@ static void TestToolPermissions(Arena* a) {
   CHECK_ALL(!outside.AutoAllow, outside.ReviewIncomplete);
   TestWritableRootPermissions(a, write, workingDirectory);
 
-  // Writes that steer later execution -- git hooks and config, project hooks,
-  // skills -- need review even inside the workspace.
   const char* protectedPaths[] = {
       ".git/config", ".GIT/hooks/pre-commit", "sub/.git/config",
       ".clippi/hooks.json", ".Clippi/settings.json",
@@ -241,7 +235,6 @@ static void TestToolPermissions(Arena* a) {
     CHECK(!info.AutoAllow);
   }
 #if defined(_WIN32)
-  // Win32 opens each of these as `.git`.
   const char* aliases[] = {".git./config", ".git /config",
                            ".git::$INDEX_ALLOCATION/config"};
   for (u32 i = 0; i < (u32)(sizeof(aliases) / sizeof(aliases[0])); i++) {
@@ -257,15 +250,12 @@ static void TestToolPermissions(Arena* a) {
         ResolveTarget(a, workingDirectory, SV(ordinaryPaths[i]));
     CHECK_ALL(target.Contained, !target.Protected);
   }
-  // Only components below the workspace root count.
   StrView gitRoot = Fs_Join(a, workingDirectory, SVL("sub/.git"));
   Fs_MkdirP(a, gitRoot);
   FsPermissionTarget insideGitRoot =
       ResolveTarget(a, Fs_RealPath(a, gitRoot), SVL("file.txt"));
   CHECK_ALL(insideGitRoot.Contained, !insideGitRoot.Protected);
   CLIPPI_RMDIR("clippi_tool_permission_root/sub/.git");
-  // A writable root inside a protected directory is an explicit grant; only
-  // protected components below that root still need review.
   Fs_MkdirP(a, SV("clippi_tool_permission_root/.clippi/memory"));
   StrView grantedRoot =
       Fs_RealPath(a, SV("clippi_tool_permission_root/.clippi/memory"));
@@ -278,9 +268,6 @@ static void TestToolPermissions(Arena* a) {
   CLIPPI_RMDIR("clippi_tool_permission_root/.clippi/memory");
   CLIPPI_RMDIR("clippi_tool_permission_root/.clippi");
 #if defined(_WIN32)
-  // A missing leaf still has every existing component above it resolved: a
-  // short (8.3) alias of a writable root is that root, and a junction out of
-  // the workspace leads outside it.
   Fs_MkdirP(a, SV("clippi_tool_permission_root/longdirectoryname"));
   StrView longRoot =
       Fs_RealPath(a, SV("clippi_tool_permission_root/longdirectoryname"));
@@ -292,7 +279,6 @@ static void TestToolPermissions(Arena* a) {
   StrView shortRoot = {};
   if (shortLength && shortLength < 4096)
     Win32_Utf8(a, shortNative, shortLength, &shortRoot);
-  // Volumes without short names return the long path unchanged.
   if (shortRoot.Length && !Fs_PathEquals(shortRoot, longRoot)) {
     FsPermissionTarget viaShort =
         ResolveTarget(a, Fs_Join(a, workingDirectory, SVL("sub")),
@@ -312,8 +298,7 @@ static void TestToolPermissions(Arena* a) {
   StrBuf_Append(&mklink, outsideRoot);
   StrBuf_AppendCStr(&mklink, "\" >nul");
   CHECK(system(StrBuf_CStr(&mklink)) == 0);
-  // Windows can refuse to follow a junction a non-administrator created
-  // (ERROR_UNTRUSTED_MOUNT_POINT); every write through it then fails anyway.
+  // Windows may refuse a junction a non-administrator created (ERROR_UNTRUSTED_MOUNT_POINT).
   if (Fs_Stat(junction).Exists) {
     CHECK(!ResolveTarget(a, workingDirectory, SVL("escape/new.txt")).Contained);
     ToolPermissionInfo throughJunction = {};
@@ -395,8 +380,6 @@ static void TestToolPermissions(Arena* a) {
       workingDirectory, &branch, &branchErr));
   CHECK(branch.AutoAllow);
 
-  // The tool hands over the whole command; bounding it for display is the
-  // permission engine's job, which can then tell a clipped action apart.
   StrBuf longJson = StrBuf_Make(a, 3100);
   StrBuf_AppendCStr(&longJson, "{\"command\":\"echo ");
   for (u32 i = 0; i < 3000; i++) StrBuf_AppendChar(&longJson, 'a');
@@ -410,8 +393,6 @@ static void TestToolPermissions(Arena* a) {
   CLIPPI_RMDIR("clippi_tool_permission_root/sub");
   CLIPPI_RMDIR(root);
 }
-
-// ---- read ----------------------------------------------------------------
 
 static void TestRead(Arena* a) {
   CHECK(Fs_MkdirP(a, SVL("out")));
@@ -439,7 +420,6 @@ static void TestRead(Arena* a) {
             StrView_EqCStr(out.Content.Data[0].Text, "line1\nline2"));
   remove(path);
 
-  // missing path + nonexistent file => errors
   ToolResult o2 = {};
   StrBuf e2 = StrBuf_Make(a, 32);
   CHECK(!RunTool(rt, a, SV("{}"), &o2, &e2));
@@ -447,14 +427,11 @@ static void TestRead(Arena* a) {
   StrBuf e3 = StrBuf_Make(a, 32);
   CHECK(!RunTool(rt, a, SV("{\"path\":\"no_such_file_xyz.txt\"}"), &o3, &e3));
 
-  // POSIX can open a directory as a FILE but must not report a failed read as
-  // a successful empty file.
   ToolResult directoryResult = {};
   StrBuf directoryError = StrBuf_Make(a, 64);
   CHECK(!RunTool(rt, a, SVL("{\"path\":\".\"}"), &directoryResult, &directoryError));
   CHECK_ALL(directoryResult.Content.Count == 0, directoryError.Length > 0);
 
-  // offset + limit window with a continuation notice
   const char* p2 = "out/clippi_tool_read_ol.txt";
   MakeFile(p2, "l1\nl2\nl3\nl4\nl5\n");
   ToolResult o4 = {};
@@ -466,7 +443,6 @@ static void TestRead(Arena* a) {
             StrView_Contains(o4.Content.Data[0].Text, "more lines in file"));
   remove(p2);
 
-  // Sniffed image type wins over the extension.
   const char* pimg = "out/clippi_tool_read.gif";
   unsigned char png[12] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13};
   {
@@ -653,7 +629,6 @@ static void TestReadTruncation(Arena* a) {
     checkText(StrView{edge, length}, 1, 0);
     edge[length - 1] = '\n';
     checkText(StrView{edge, length}, 1, 0);
-    // The byte cut and the 64KiB chunk boundary bisect UTF-8 and CRLF.
     memcpy(edge + 51199, "\xF0\x9F\x98\x80", 4);
     if (length > 65552) memcpy(edge + 65551, "\r\n", 2);
     if (length > 51203) checkText(StrView{edge, length}, 1, 0);
@@ -708,7 +683,6 @@ static void TestReadTruncation(Arena* a) {
     ArenaRelease(&memory);
   }
 
-  // Pre-cancelled regular files must not allocate their contents.
   auto checkCancellation = [](const char* filePath) {
     Arena memory = ArenaCreate(16u * 1024u * 1024u);
     Tool tool = ReadTool();
@@ -860,8 +834,7 @@ static void TestReadStreamCancellation() {
           sent = WaitForSingleObject(operation.hEvent, 5000) == WAIT_OBJECT_0 &&
                  GetOverlappedResult(pipe, &operation, &written, FALSE);
         CHECK(sent && written == sizeof(bytes));
-        // A server flush waits for the client to consume all supplied bytes,
-        // including the sniff and the first full chunk. It is not a sleep.
+        // A server flush waits for the client to consume all supplied bytes; it is not a sleep.
         drained = sent && written == sizeof(bytes) && FlushFileBuffers(pipe);
       }
 #else
@@ -906,8 +879,6 @@ static void TestReadStreamCancellation() {
     ArenaRelease(&memory);
   }
 }
-
-// ---- shell ---------------------------------------------------------------
 
 struct CaptureFileTest {
   u64 Bytes;
@@ -1005,8 +976,6 @@ static void TestShellCapture() {
     }
   }
 
-  // 100x more output must not grow retained storage, including when previews
-  // are rebuilt after every chunk rather than throttled by wall-clock time.
   char block[4096];
   memset(block, 'x', sizeof(block));
   block[sizeof(block) - 1] = '\n';
@@ -1220,8 +1189,6 @@ static void TestShellStreamingProcess(Arena* arena) {
 #endif
 }
 
-// The path the truncation notice reports, i.e. everything between
-// "Full output: " and the closing bracket.
 static StrView ReportedOverflowPath(StrView text) {
   const char* marker = "Full output: ";
   u32 markerLength = (u32)strlen(marker);
@@ -1240,8 +1207,6 @@ static void RemoveEmptyDir(const char* path) {
   CLIPPI_RMDIR(path);
 }
 
-// Output past the truncation limit spills to a file whose path is reported back
-// to the model. That file belongs to the session directory when there is one.
 static void TestShellOverflow(Arena* a) {
   const char* source = "clippi_tool_shell_big.txt";
   {
@@ -1274,7 +1239,6 @@ static void TestShellOverflow(Arena* a) {
   CHECK(out.Content.Count == 1);
   StrView notice = out.Content.Data[0].Text;
   StrView logPath = ReportedOverflowPath(notice);
-  // The directory is created on demand, and the spill lands inside it.
   CHECK_ALL(StrView_Contains(notice, "Showing lines"), logPath.Length > 0,
             StrView_Contains(logPath, sessionDir),
             StrView_Contains(logPath, "shell-"), Fs_IsDir(SV(sessionDir)));
@@ -1282,7 +1246,6 @@ static void TestShellOverflow(Arena* a) {
   StrBuf logNative = StrBuf_Make(a, logPath.Length + 1);
   StrBuf_Append(&logNative, logPath);
   StrView spilled = Slurp(a, StrBuf_CStr(&logNative));
-  // The spill holds the whole output, not the truncated view.
   CHECK_ALL(spilled.Length > TRUNC_MAX_BYTES,
             StrView_Contains(spilled, "line 0 padding"),
             StrView_Contains(spilled, "line 2999 padding"));
@@ -1299,7 +1262,6 @@ static void TestShellOverflow(Arena* a) {
             StrView_Contains(StrBuf_View(&failedErr), "failed to create shell output log"),
             !StrView_Contains(StrBuf_View(&failedErr), "Full output: "));
 
-  // With no session directory the tool falls back to the OS temp directory.
   Tool unscoped = ShellTool();
   ToolResult fallback = {};
   StrBuf fallbackErr = StrBuf_Make(a, 64);
@@ -1354,7 +1316,6 @@ static void TestShell(Arena* a) {
   CHECK_ALL(capture.Count >= 2, capture.SawEmpty,
             StrView_Contains(StrBuf_View(&capture.Last), "stream123"));
 
-  // non-zero exit => error result
   ToolResult o2 = {};
   StrBuf e2 = StrBuf_Make(a, 32);
   bool ok2 = RunTool(shell, a, SV("{\"command\":\"exit 3\"}"), &o2, &e2);
@@ -1371,8 +1332,6 @@ static void TestShell(Arena* a) {
   CHECK_ALL(direct.Spawned, direct.ExitCode == 0,
             StrView_EqCStr(StrBuf_View(&directOutput), "spaces \" & | stay literal"));
 
-  // A detached child (how /dream starts its background pass) starts in a
-  // working directory outside the ANSI code page.
   StrView spawnDir = Fs_Join(a, SVL("out"), SVL("clippi-spawn-\xc3\xa9\xe4\xb8\xad"));
   Fs_RemoveTree(a, spawnDir);
   CHECK(Fs_MkdirP(a, spawnDir));
@@ -1417,10 +1376,6 @@ static u32 ChildDescriptorCount(Arena* a) {
 }
 #endif
 
-// Tool calls spawn in parallel. A child must not inherit another call's pipe:
-// holding a write end would keep that call from ever seeing EOF, so a shell
-// call could wait on an unrelated dev server. A running call's descriptors
-// therefore never show up in a child started meanwhile.
 static void TestSpawnIsolation(Arena* a) {
 #if defined(_WIN32)
   (void)a;
@@ -1437,8 +1392,6 @@ static void TestSpawnIsolation(Arena* a) {
 #endif
 }
 
-// ---- write ---------------------------------------------------------------
-
 static void TestWrite(Arena* a) {
   Tool wt = WriteTool();
   const char* path = "clippi_tool_write_test.txt";
@@ -1451,12 +1404,9 @@ static void TestWrite(Arena* a) {
   remove(path);
 }
 
-// ---- edit ----------------------------------------------------------------
-
 static void TestEdit(Arena* a) {
   Tool et = EditTool();
 
-  // exact match
   const char* p1 = "clippi_tool_edit_exact.txt";
   MakeFile(p1, "hello world\nsecond line\n");
   ToolResult o1 = {};
@@ -1476,7 +1426,6 @@ static void TestEdit(Arena* a) {
       &missingPath, &missingPathErr));
   CHECK(StrView_Contains(StrBuf_View(&missingPathErr), "root.path"));
 
-  // fuzzy match (different internal whitespace)
   const char* p2 = "clippi_tool_edit_fuzzy.txt";
   MakeFile(p2, "x = foo   bar\n");
   ToolResult o2 = {};
@@ -1489,7 +1438,6 @@ static void TestEdit(Arena* a) {
   CHECK_ALL(ok2, StrView_Contains(Slurp(a, p2), "baz"));
   remove(p2);
 
-  // not-found => error
   const char* p3 = "clippi_tool_edit_err.txt";
   MakeFile(p3, "alpha\n");
   ToolResult o3 = {};
@@ -1502,13 +1450,7 @@ static void TestEdit(Arena* a) {
   remove(p3);
 }
 
-// ---- ls / find / grep (share a temp tree) --------------------------------
-
-// ls keeps only the `limit` first names while streaming the directory. Names
-// over {'_', 'a'} sort in opposite directions under ls's lower-case folding and
-// NTFS's upper-case one, so on Windows every entry arrives smaller than all the
-// kept ones and evicts one: the selection, and the compaction of evicted names,
-// must still yield exactly the first entries.
+// Names over {'_', 'a'} sort oppositely under ls's lower-case folding and NTFS's upper-case order.
 static void TestLsSelection(Arena* a) {
   StrView dir = SVL("clippi_tools_ls_select");
   Fs_RemoveTree(a, dir);
@@ -1566,7 +1508,6 @@ static void TestTreeTools(Arena* a) {
     }
   }
 
-  // ls
   Tool lt = LsTool();
   ToolResult lo = {};
   StrBuf le = StrBuf_Make(a, 32);
@@ -1575,7 +1516,6 @@ static void TestTreeTools(Arena* a) {
             StrView_Contains(lo.Content.Data[0].Text, "b.md"),
             StrView_Contains(lo.Content.Data[0].Text, "sub/"));
 
-  // find *.txt (basename match, recursive)
   Tool ft = FindTool();
   ToolResult fo = {};
   StrBuf fe = StrBuf_Make(a, 32);
@@ -1584,7 +1524,6 @@ static void TestTreeTools(Arena* a) {
             StrView_Contains(fo.Content.Data[0].Text, "c.txt"),
             !StrView_Contains(fo.Content.Data[0].Text, "b.md"));
 
-  // A cancelled walk fails instead of returning its partial results as complete.
   {
     volatile i32 cancelled = 1;
     ToolResult partial = {};
@@ -1595,7 +1534,6 @@ static void TestTreeTools(Arena* a) {
               StrView_Contains(StrBuf_View(&partialErr), "cancelled"));
   }
 
-  // Search the actual files, including case folding and context formatting.
   Tool gt = GrepTool();
   ToolResult go = {};
   StrBuf ge = StrBuf_Make(a, 32);
@@ -1670,8 +1608,6 @@ static void TestTreeTools(Arena* a) {
   CLIPPI_RMDIR("clippi_tools_it/sub");
   CLIPPI_RMDIR("clippi_tools_it");
 }
-
-// ---- native search ------------------------------------------------------
 
 static StrView RunGrep(Arena* arena, const char* json) {
   ToolResult result = {};
@@ -1950,8 +1886,6 @@ static void TestNativeGrep(Arena* a) {
   CLIPPI_RMDIR(root);
 }
 
-// ---- ask_user ------------------------------------------------------------
-
 struct FakeAsk {
   StrView SeenQuestion;
   u32 SeenChoiceCount;
@@ -1979,8 +1913,6 @@ static bool FakeAskFn(void* user, Arena* arena, const AgentAskRequest* request,
 }
 
 static void TestAskUser(Arena* a) {
-  // No seam installed: the tool must report that nobody can answer rather than
-  // block or fabricate a reply. This is the `-p` and offline-suite path.
   {
     Tool tool = AskUserTool(nullptr);
     ToolResult result = {};
@@ -1995,7 +1927,6 @@ static void TestAskUser(Arena* a) {
   context.Ask.Ask = FakeAskFn;
   Tool tool = AskUserTool(&context);
 
-  // Free-text question: the answer comes back verbatim as the tool result.
   {
     fake.Reply = AgentAskStatus::Answered;
     fake.ReplyText = SVL("use postgres");
@@ -2008,7 +1939,6 @@ static void TestAskUser(Arena* a) {
     CHECK(StrView_Eq(result.Content.Data[0].Text, SVL("use postgres")));
   }
 
-  // Choices are forwarded in order and the selection is echoed back.
   {
     fake = FakeAsk{};
     fake.Reply = AgentAskStatus::Answered;
@@ -2023,8 +1953,6 @@ static void TestAskUser(Arena* a) {
     CHECK(StrView_Eq(result.Content.Data[0].Text, SVL("b")));
   }
 
-  // A dismissal is distinct from an unavailable seam, and both are errors the
-  // model can read rather than a crash.
   {
     fake = FakeAsk{};
     fake.Reply = AgentAskStatus::Declined;
@@ -2040,7 +1968,6 @@ static void TestAskUser(Arena* a) {
     CHECK(StrView_Contains(StrBuf_View(&failErr), "no user is available"));
   }
 
-  // Malformed arguments are rejected before anyone is disturbed.
   {
     fake = FakeAsk{};
     ToolResult result = {};
@@ -2061,9 +1988,6 @@ static void TestAskUser(Arena* a) {
     CHECK(fake.Calls == 0);
   }
 
-  // A `oneOf` parameter schema invites models to fill the unused branch with
-  // explicit nulls. A null key is not an argument, so neither form may be
-  // rejected for carrying one.
   {
     fake = FakeAsk{};
     fake.Reply = AgentAskStatus::Answered;
@@ -2079,8 +2003,6 @@ static void TestAskUser(Arena* a) {
     CHECK(result.Content.Count == 1);
     CHECK(StrView_Eq(result.Content.Data[0].Text, SVL("sqlite")));
 
-    // The permission branch reaches the engine rather than tripping the
-    // mutual-exclusion check on its own null siblings.
     fake = FakeAsk{};
     StrBuf idErr = StrBuf_Make(a, 128);
     CHECK(!RunTool(tool, a,
@@ -2091,7 +2013,6 @@ static void TestAskUser(Arena* a) {
     CHECK(fake.Calls == 0);
   }
 
-  // A batch must not put two questions on screen at once.
   CHECK(tool.ExecMode == ToolExecMode::Sequential);
 }
 

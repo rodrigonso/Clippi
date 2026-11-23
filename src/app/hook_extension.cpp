@@ -20,13 +20,10 @@ void SessionChanged(void* user, const AppSessionContext* session) {
   HookGate_SetSession(hooks->Gate, &info);
   if (!hooks->Runner) return;
   HookRunner_SetSession(hooks->Runner, &info);
-  // Announced as a fresh start on every switch, so a consumer tracks the new
-  // session rather than silently reattributing it to the old one.
   HookRunner_Dispatch(hooks->Runner, HookEvent::SessionStart, StrView{});
 }
 
-// Dispatched from ordered event delivery, never around Run on the caller:
-// Stop must follow the run's last PostToolUse. PreToolUse belongs to the gate.
+// From ordered delivery so Stop follows the last PostToolUse.
 void OnEvent(void* user, const AgentHarnessEvent* event) {
   HookRunner* runner = ((HookExtension*)user)->Runner;
   switch (event->Kind) {
@@ -57,7 +54,7 @@ void Shutdown(void* user) {
   hooks->Runner = nullptr;
 }
 
-}  // namespace
+}
 
 void HookExtension_Init(HookExtension* hooks, Arena* arena, StrView path,
                         bool durable, bool interactive, volatile i32* abort) {
@@ -72,7 +69,6 @@ void HookExtension_Init(HookExtension* hooks, Arena* arena, StrView path,
             (int)path.Length, path.Data);
     hooks->Config = HookConfig{};
   }
-  // Identity arrives with the first SessionChanged, before any event fires.
   HookSessionInfo unannounced = {};
   unannounced.Interactive = interactive;
   hooks->Gate = HookGate_Create(arena, &hooks->Config, &unannounced, abort);

@@ -820,8 +820,7 @@ static AppCommandHandlerResult HandleReloadCommand(
   }
   PromptContextOptions options = rt->PromptOptions;
   options.ProjectTrusted = trust.Trusted;
-  // Settings strings live in `scratch`, which outlives the build; the context
-  // copies everything it keeps into its own arena.
+  // Settings strings live in `scratch`; the context copies what it keeps.
   options.SettingsSkillPaths = settings.Skills.Data;
   options.SettingsSkillPathCount = settings.Skills.Count;
   options.SettingsPromptTemplatePaths = settings.PromptTemplates.Data;
@@ -979,8 +978,6 @@ bool RuntimeResetSession(InteractiveRuntime* rt, const AppCommandUx* ux) {
   return true;
 }
 
-// The skill body is read at invocation time rather than held in the prompt
-// context because most are never used.
 static AppCommandHandlerResult HandleSkillCommand(void* user,
                                                   const AppCommandUx*,
                                                   StrView name,
@@ -1040,9 +1037,7 @@ static bool HandlePromptTemplateCommand(void* user, const AppCommandUx*,
   return true;
 }
 
-// Which commands the TUI may act on from the input thread. `/clear` is here for
-// the cancellation only: the reset itself swaps the session log and still runs
-// on the main loop, once the turn it cancelled unwinds.
+// `/clear` is here only to cancel; the reset still runs on the main loop.
 static TuiCommandInline InlineActionFor(AppCommandKind kind) {
   switch (kind) {
     case AppCommandKind::Debug: return TuiCommandInline::Debug;

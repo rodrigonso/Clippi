@@ -51,8 +51,8 @@ void SessionChanged(void* user, const AppSessionContext* session) {
   ApplyWritableRoots(memory);
 }
 
-// Journaled at the first prompt rather than at startup: a session that never
-// receives one is never written, and dreaming has nothing to read from it.
+// Journaled at the first prompt: a session that never gets one is never
+// written.
 SessionResult BeforeRun(void* user, Arena* arena, Message*) {
   MemoryExtension* memory = (MemoryExtension*)user;
   u64 now = NowMillis();
@@ -131,7 +131,7 @@ void Shutdown(void* user) {
   ArenaRelease(&memory->Mem);
 }
 
-}  // namespace
+}
 
 void MemoryExtension_Init(MemoryExtension* memory, AgentHarness* harness,
                           StrView store, bool enabled) {

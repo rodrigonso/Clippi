@@ -25,10 +25,8 @@ struct AppSettings {
   bool PermissionReviewerThresholdInvalid = false;
   bool YoloAcknowledged = false;
   bool Rounded = true;
-  // The memory wiki; `--no-memory` and CLIPPI_NO_MEMORY turn it off for one
-  // run without changing this.
+  // `--no-memory` and CLIPPI_NO_MEMORY override this for one run only.
   bool Memory = true;
-  // Model dreaming uses instead of the active one. Empty means the same model.
   StrView DreamModel;
   Array<StrView> Skills;
   Array<StrView> PromptTemplates;
@@ -41,7 +39,6 @@ enum class AppSettingsLoadResult : u8 {
   ReadFailure,
 };
 
-// Default path: <home>/.clippi/settings.json.
 StrView AppSettings_DefaultPath(Arena* arena);
 
 // Successful strings are owned by `arena`.

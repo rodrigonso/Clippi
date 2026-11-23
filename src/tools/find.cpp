@@ -100,7 +100,6 @@ static bool FindExec(void* ctx, Arena* arena, StrView id,
   opts.RespectGitignore = true;
   opts.IncludeDirs = true;
   opts.Abort = abort;
-  // A cancelled or failed walk must not pass its partial results off as complete.
   if (!Fs_WalkChecked(arena, path, opts, Find_Visit, &st, err)) return false;
 
   StrBuf raw = StrBuf_Make(arena, st.Results.Count ? st.Results.Count * 32u : 64u);

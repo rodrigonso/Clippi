@@ -118,11 +118,7 @@ bool IsGrepMatchLine(StrView line) {
   return false;
 }
 
-// Edit results embed a Diff_Make display where every line is
-// "<prefix><lineNo><pad> <text>" and prefix is '+', '-' or ' '. Counting lines
-// whose prefix is '+'/'-' followed by a digit yields the added/removed totals
-// without re-diffing. The digit check keeps prose lines (e.g. a body line that
-// happens to start with '-') from being miscounted.
+// The digit check keeps prose lines that start with '-' from being miscounted.
 void CountDiffLines(StrView text, u32* added, u32* removed) {
   *added = 0;
   *removed = 0;
@@ -159,8 +155,6 @@ u32 CountGrepMatches(StrView text) {
   return count;
 }
 
-// The shell tool keeps only a tail of long output and names the full total
-// in a "[Showing lines A-B of C ...]" notice.
 u64 ShellNoticeTotal(StrView notice) {
   if (!StrView_StartsWith(notice, SVL("[Showing lines "))) return 0;
   for (u32 i = 0; i + 4 <= notice.Length; i++) {
@@ -192,7 +186,6 @@ void AppendShellSuccess(StrBuf* out, StrView result) {
   AppendCount(out, lines > 0xffffffffu ? 0xffffffffu : (u32)lines, "line", "lines");
 }
 
-// A failed shell call states its cause in the result's final paragraph.
 void AppendShellFailure(StrBuf* out, StrView result) {
   StrView reason = result;
   for (u32 i = result.Length; i >= 2; i--) {
@@ -344,7 +337,7 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
   InitUnknown(arena, scratch, view, name, argsJson);
 }
 
-}  // namespace
+}
 
 void ToolView_Init(Arena* arena, ToolView* view, StrView name, StrView argsJson) {
   usize reserve = (usize)argsJson.Length * TOOL_PARSE_SCRATCH_SCALE + TOOL_PARSE_SCRATCH_BASE;
@@ -406,14 +399,12 @@ void ToolView_Finish(ToolView* view, StrView result, bool isError) {
       u32 removed = 0;
       CountDiffLines(result, &added, &removed);
       if (added == 0 && removed == 0) {
-        // No parsable diff (unexpected result shape); fall back to block count.
         AppendCount(&view->Outcome, view->CountHint, "block replaced", "blocks replaced");
         break;
       }
       StrBuf_AppendChar(&view->Outcome, '+');
       StrBuf_AppendU64(&view->Outcome, added);
       StrBuf_AppendChar(&view->Outcome, ' ');
-      // Everything from here on is the removal half; the renderer colours it red.
       view->OutcomeSplit = view->Outcome.Length;
       StrBuf_AppendChar(&view->Outcome, '-');
       StrBuf_AppendU64(&view->Outcome, removed);

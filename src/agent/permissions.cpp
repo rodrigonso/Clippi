@@ -35,9 +35,7 @@ StrView BuildFallbackAction(Arena* arena, StrView toolName) {
   return StrBuf_View(&action);
 }
 
-// A clipped action ends in a marker so neither a person nor the reviewer
-// mistakes a prefix for the whole call. The result, marker included, fits in
-// AGENT_PERMISSION_MAX_ACTION_BYTES.
+// A clipped action ends in a marker so no one mistakes a prefix for the whole call.
 StrView SanitizeAction(Arena* arena, StrView action, bool* clipped) {
   constexpr u32 MARKER_ROOM = 64;
   *clipped = action.Length > AGENT_PERMISSION_MAX_ACTION_BYTES;
@@ -209,8 +207,7 @@ AgentPermissionRequest* AddRequestLocked(
     AgentPermissionEngine* engine, StrView toolName, StrView argumentsJson,
     StrView grantKey, StrView action, StrView rationale) {
   if (engine->Requests.Count >= AGENT_PERMISSION_MAX_REQUESTS) return nullptr;
-  // Decide has already bounded the arguments, grant key and action; only the
-  // reviewer's rationale arrives unbounded.
+  // Decide already bounded everything except the reviewer's rationale.
   AgentPermissionRequest request = {};
   request.Id = DurableId_Generate();
   request.ToolName = StrView_Dup(&engine->Run, toolName);
@@ -242,7 +239,7 @@ void CacheLocked(AgentPermissionEngine* engine, StrView key, bool allow,
     Array_Push(&engine->Cache, cached);
 }
 
-}  // namespace
+}
 
 StrView AgentPermissionMode_Name(AgentPermissionMode mode) {
   switch (mode) {

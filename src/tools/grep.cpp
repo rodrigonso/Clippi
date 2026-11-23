@@ -266,8 +266,6 @@ static bool Grep_SearchOpenFile(GrepState* state, GrepReader* reader,
   reader->Position = reader->Count = reader->LineNumber = 0;
   reader->Started = reader->Eof = reader->Utf16 = reader->BigEndian = false;
 
-  // Cache only displayed, clipped lines. Overlapping context is replayed in
-  // match order without retaining whole files or rereading each match window.
   Array<GrepLine> lines = Array_Make<GrepLine>(scratch, 32);
   u32 cacheStart = 0;
   for (u32 i = 0; i < matches.Count; i++) {

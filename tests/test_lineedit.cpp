@@ -25,7 +25,6 @@ void TestLineEdit() {
   LineEdit e;
   LineEdit_Init(&e, &a);
 
-  // Insertion + horizontal motion.
   LineEdit_InsertText(&e, SVL("hello world"));
   CHECK_ALL(Eq(&e, "hello world"), LineEdit_Cursor(&e) == 11);
   LineEdit_Home(&e);
@@ -40,37 +39,32 @@ void TestLineEdit() {
   LineEdit_Backspace(&e);
   CHECK(Eq(&e, "hello world"));
 
-  // Word navigation.
   LineEdit_End(&e);
   LineEdit_WordLeft(&e);
-  CHECK(LineEdit_Cursor(&e) == 6);  // start of "world"
+  CHECK(LineEdit_Cursor(&e) == 6);
   LineEdit_WordLeft(&e);
   CHECK(LineEdit_Cursor(&e) == 0);
 
-  // Multi-line: vertical motion keeps the desired column.
   LineEdit_Clear(&e);
   LineEdit_InsertText(&e, SVL("ab\ncd"));
   CHECK_ALL(!LineEdit_OnFirstLine(&e), LineEdit_OnLastLine(&e));
   bool moved = LineEdit_Up(&e);
-  CHECK_ALL(moved, LineEdit_Cursor(&e) == 2);  // end of "ab"
-  CHECK(!LineEdit_Up(&e));          // already on first line
+  CHECK_ALL(moved, LineEdit_Cursor(&e) == 2);
+  CHECK(!LineEdit_Up(&e));
   moved = LineEdit_Down(&e);
-  CHECK_ALL(moved, LineEdit_Cursor(&e) == 5);  // end of "cd"
+  CHECK_ALL(moved, LineEdit_Cursor(&e) == 5);
 
-  // Backspace merges lines.
   LineEdit_Backspace(&e);
   LineEdit_Backspace(&e);
   LineEdit_Backspace(&e);
   CHECK(Eq(&e, "ab"));
 
-  // Newline insertion.
   LineEdit_Clear(&e);
   LineEdit_InsertText(&e, SVL("x"));
   LineEdit_Newline(&e);
   LineEdit_InsertText(&e, SVL("y"));
   CHECK(Eq(&e, "x\ny"));
 
-  // Kill operations.
   LineEdit_Clear(&e);
   LineEdit_InsertText(&e, SVL("foo bar"));
   LineEdit_DeleteWordBack(&e);
@@ -81,7 +75,6 @@ void TestLineEdit() {
   LineEdit_KillToEnd(&e);
   CHECK(Eq(&e, ""));
 
-  // UTF-8 aware motion ('é' is two bytes).
   LineEdit_Clear(&e);
   LineEdit_InsertText(&e, SVL("\xc3\xa9"));
   CHECK(LineEdit_Cursor(&e) == 2);
@@ -90,7 +83,6 @@ void TestLineEdit() {
   LineEdit_Right(&e);
   CHECK(LineEdit_Cursor(&e) == 2);
 
-  // Selection bounds and directional collapse.
   Reset(&e, SVL("hello"));
   LineEdit_SetCursor(&e, 0);
   LineEdit_Left(&e, true);
@@ -121,9 +113,8 @@ void TestLineEdit() {
   LineEdit_End(&e, true);
   CHECK(StrView_EqCStr(LineEdit_SelectedText(&e), "two"));
 
-  // Cursor placement and hit-testing preserve UTF-8 boundaries.
   Reset(&e, SVL("a\xc3\xa9\xe4\xb8\xadz"));
-  LineEdit_SetCursor(&e, 2);  // middle of 'é'
+  LineEdit_SetCursor(&e, 2);
   CHECK(LineEdit_Cursor(&e) == 1);
   LineEdit_Right(&e, true);
   CHECK_ALL(LineEdit_Cursor(&e) == 3,
@@ -131,7 +122,7 @@ void TestLineEdit() {
 
   Reset(&e, SVL("a\xe4\xb8\xad" "bcd"));
   CHECK_ALL(LineEdit_HitTest(&e, 4, 0, 1) == 1,
-            LineEdit_HitTest(&e, 4, 0, 2) == 4,  // second cell of wide glyph
+            LineEdit_HitTest(&e, 4, 0, 2) == 4,
             LineEdit_HitTest(&e, 4, 1, 0) == 5,
             LineEdit_HitTest(&e, 4, 1, 2) == 7);
   LineEdit_SetCursor(&e, LineEdit_HitTest(&e, 4, 0, 1));
@@ -150,7 +141,6 @@ void TestLineEdit() {
             LineEdit_HitTest(&e, 20, 1, 1) == 4,
             LineEdit_HitTest(&e, 20, 9, 0) == 5);
 
-  // Editing operations replace selections.
   Reset(&e, SVL("abcdef"));
   Select(&e, 2, 4);
   LineEdit_InsertText(&e, SVL("XY"));
@@ -192,7 +182,7 @@ void TestLineEdit() {
   CHECK_ALL(moved, LineEdit_Cursor(&e) == 11);
   CHECK(SelectionEq(&e, 3, 11, "d\nxy\nwxy"));
   moved = LineEdit_Up(&e);
-  CHECK_ALL(moved, LineEdit_Cursor(&e) == 3,  // unmodified Up collapses to start
+  CHECK_ALL(moved, LineEdit_Cursor(&e) == 3,
             !LineEdit_HasSelection(&e));
   LineEdit_SetCursor(&e, 11);
   moved = LineEdit_Up(&e, true);
@@ -200,22 +190,20 @@ void TestLineEdit() {
   moved = LineEdit_Up(&e, true);
   CHECK_ALL(moved, LineEdit_Cursor(&e) == 3);
   moved = LineEdit_Down(&e);
-  CHECK_ALL(moved, LineEdit_Cursor(&e) == 11);  // unmodified Down collapses to end
+  CHECK_ALL(moved, LineEdit_Cursor(&e) == 11);
 
-  // Sticky columns match the composer's minimum-one-cell scalar width.
   Reset(&e, SVL("a\xcc\x81" "b\nxyz"));
   LineEdit_SetCursor(&e, 4);
   moved = LineEdit_Down(&e);
-  CHECK_ALL(moved, LineEdit_Cursor(&e) == 8);  // displayed column 3
+  CHECK_ALL(moved, LineEdit_Cursor(&e) == 8);
   moved = LineEdit_Up(&e);
   CHECK_ALL(moved, LineEdit_Cursor(&e) == 4);
 
   Reset(&e, SVL("a\xe4\xb8\xad\nxyz"));
   LineEdit_SetCursor(&e, 4);
   moved = LineEdit_Down(&e);
-  CHECK_ALL(moved, LineEdit_Cursor(&e) == 8);  // wide glyph is also column 3
+  CHECK_ALL(moved, LineEdit_Cursor(&e) == 8);
 
-  // History recall.
   LineEdit_Clear(&e);
   LineEdit_InsertText(&e, SVL("first"));
   StrView s1 = LineEdit_Submit(&e);
@@ -235,7 +223,7 @@ void TestLineEdit() {
   LineEdit_HistoryNext(&e);
   CHECK(Eq(&e, "second"));
   LineEdit_HistoryNext(&e);
-  CHECK(Eq(&e, ""));  // back to the (empty) live buffer
+  CHECK(Eq(&e, ""));
   CHECK(!LineEdit_HasSelection(&e));
 
   LineEdit_InsertText(&e, SVL("draft"));

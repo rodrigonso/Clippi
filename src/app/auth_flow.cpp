@@ -22,9 +22,7 @@ static bool AppAuth_CacheToken(AppAuth* auth, StrView provider, StrView token,
                                       accountId, expiresAtMs);
 }
 
-// Returned views are copied into the caller's arena: a refresh replaces the
-// cached token and wipes the old one, which must not corrupt a request that is
-// still holding it.
+// Copied: a refresh wipes the cached token while a request may still hold it.
 static bool ReturnAuth(Arena* arena, StrView token, StrView accountId,
                        ProviderAuth* out) {
   out->Token = StrView_Dup(arena, token);
@@ -44,16 +42,13 @@ static bool UseChatGptCredential(AppAuth* aa, Arena* arena, Arena* scratch,
   return ReturnAuth(arena, cred->AccessToken, accountId, out);
 }
 
-// Refresh tokens are single-use: two processes refreshing the same one would
-// race, and the loser's refusal can sign the account out. A refresh therefore
-// holds the store's lock and re-reads the store first, so a process that
-// waited reuses whatever the holder wrote.
+// Refresh tokens are single-use: hold the store lock and re-read before
+// refreshing.
 static bool RefreshChatGptCredential(AppAuth* aa, Arena* arena, Arena* scratch,
                                      StrView provider, const Credential* stale,
                                      volatile i32* abort, ProviderAuth* out) {
   AuthStoreLock lock = {};
   if (!AuthStore_Lock(scratch, aa->Path, AUTH_STORE_LOCK_WAIT_MS, abort, &lock)) {
-    // Inside the refresh margin the old token still works for a while.
     return NowMillis() < stale->ExpiresAtMs &&
            UseChatGptCredential(aa, arena, scratch, provider, stale, out);
   }
@@ -74,8 +69,6 @@ static bool RefreshChatGptCredential(AppAuth* aa, Arena* arena, Arena* scratch,
         next.RefreshToken = tokens.Refresh;
         next.AccountId = tokens.AccountId;
         next.ExpiresAtMs = tokens.ExpiresAtMs;
-        // A failed save still leaves this process a working token; the next
-        // process will find the old refresh token refused and ask for /auth.
         AuthStore_WriteLocked(scratch, &lock, aa->Path, provider, &next);
         ok = UseChatGptCredential(aa, arena, scratch, provider, &next, out);
       } else if (NowMillis() < current.ExpiresAtMs) {
@@ -144,8 +137,6 @@ StrView AuthGuidance(Arena* arena, const ProviderSpec* spec, bool interactive) {
   if (!spec) return SVL("No provider is selected.");
   StrBuf b = StrBuf_Make(arena, 192);
   if (spec->SignIn == ProviderSignIn::ChatGpt) {
-    // An expired sign-in whose refresh failed lands here too, so this does not
-    // claim nothing was ever configured.
     StrBuf_AppendCStr(&b, "No usable ");
     StrBuf_Append(&b, spec->Name);
     StrBuf_AppendCStr(&b, " sign-in is available for '");
@@ -162,8 +153,6 @@ StrView AuthGuidance(Arena* arena, const ProviderSpec* spec, bool interactive) {
   StrBuf_AppendCStr(&b, " ('");
   StrBuf_Append(&b, spec->Id);
   StrBuf_AppendCStr(&b, "'). ");
-  // Interactive `/auth` can sign in through the browser; the headless path can
-  // only point at the environment.
   if (interactive) {
     StrBuf_AppendCStr(&b, "Run `/auth` to sign in to ");
     StrBuf_Append(&b, spec->Name);
@@ -262,20 +251,17 @@ struct OAuthCodeResult {
   StrView Message;
 };
 
-// Authorization codes expire after about ten minutes, so waiting longer is
-// pointless.
 static const u32 OAUTH_CALLBACK_WAIT_MS = 10 * 60 * 1000;
 
-// What a browser sign-in shows and expects. The caller owns the listener.
+// The caller owns the listener.
 struct OAuthBrowserFlow {
   StrView ProviderName;
   StrView Url;
   StrView CallbackPath;
   StrView State;
-  StrView BrowserHint;  // operation status while waiting
+  StrView BrowserHint;
 };
 
-// Browser + loopback redirect. Unavailable means fall back to pasting a code.
 static OAuthCodeResult AwaitOAuthCallback(InteractiveRuntime* rt, Arena* scratch,
                                           LoopbackServer* server,
                                           const OAuthBrowserFlow* flow,
@@ -392,7 +378,6 @@ static OAuthCodeResult ReceiveOpenRouterCallback(InteractiveRuntime* rt,
   return result;
 }
 
-// Headless mode: OpenRouter shows the code and the user pastes it here.
 static OAuthCodeResult ReadPastedOAuthCode(InteractiveRuntime* rt, Arena* scratch,
                                            const OAuthPkce* pkce,
                                            const AppCommandUx* ux) {
@@ -418,9 +403,8 @@ static OAuthCodeResult ReadPastedOAuthCode(InteractiveRuntime* rt, Arena* scratc
   }
 }
 
-// ChatGPT's redirect URI is registered on a fixed localhost port. When the
-// browser cannot reach Clippi there (a remote session, or another sign-in
-// holding the port), its address bar still carries the code once it lands.
+// ChatGPT's redirect port is fixed; if unreachable, the code is in the address
+// bar.
 static OAuthCodeResult ReadPastedChatGptCode(InteractiveRuntime* rt, Arena* scratch,
                                              const OAuthPkce* pkce, StrView url,
                                              bool portBusy, const AppCommandUx* ux) {

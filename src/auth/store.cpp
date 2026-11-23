@@ -14,8 +14,7 @@ struct Entry {
 };
 
 bool CompleteStoreDocument(StrView content) {
-  // The shared parser accepts unterminated empty containers. Bound nesting and
-  // require closed strings/containers before inspecting the credential schema.
+  // The shared parser accepts unterminated empty containers; check nesting and closure first.
   char stack[16] = {};
   u32 depth = 0;
   bool quoted = false;
@@ -42,8 +41,7 @@ bool CompleteStoreDocument(StrView content) {
   return !quoted && depth == 0;
 }
 
-// JSON numbers are doubles; an expiry must be a whole millisecond count that
-// survives the round trip exactly.
+// 2^53: larger expiries do not survive the JSON double round trip exactly.
 constexpr f64 MAX_EXACT_TIMESTAMP_MS = 9007199254740992.0;
 
 bool IsTimestamp(JsonValue* v) {
@@ -82,8 +80,7 @@ bool ParseCred(JsonValue* v, Credential* out) {
   return true;
 }
 
-// Rewriting the store must reproduce every member it read, so an entry with
-// members this build does not write is refused rather than silently dropped.
+// Members this build does not write are refused so a rewrite never drops them.
 u32 SchemaMemberCount(JsonValue* v, const Credential* c) {
   if (c->Kind == CredentialKind::ApiKey) return 2;
   return Json_Get(v, "accountId") ? 5 : 4;
@@ -152,7 +149,7 @@ bool WriteEntries(Arena* a, StrView path, const Array<Entry>* entries) {
   return ConfigFile_WriteAtomic(a, path, StrBuf_View(&out));
 }
 
-}  // namespace
+}
 
 StrView AuthStore_DefaultPath(Arena* a) {
   StrView home = Sys_HomeDir(a);

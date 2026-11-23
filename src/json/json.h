@@ -3,9 +3,7 @@
 #include "base/basics.h"
 #include "base/str.h"
 
-// Minimal arena-based JSON. The parser builds a small DOM; the writer provides
-// string escaping for hand-built request bodies. Input to Json_Parse must be
-// null-terminated at [Length] (StrBuf guarantees this).
+// Input to Json_Parse must be null-terminated at [Length] (StrBuf guarantees this).
 
 enum class JsonKind : u8 { Null, Bool, Number, String, Array, Object };
 
@@ -20,22 +18,18 @@ struct JsonValue {
   JsonKind Kind;
   bool Bool;
   f64 Number;
-  StrView Str;  // decoded (unescaped) string, arena-owned
+  StrView Str;
   JsonValue** Items;
   u32 Count;
   JsonMember* Members;
   u32 MemberCount;
 };
 
-// Deepest container nesting Json_Parse accepts. Anything a caller walks
-// recursively (clone, compare, write, schema validation) inherits this bound.
+// Anything walked recursively (clone, compare, write, schema validation) inherits this bound.
 constexpr u32 JSON_MAX_DEPTH = 256;
 
-// Returns nullptr on parse error, including input nested deeper than
-// JSON_MAX_DEPTH and containers left unterminated at the end of input.
 JsonValue* Json_Parse(Arena* arena, StrView text);
 
-// Json_Parse needs its input null-terminated; parse a view that may not be.
 inline JsonValue* Json_ParseCopy(Arena* arena, StrView text) {
   StrBuf input = StrBuf_Make(arena, text.Length + 1);
   StrBuf_Append(&input, text);
@@ -45,7 +39,7 @@ JsonValue* Json_Clone(Arena* arena, const JsonValue* value);
 bool Json_Equals(const JsonValue* a, const JsonValue* b);
 
 JsonValue* Json_Get(const JsonValue* obj, const char* key);
-StrView Json_GetStr(const JsonValue* obj, const char* key);  // "" if absent/not a string
+StrView Json_GetStr(const JsonValue* obj, const char* key);
 f64 Json_GetNum(const JsonValue* obj, const char* key, f64 fallback);
 i64 Json_GetInt(const JsonValue* obj, const char* key, i64 fallback);
 bool Json_GetBool(const JsonValue* obj, const char* key, bool fallback);
@@ -54,14 +48,11 @@ inline bool Json_IsObject(const JsonValue* v) { return v && v->Kind == JsonKind:
 inline bool Json_IsArray(const JsonValue* v) { return v && v->Kind == JsonKind::Array; }
 inline bool Json_IsString(const JsonValue* v) { return v && v->Kind == JsonKind::String; }
 
-// Append `s` to `b` as a JSON-escaped, double-quoted string literal.
 u32 Json_FormatNumber(char* dst, u32 cap, f64 value);
 void Json_WriteString(StrBuf* b, StrView s);
 void Json_WriteValue(StrBuf* b, const JsonValue* value);
 
-// Minimal streaming writer for hand-built JSON objects. Tracks only whether a
-// separating comma is due, so nesting is the caller's business: begin a nested
-// object or array after JsonWrite_Key and close it yourself.
+// Tracks only whether a comma is due; nesting is the caller's business.
 struct JsonWriter {
   StrBuf* Out;
   bool First;

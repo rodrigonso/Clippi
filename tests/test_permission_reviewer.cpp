@@ -156,7 +156,6 @@ HttpResult Transport(void* user, Arena* arena, const HttpRequest* http,
   if (result.Status < 0) result.Error = kServerMarker;
   if ((result.Status >= 200 && result.Status < 300) ||
       attempt->PartialSuccess) {
-    // Exercise the reviewer's own cap independently of transport enforcement.
     u32 chunkBytes = attempt->ChunkBytes ? attempt->ChunkBytes : attempt->Body.Length;
     for (u32 offset = 0; offset < attempt->Body.Length;) {
       u32 length = attempt->Body.Length - offset;
@@ -985,7 +984,7 @@ void TestConfiguredKeyResolution() {
   ArenaReleaseSecure(&fixture);
 }
 
-}  // namespace
+}
 
 void TestPermissionReviewer() {
   TestModelNames();

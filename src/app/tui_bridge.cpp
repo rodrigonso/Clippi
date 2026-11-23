@@ -2,7 +2,6 @@
 
 namespace {
 
-// The first content block is what the transcript shows as a tool's preview.
 StrView FirstText(const ToolResult& result) {
   if (result.Content.Count == 0) return StrView{};
   return result.Content.Data[0].Text;
@@ -21,10 +20,8 @@ bool BridgeRequestCancel(void* user) {
   return SessionResult_IsOk(AgentHarness_RequestCancel(harness));
 }
 
-// Deliberately an unsynchronized read, matching what the TUI did when it held
-// the harness pointer directly. Taking StateLock here would be the first place
-// anything acquires it beneath the TUI lock during a clear, and the answer is
-// advisory either way -- the caller re-checks under its own lock.
+// Deliberately unsynchronized: StateLock here would nest under the TUI lock
+// during a clear. Advisory; the caller re-checks under its own lock.
 bool BridgeIsBusy(void* user) {
   AgentHarness* harness = (AgentHarness*)user;
   return harness && harness->Running;
@@ -35,7 +32,7 @@ TuiPermissionMode BridgeCyclePermission(void* user) {
       AgentHarness_CyclePermissionMode((AgentHarness*)user));
 }
 
-}  // namespace
+}
 
 TuiPermissionMode TuiBridge_ToTuiPermissionMode(AgentPermissionMode mode) {
   switch (mode) {
@@ -75,14 +72,12 @@ void TuiBridge_HarnessEvent(void* user, const AgentHarnessEvent* ev) {
       if (ev->Stream.Kind == StreamEventKind::TextDelta)
         Tui_AppendAssistantText(t, ev->Stream.Delta);
       break;
-    // The assistant turn has no transient "message end"; the durable record is
-    // the authoritative completion, carrying the final stop reason and usage.
+    // The durable record, not a transient end, completes an assistant turn.
     case AgentHarnessEventKind::DurableRecord: {
       if (ev->Record->Kind != SessionRecordKind::Message) break;
       const Message* message = &ev->Record->MessageEntry.Value;
       if (message->Kind != Role::Assistant) break;
-      // Reported usage covers the whole prompt this response saw, so it
-      // replaces the running total rather than adding to it.
+      // Reported usage covers the whole prompt, so it replaces the total.
       u32 reported = AgentCompaction_UsageTokens(&message->Use);
       if (reported)
         Tui_SetContextTokens(t, reported);
@@ -99,7 +94,6 @@ void TuiBridge_HarnessEvent(void* user, const AgentHarnessEvent* ev) {
       Tui_ToolProgress(t, ev->Tool.CallId, FirstText(ev->Tool.Result));
       break;
     case AgentHarnessEventKind::TransientToolEnd: {
-      // Estimated the same way the snapshot measures the durable result.
       Message result = {};
       result.Kind = Role::ToolResult;
       result.Content = ev->Tool.Result.Content;
@@ -109,8 +103,6 @@ void TuiBridge_HarnessEvent(void* user, const AgentHarnessEvent* ev) {
                     ev->Tool.IsError);
       break;
     }
-    // The summary replaced the measured context, and nothing measures the new
-    // one until the next response reports usage.
     case AgentHarnessEventKind::TransientTurnEnd:
       if (ev->Turn.Kind == AgentTurnKind::Compaction &&
           ev->Turn.Outcome == AgentTurnOutcome::Succeeded)

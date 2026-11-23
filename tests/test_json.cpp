@@ -8,7 +8,6 @@
 void TestJson() {
   Arena a = ArenaCreate();
 
-  // Object with nested array, escapes, numbers, bools, null.
   const char* doc =
       "{\"name\":\"pi\",\"n\":42,\"f\":3.5,\"ok\":true,\"nope\":false,\"nil\":null,"
       "\"esc\":\"line1\\nline2\\t\\\"q\\\"\",\"arr\":[1,2,3],\"obj\":{\"k\":\"v\"}}";
@@ -30,20 +29,17 @@ void TestJson() {
   JsonValue* obj = Json_Get(root, "obj");
   CHECK(StrView_EqCStr(Json_GetStr(obj, "k"), "v"));
 
-  // Unicode escape decodes to UTF-8.
   JsonValue* uni = Json_Parse(&a, SV("{\"s\":\"\\u00e9\\u4e2d\"}"));
   StrView s = Json_GetStr(uni, "s");
-  CHECK_ALL(s.Length == 5,  // é (2 bytes) + 中 (3 bytes)
+  CHECK_ALL(s.Length == 5,
             (u8)s.Data[0] == 0xC3 && (u8)s.Data[1] == 0xA9,
             (u8)s.Data[2] == 0xE4 && (u8)s.Data[3] == 0xB8 &&
                 (u8)s.Data[4] == 0xAD);
 
-  // Surrogate pair (emoji U+1F600).
   JsonValue* emo = Json_Parse(&a, SV("{\"e\":\"\\ud83d\\ude00\"}"));
   StrView es = Json_GetStr(emo, "e");
   CHECK(es.Length == 4 && (u8)es.Data[0] == 0xF0);
 
-  // Writer escaping round-trips through the parser.
   StrBuf w = StrBuf_Make(&a, 16);
   Json_WriteString(&w, SV("a\"b\\c\nd"));
   StrBuf wrapped = StrBuf_Make(&a, 16);
@@ -53,12 +49,9 @@ void TestJson() {
   JsonValue* rt = Json_Parse(&a, StrBuf_View(&wrapped));
   CHECK(StrView_EqCStr(Json_GetStr(rt, "x"), "a\"b\\c\nd"));
 
-  // Invalid input returns nullptr.
   CHECK(Json_Parse(&a, SV("{bad")) == nullptr);
   CHECK(Json_Parse(&a, SV("{} trailing")) == nullptr);
 
-  // A document cut off before its closing bracket is incomplete, not valid.
-  // Session repair depends on a torn final line failing to parse.
   const char* truncated[] = {"{", "[", "{\"a\":1,", "{\"a\":1", "[1,", "[1",
                              "{\"a\":[1,2", "[1,]", "{\"a\":1,}"};
   for (const char* text : truncated) CHECK(Json_Parse(&a, SV(text)) == nullptr);
@@ -73,7 +66,6 @@ void TestJson() {
     JsonValue* zero = Json_Parse(&a, SV("-0"));
     JsonValue* tiny = Json_Parse(&a, SV("1e-400"));
     JsonValue* exponent = Json_Parse(&a, SV("[0E+2,10e-1]"));
-    // A view into a longer buffer parses only its own bytes.
     JsonValue* prefix = Json_Parse(&a, StrView{"12345", 2});
     CHECK_ALL(zero && zero->Number == 0.0, tiny && tiny->Number == 0.0,
               exponent && exponent->Count == 2 && exponent->Items[1]->Number == 1.0,
@@ -86,8 +78,6 @@ void TestJson() {
     CHECK(scaled && scaled->Number == 2.5);
   }
 
-  // Nesting is bounded so hostile input cannot exhaust the stack of whatever
-  // thread parses or later walks it.
   {
     StrBuf deep = StrBuf_Make(&a, 2 * (JSON_MAX_DEPTH + 1) + 1);
     for (u32 i = 0; i < JSON_MAX_DEPTH; i++) StrBuf_AppendChar(&deep, '[');
@@ -103,29 +93,25 @@ void TestJson() {
     CHECK(Json_Parse(&a, StrBuf_View(&hostile)) == nullptr);
   }
 
-  // A lone surrogate escape has no UTF-8 form. Encoding it as CESU-8 is what
-  // makes providers answer "surrogates not allowed", so it decodes to U+FFFD.
   JsonValue* lone = Json_Parse(&a, SV("{\"s\":\"x\\ud83dy\"}"));
   StrView ls = Json_GetStr(lone, "s");
   CHECK_ALL(ls.Length == 5, ls.Data[0] == 'x', (u8)ls.Data[1] == 0xEF,
             (u8)ls.Data[2] == 0xBF, (u8)ls.Data[3] == 0xBD, ls.Data[4] == 'y');
 
-  // The writer is the one serialization choke point, so it has to emit
-  // well-formed UTF-8 whatever a tool result or shell capture put in the text.
   struct {
     const char* input;
     const char* expected;
   } cases[] = {
       {"ok \xC3\xA9 \xE4\xB8\xAD \xF0\x9F\x98\x80",
-       "ok \xC3\xA9 \xE4\xB8\xAD \xF0\x9F\x98\x80"},  // valid stays byte-identical
-      {"a\xEF\xBF\xBD" "b", "a\xEF\xBF\xBD" "b"},     // an existing U+FFFD survives
-      {"a\xED" "bBb", "a\xEF\xBF\xBD" "bBb"},         // truncated 3-byte lead
-      {"a\xED\xA0\xBD" "b", "a\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD" "b"},  // CESU-8 surrogate
-      {"a\xC0\xAF" "b", "a\xEF\xBF\xBD\xEF\xBF\xBD" "b"},                  // overlong
+       "ok \xC3\xA9 \xE4\xB8\xAD \xF0\x9F\x98\x80"},
+      {"a\xEF\xBF\xBD" "b", "a\xEF\xBF\xBD" "b"},
+      {"a\xED" "bBb", "a\xEF\xBF\xBD" "bBb"},
+      {"a\xED\xA0\xBD" "b", "a\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD" "b"},
+      {"a\xC0\xAF" "b", "a\xEF\xBF\xBD\xEF\xBF\xBD" "b"},
       {"a\xF5\x80\x80\x80" "b",
-       "a\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD" "b"},  // above U+10FFFF
-      {"caf\xE9 ", "caf\xEF\xBF\xBD "},                          // cp1252 shell byte
-      {"a\xE4\xB8", "a\xEF\xBF\xBD\xEF\xBF\xBD"},                // chopped at end
+       "a\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD" "b"},
+      {"caf\xE9 ", "caf\xEF\xBF\xBD "},
+      {"a\xE4\xB8", "a\xEF\xBF\xBD\xEF\xBF\xBD"},
   };
   for (u32 i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
     StrBuf out = StrBuf_Make(&a, 32);
@@ -135,7 +121,6 @@ void TestJson() {
               view.Data[view.Length - 1] == '"',
               StrView_Eq(StrView{view.Data + 1, view.Length - 2},
                          SV(cases[i].expected)));
-    // Whatever went in, what comes out re-parses as well-formed UTF-8.
     StrBuf sanitized = StrBuf_Make(&a, 32);
     StrBuf_AppendCStr(&sanitized, "{\"x\":");
     StrBuf_Append(&sanitized, view);
@@ -143,8 +128,6 @@ void TestJson() {
     CHECK(Json_IsObject(Json_Parse(&a, StrBuf_View(&sanitized))));
   }
 
-  // Tool schemas are compiled once, coerce primitive arguments like Pi, and
-  // reject unsupported validation keywords instead of validating partially.
   JsonSchema schema = {};
   StrBuf schemaErr = StrBuf_Make(&a, 128);
   CHECK(JsonSchema_Compile(

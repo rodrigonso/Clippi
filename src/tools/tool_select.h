@@ -13,14 +13,11 @@ struct ToolSelection {
   bool NoTools;
 };
 
-// Appends trimmed, non-empty comma-separated names to `out`.
 void ToolSelect_SplitNames(Arena* arena, StrView value, Array<StrView>* out);
 
-// Collects unique selected names absent from `tools`.
 void ToolSelect_UnknownNames(Arena* arena, const Tool* tools, u32 count,
                              const ToolSelection* selection,
                              Array<StrView>* out);
 
-// `out` must hold `count` tools. Exclusion wins over the allowlist.
 u32 ToolSelect_Apply(const Tool* tools, u32 count,
                      const ToolSelection* selection, Tool* out);

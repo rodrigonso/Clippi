@@ -1,5 +1,3 @@
-"""Offline checks for the external oracle runner and historical job auditor."""
-
 from __future__ import annotations
 
 import contextlib

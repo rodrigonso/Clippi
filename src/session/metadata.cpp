@@ -89,7 +89,7 @@ StrView FirstUserText(Arena* arena, const SessionRecord* record) {
   return SessionMetadata_FlattenDisplayText(arena, StrBuf_View(&text), 0);
 }
 
-}  // namespace
+}
 
 StrView SessionMetadata_FlattenDisplayText(Arena* arena, StrView text,
                                            u32 maxBytes) {
@@ -237,7 +237,6 @@ SessionResult SessionMetadata_Build(
 
 void SessionInfo_SortByActivity(Array<SessionInfo>* items) {
   if (!items) return;
-  // Most recent first; creation time and then ID break ties deterministically.
   Array_Sort(items, [](const SessionInfo& value, const SessionInfo& previous) {
     if (previous.LastActivityAt != value.LastActivityAt)
       return previous.LastActivityAt < value.LastActivityAt;
@@ -270,10 +269,7 @@ StrView SessionProjectKey(Arena* arena, StrView directory) {
   for (u32 i = 0; i < base.Length; i++) {
     char c = base.Data[i];
 #if defined(_WIN32)
-    // The hash half of the key already folds case, so the readable half has to
-    // fold it too. Otherwise one directory reached as C:\Work\Clippi and as
-    // c:/work/clippi hashes identically but yields two different keys, and the
-    // same project gets two session directories.
+    // Must fold like the hash half, or one directory gets two session dirs.
     if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
 #endif
     bool valid = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||

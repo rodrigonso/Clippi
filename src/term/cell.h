@@ -2,8 +2,7 @@
 #include "base/basics.h"
 #include "base/str.h"
 
-// A screen cell: a Unicode scalar plus a packed style. All-zero is a blank cell
-// with default colours, so buffers can be cleared with memset.
+// All-zero is a blank cell with default colours, so buffers can be cleared with memset.
 
 enum : u8 {
   ATTR_NONE = 0,
@@ -15,8 +14,7 @@ enum : u8 {
   ATTR_STRIKE = 1 << 5,
 };
 
-// 256-colour palette index, or COL_DEFAULT (0) for the terminal default. Index 0
-// is reserved as "default" (so explicit palette colours use 1..255).
+// Index 0 is reserved as "default", so explicit palette colours use 1..255.
 const u8 COL_DEFAULT = 0;
 
 struct Style {
@@ -29,12 +27,9 @@ inline Style StyleMake(u8 fg, u8 bg, u8 attr) { return Style{fg, bg, attr}; }
 inline Style StyleDefault() { return Style{COL_DEFAULT, COL_DEFAULT, ATTR_NONE}; }
 inline bool StyleEq(Style a, Style b) { return a.Fg == b.Fg && a.Bg == b.Bg && a.Attr == b.Attr; }
 
-// Nearest palette index to a 24-bit colour, drawn from the colour cube and grey
-// ramp (16..255) only: terminals theme the first 16 entries, so they would not
-// keep the colour.
+// Cube and grey ramp (16..255) only: terminals theme the first 16 entries.
 u8 Color_NearestXterm256(u8 r, u8 g, u8 b);
 
-// Continuation marker occupying the second column of a wide (width-2) glyph.
 const u32 CELL_CONT = 0xFFFFFFFFu;
 
 struct Cell {
@@ -44,25 +39,18 @@ struct Cell {
 
 inline bool CellEq(Cell a, Cell b) { return a.Ch == b.Ch && StyleEq(a.St, b.St); }
 
-// Display width of a codepoint: 0 (combining/zero-width), 2 (CJK/emoji), else 1.
 u32 CharWidth(u32 cp);
 
-// Cells occupied when rendering a codepoint. Same as CharWidth but never 0, so
-// zero-width scalars still advance the cursor instead of stacking forever.
+// Never 0, so zero-width scalars still advance the cursor instead of stacking forever.
 inline u32 CharCellWidth(u32 cp) {
   u32 width = CharWidth(cp);
   return width < 1 ? 1 : width;
 }
 
-// True for a UTF-8 continuation byte (10xxxxxx), i.e. not a scalar boundary.
 inline bool Utf8IsContinuation(char c) { return ((u8)c & 0xC0) == 0x80; }
 
-// Decode one UTF-8 scalar from `s` at *i (advancing it). Returns 0 at end and
-// 0xFFFD for each byte that does not start a well-formed sequence.
 u32 Utf8Decode(StrView s, u32* i);
 
-// C0, DEL, and C1: scalars a terminal acts on rather than displays.
 inline bool Utf8IsControl(u32 cp) { return cp < 0x20 || (cp >= 0x7F && cp <= 0x9F); }
 
-// Total display width of a UTF-8 string (sum of CharWidth).
 u32 TextWidth(StrView s);

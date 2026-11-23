@@ -5,11 +5,6 @@
 #include "base/str.h"
 #include "tools/fs.h"
 
-// Shared plumbing for the markdown loaders in this directory (skills, prompt
-// templates). Both walk a set of directories, deduplicate by canonical path,
-// and report per-file problems without failing the load.
-
-// A file the loader skipped, or accepted with a warning.
 struct LoadDiagnostic {
   StrView Path;
   StrView Message;

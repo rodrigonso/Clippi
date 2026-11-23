@@ -129,8 +129,7 @@ bool OversizedGrantKey(void*, Arena* arena, const ToolArgs*, const ToolPermissio
   return true;
 }
 
-// Byte 1983 starts a three-byte character that straddles the clip point, and
-// the dangerous part sits past it.
+// Byte 1983 starts a three-byte character that straddles the clip point.
 bool LongAction(void*, Arena* arena, const ToolArgs*, const ToolPermissionScope*,
                 ToolPermissionInfo* out, StrBuf*) {
   *out = {};
@@ -436,8 +435,6 @@ void TestGrantCapAndUnbindableKeys() {
   ArenaRelease(&arena);
 }
 
-// An action longer than the display bound reaches a person with a visible
-// clip marker, never the automatic reviewer, which would judge only a prefix.
 void TestClippedActionNeedsPerson() {
   Arena arena = ArenaCreate();
   PermissionTestState state = {};
@@ -906,7 +903,7 @@ void TestHarnessReviewerIsolation() {
   ArenaRelease(&arena);
 }
 
-}  // namespace
+}
 
 void TestPermissions() {
   TestModeHelpers();

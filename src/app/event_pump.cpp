@@ -11,11 +11,11 @@
 namespace {
 
 void PrintPreview(StrView t) {
-  // Reused scratch (REPL events are emitted on a single thread).
+  // REPL events are emitted on a single thread.
   static Arena sa = ArenaCreate((usize)16 << 20);
   static StrBuf sb = StrBuf_Make(&sa, 256);
   StrBuf_Clear(&sb);
-  Sanitize_Display(&sb, t);  // strip \r / ANSI / control bytes from tool output
+  Sanitize_Display(&sb, t);
   StrView s = StrBuf_View(&sb);
   u32 n = s.Length > 200 ? 200 : s.Length;
   fputs("\x1b[90m", stdout);
@@ -27,7 +27,7 @@ void PrintPreview(StrView t) {
   fputs("\x1b[0m\n", stdout);
 }
 
-}  // namespace
+}
 
 void ReplSink(void* user, const AgentHarnessEvent* ev) {
   (void)user;
@@ -74,10 +74,7 @@ void ReplSink(void* user, const AgentHarnessEvent* ev) {
 
 void ReportHarnessResult(SessionResult result) {
   if (SessionResult_IsOk(result)) {
-    // An Ok result normally carries no message. When it does, the run ended
-    // early for a reason the user needs -- the turn limit is the only source
-    // today -- and nothing else surfaces it: agent_end's message is not
-    // rendered by either REPL.
+    // Only surfaced here: neither REPL renders agent_end's message.
     if (result.Message.Length)
       printf("\n%.*s\n", (int)result.Message.Length, result.Message.Data);
     return;
@@ -145,10 +142,7 @@ static bool ConsumeLiveToolEnd(HarnessEventPump* pump, StrView toolCallId) {
   return false;
 }
 
-// Forwards the watch stream to the active consumer, collapsing the two sources
-// of a tool completion into one. A tool's result surfaces twice -- once as the
-// live TransientToolEnd and again as the durable ToolResult record -- so
-// whichever arrives first wins and the other is suppressed.
+// A tool result arrives as TransientToolEnd and as ToolResult; first one wins.
 static void PumpHarnessEvent(HarnessEventPump* pump,
                              const AgentHarnessEvent* event) {
   if (event->Kind == AgentHarnessEventKind::TransientToolEnd) {
@@ -175,8 +169,6 @@ static void PumpHarnessEvent(HarnessEventPump* pump,
   }
   if (message->Kind != Role::ToolResult) return;
   if (ConsumeLiveToolEnd(pump, message->ToolCallId)) return;
-  // No live end was seen for this call, so replay the durable result in the
-  // same shape a live completion would have taken.
   AgentHarnessEvent replay = {};
   replay.Kind = AgentHarnessEventKind::TransientToolEnd;
   replay.Cursor = event->Cursor;
@@ -187,9 +179,6 @@ static void PumpHarnessEvent(HarnessEventPump* pump,
   HarnessEventSink_Emit(pump->Sink, &replay);
 }
 
-// Committed pages the pump keeps between events. One event is normally a few
-// KB; a tool result or a post-lag snapshot can spike far higher, and those
-// pages should not stay resident for the rest of the session.
 constexpr usize PUMP_SCRATCH_KEEP_BYTES = (usize)1 << 20;
 
 static SessionResult RegisterHarnessWatch(HarnessEventPump* pump) {
@@ -197,9 +186,7 @@ static SessionResult RegisterHarnessWatch(HarnessEventPump* pump) {
     return AgentHarness_Watch(pump->Harness, AGENT_HARNESS_MAX_WATCH_EVENTS,
                               &pump->Watch);
 
-  // Registration and history share one cursor. Hydrate before consuming any
-  // queued events, then release the copy rather than retaining it in event
-  // scratch or the runtime arena.
+  // Registration and history share one cursor: hydrate before queued events.
   Arena snapshotMem = ArenaCreate();
   AgentTranscriptSnapshot snapshot = {};
   SessionResult watched = AgentHarness_WatchTranscript(
@@ -243,7 +230,7 @@ static void RunHarnessEventPump(void* user) {
   ArenaRelease(&scratch);
 }
 
-}  // namespace
+}
 
 SessionResult StartHarnessEventPump(AgentHarness* harness,
                                     HarnessEventSink sink, Tui* tuiView,
@@ -307,8 +294,7 @@ SessionResult StartHarnessJsonOutput(AgentHarness* harness,
     return SessionResult_Error(SessionStatus::Busy,
                                SVL("JSON output requires an idle, unobserved harness"));
 #if !defined(_WIN32)
-  // Process-wide, like the shell's stdin writer: a closed consumer must return
-  // EPIPE rather than terminating before we can report the delivery failure.
+  // Process-wide: a closed consumer must yield EPIPE, not kill the process.
   if (!writer.Write && signal(SIGPIPE, SIG_IGN) == SIG_ERR)
     return SessionResult_Error(SessionStatus::IoError,
                                SVL("failed to configure JSON pipe error handling"));

@@ -1,5 +1,3 @@
-"""`doctor` -- check the environment before spending an hour on a benchmark."""
-
 from __future__ import annotations
 
 import os
@@ -13,12 +11,7 @@ from .tools import registry
 
 
 def _jcode_servers(binary: str) -> list[int]:
-    """Servers already running for this user.
-
-    A leftover jcode server is the likeliest source of a bad number: it holds
-    the shared socket, so the next measurement either attaches to it or fights
-    it for the path.
-    """
+    """A leftover server holds the shared socket and skews the next measurement."""
     real = os.path.realpath(binary)
     found = []
     for pid in proc.proc_table():
@@ -64,7 +57,6 @@ def main(args) -> int:
             continue
         real = tool.real_binary
         if real in seen:
-            # Two variants of one tool: report it once, not twice.
             print(f"  {name:<16} same image as {seen[real]}")
         else:
             seen[real] = name

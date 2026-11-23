@@ -146,7 +146,7 @@ AppCommandHandlerResult Status(InteractiveRuntime* rt, const WikiLocation* locat
   return Succeeded(StrBuf_View(&message));
 }
 
-// Starts a background pass. Empty on success, otherwise why it could not.
+// Empty on success, otherwise why it could not start.
 StrView StartDream(InteractiveRuntime* rt) {
   if (!rt->Memory || !rt->MemoryEnabled) return SVL("Memory is off; run /memory on first.");
   if (!Dream_SpawnBackground(&rt->CommandMem, rt->WorkingDirectory))
@@ -181,9 +181,6 @@ StrView WatchStatus(Arena* arena, DreamWatchState state, const DreamProgress* pr
   return {};
 }
 
-// Adds what the dream's session has recorded since the last call. The log is
-// only reread when it has grown, and only the new messages reach the TUI, so
-// the transcript is built once however long the dream runs.
 void ShowNewMessages(Tui* tui, Arena* scratch, JsonlRepository* reader,
                      const DreamProgress* progress, DurableId session, u64* logBytes,
                      u32* shown) {
@@ -230,9 +227,6 @@ StrView WatchResult(Arena* arena, DreamWatchState state, const DreamProgress* pr
   }
 }
 
-// Shows the dream's session in place of the transcript, read-only and live,
-// until the user presses Ctrl+C or submits anything. A dream that ends without
-// running its agent has nothing to show, so the watch ends with it.
 AppCommandHandlerResult Watch(InteractiveRuntime* rt, const AppCommandUx* ux,
                               const WikiLocation* location) {
   Tui* tui = rt->TuiView;
@@ -266,7 +260,6 @@ AppCommandHandlerResult Watch(InteractiveRuntime* rt, const AppCommandUx* ux,
   volatile i32* abort = RuntimeBeginOperation(
       rt, ux, SVL("Watching the dream (ctrl+c to return)"), true);
   for (;;) {
-    // Once the dream is over its log is final, and only the user ends the watch.
     if (!settled) {
       ArenaReset(&scratch);
       bool held = false;
@@ -313,7 +306,7 @@ AppCommandHandlerResult Watch(InteractiveRuntime* rt, const AppCommandUx* ux,
   return failed ? Failed(message) : Succeeded(message);
 }
 
-}  // namespace
+}
 
 AppCommandHandlerResult HandleMemoryCommand(void* user, const AppCommandUx*,
                                             StrView arguments) {

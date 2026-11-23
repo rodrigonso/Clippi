@@ -1,5 +1,3 @@
-// The default http suite contains pure retry-policy tests and local-loopback
-// integration checks. TestHttpLive is the only test that requires connectivity.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,8 +22,6 @@ typedef socklen_t clippi_socklen_t;
 
 namespace {
 
-// ---- pure header/status-line parsing ---------------------------------------
-
 void TestStatusLineParsing() {
   CHECK(HttpRetryMeta_ParseStatusLine(SVL("HTTP/1.1 200 OK")) == 200);
   CHECK(HttpRetryMeta_ParseStatusLine(SVL("HTTP/1.1 429 Too Many Requests\r\n")) == 429);
@@ -37,7 +33,6 @@ void TestStatusLineParsing() {
 }
 
 void TestHeaderLineParsing() {
-  // x-should-retry, case-insensitive name and value.
   {
     HttpRetryMeta meta = {};
     meta.RetryAfterMs = -1;
@@ -51,27 +46,23 @@ void TestHeaderLineParsing() {
     CHECK_ALL(meta.HasShouldRetry, !meta.ShouldRetry);
   }
   {
-    // Unrecognized value: no opinion recorded.
     HttpRetryMeta meta = {};
     meta.RetryAfterMs = -1;
     HttpRetryMeta_ParseHeaderLine(&meta, SVL("X-Should-Retry: maybe"));
     CHECK(!meta.HasShouldRetry);
   }
-  // retry-after-ms in milliseconds.
   {
     HttpRetryMeta meta = {};
     meta.RetryAfterMs = -1;
     HttpRetryMeta_ParseHeaderLine(&meta, SVL("Retry-After-Ms: 1234"));
     CHECK(meta.RetryAfterMs == 1234);
   }
-  // retry-after in seconds -> converted to ms.
   {
     HttpRetryMeta meta = {};
     meta.RetryAfterMs = -1;
     HttpRetryMeta_ParseHeaderLine(&meta, SVL("Retry-After: 3"));
     CHECK(meta.RetryAfterMs == 3000);
   }
-  // retry-after-ms takes priority over a subsequent retry-after.
   {
     HttpRetryMeta meta = {};
     meta.RetryAfterMs = -1;
@@ -79,7 +70,6 @@ void TestHeaderLineParsing() {
     HttpRetryMeta_ParseHeaderLine(&meta, SVL("Retry-After: 30"));
     CHECK(meta.RetryAfterMs == 500);
   }
-  // ...and priority holds regardless of header order.
   {
     HttpRetryMeta meta = {};
     meta.RetryAfterMs = -1;
@@ -87,7 +77,6 @@ void TestHeaderLineParsing() {
     HttpRetryMeta_ParseHeaderLine(&meta, SVL("Retry-After-Ms: 500"));
     CHECK(meta.RetryAfterMs == 500);
   }
-  // Unrelated headers and status lines are ignored, not misparsed.
   {
     HttpRetryMeta meta = {};
     meta.RetryAfterMs = -1;
@@ -95,7 +84,6 @@ void TestHeaderLineParsing() {
     HttpRetryMeta_ParseHeaderLine(&meta, SVL("HTTP/1.1 429 Too Many Requests"));
     CHECK_ALL(!meta.HasShouldRetry, meta.RetryAfterMs == -1);
   }
-  // Malformed values are ignored (no colon, non-numeric).
   {
     HttpRetryMeta meta = {};
     meta.RetryAfterMs = -1;
@@ -104,8 +92,6 @@ void TestHeaderLineParsing() {
     CHECK(meta.RetryAfterMs == -1);
   }
 }
-
-// ---- pure retry decision + delay --------------------------------------------
 
 void TestHttpStatusIsRetryable() {
   CHECK_ALL(HttpStatus_IsRetryable(408), HttpStatus_IsRetryable(409), HttpStatus_IsRetryable(429),
@@ -119,63 +105,54 @@ void TestShouldRetryDecisions() {
   HttpRetryMeta noMeta = {};
   noMeta.RetryAfterMs = -1;
 
-  // Default-off: never retries regardless of status.
   CHECK(!HttpRetry_ShouldRetry(&off, 500, false, &noMeta, 1));
   CHECK(!HttpRetry_ShouldRetry(nullptr, 500, false, &noMeta, 1));
 
   HttpRetryPolicy on = off;
   on.Enabled = true;
 
-  // Transport failure is always eligible while attempts remain.
   CHECK(HttpRetry_ShouldRetry(&on, -1, true, &noMeta, 1));
-  // Retryable status codes are eligible.
   CHECK_ALL(HttpRetry_ShouldRetry(&on, 429, false, &noMeta, 1),
             HttpRetry_ShouldRetry(&on, 500, false, &noMeta, 1),
             HttpRetry_ShouldRetry(&on, 408, false, &noMeta, 1),
             HttpRetry_ShouldRetry(&on, 409, false, &noMeta, 1));
-  // Non-retryable statuses are not.
   CHECK_ALL(!HttpRetry_ShouldRetry(&on, 400, false, &noMeta, 1),
             !HttpRetry_ShouldRetry(&on, 404, false, &noMeta, 1),
             !HttpRetry_ShouldRetry(&on, 200, false, &noMeta, 1));
 
-  // Exhausted attempts (MaxRetries=2 -> 3 total tries) stop retrying.
   CHECK(HttpRetry_ShouldRetry(&on, 500, false, &noMeta, 1));
   CHECK(HttpRetry_ShouldRetry(&on, 500, false, &noMeta, 2));
   CHECK(!HttpRetry_ShouldRetry(&on, 500, false, &noMeta, 3));
 
-  // Explicit x-should-retry overrides the default classification both ways.
   HttpRetryMeta forceTrue = {};
   forceTrue.HasShouldRetry = true;
   forceTrue.ShouldRetry = true;
   forceTrue.RetryAfterMs = -1;
-  CHECK(HttpRetry_ShouldRetry(&on, 400, false, &forceTrue, 1));  // otherwise non-retryable status
+  CHECK(HttpRetry_ShouldRetry(&on, 400, false, &forceTrue, 1));
 
   HttpRetryMeta forceFalse = {};
   forceFalse.HasShouldRetry = true;
   forceFalse.ShouldRetry = false;
   forceFalse.RetryAfterMs = -1;
-  CHECK(!HttpRetry_ShouldRetry(&on, 500, false, &forceFalse, 1));  // otherwise retryable status
-  CHECK(!HttpRetry_ShouldRetry(&on, -1, true, &forceFalse, 1));    // even a transport failure
+  CHECK(!HttpRetry_ShouldRetry(&on, 500, false, &forceFalse, 1));
+  CHECK(!HttpRetry_ShouldRetry(&on, -1, true, &forceFalse, 1));
 }
 
 void TestDelayMsComputation() {
   HttpRetryPolicy p = HttpRetryPolicy_Default();
-  p.Enabled = true;  // Enabled doesn't affect delay math, but keep it realistic
+  p.Enabled = true;
 
   HttpRetryMeta noMeta = {};
   noMeta.RetryAfterMs = -1;
 
   // Exponential fallback: base 500ms doubling, capped at 8000ms, +/-25% jitter.
-  CHECK(HttpRetry_DelayMs(&p, &noMeta, 0, 0.0) == 375);   // 500 * 0.75
-  CHECK(HttpRetry_DelayMs(&p, &noMeta, 0, 1.0) == 625);   // 500 * 1.25
-  CHECK(HttpRetry_DelayMs(&p, &noMeta, 1, 0.0) == 750);   // 1000 * 0.75
-  CHECK(HttpRetry_DelayMs(&p, &noMeta, 2, 0.0) == 1500);  // 2000 * 0.75
-  // Enough doublings to hit the cap before jitter is applied; the final
-  // delay remains capped even when positive jitter would exceed it.
-  CHECK(HttpRetry_DelayMs(&p, &noMeta, 10, 0.0) == 6000);   // 8000 * 0.75
+  CHECK(HttpRetry_DelayMs(&p, &noMeta, 0, 0.0) == 375);
+  CHECK(HttpRetry_DelayMs(&p, &noMeta, 0, 1.0) == 625);
+  CHECK(HttpRetry_DelayMs(&p, &noMeta, 1, 0.0) == 750);
+  CHECK(HttpRetry_DelayMs(&p, &noMeta, 2, 0.0) == 1500);
+  CHECK(HttpRetry_DelayMs(&p, &noMeta, 10, 0.0) == 6000);
   CHECK(HttpRetry_DelayMs(&p, &noMeta, 10, 1.0) == 8000);
 
-  // Server-provided delay wins outright (no jitter applied), clamped to MaxDelayMs.
   HttpRetryMeta server = {};
   server.RetryAfterMs = 2500;
   CHECK(HttpRetry_DelayMs(&p, &server, 0, 0.5) == 2500);
@@ -184,14 +161,11 @@ void TestDelayMsComputation() {
   tooLong.RetryAfterMs = 60000;
   CHECK(HttpRetry_DelayMs(&p, &tooLong, 0, 0.5) == 8000);
 
-  // A configurable max delay clamps both server and computed paths.
   HttpRetryPolicy tight = p;
   tight.MaxDelayMs = 1000;
   CHECK(HttpRetry_DelayMs(&tight, &server, 0, 0.5) == 1000);
-  CHECK(HttpRetry_DelayMs(&tight, &noMeta, 5, 0.0) == 750);  // 1000 * 0.75
+  CHECK(HttpRetry_DelayMs(&tight, &noMeta, 5, 0.0) == 750);
 }
-
-// ---- retry loop via dependency injection (no sockets, no real sleep) -------
 
 struct FakeAttempt {
   i32 Status;
@@ -206,7 +180,7 @@ struct FakeTransportState {
   u32 Calls;
   u32 SleepCalls;
   u32 TotalSleptMs;
-  volatile i32* AbortAfterSleep;  // optional: set *abort after N sleep calls
+  volatile i32* AbortAfterSleep;
   u32 AbortAfterSleepCalls;
   u32 RetryStarts;
   u32 RetryEnds;
@@ -299,9 +273,6 @@ void TestRetryLoopNeverRetriesAfterBodyStarted() {
   policy.Enabled = true;
   policy.BaseDelayMs = 10;
 
-  // A transport failure that nonetheless began forwarding a 2xx body (e.g. the
-  // connection dropped mid-stream) must never be retried, even though a bare
-  // transport failure would otherwise always qualify.
   FakeAttempt attempts[1] = {{-1, true, false, false}};
   FakeTransportState state = {};
   state.Attempts = attempts;
@@ -360,8 +331,6 @@ void TestRetryLoopHonorsShouldRetryFalse() {
   policy.Enabled = true;
   policy.BaseDelayMs = 10;
 
-  // 429 would normally be retryable, but an explicit x-should-retry:false
-  // must suppress it.
   FakeAttempt attempts[1] = {{429, false, true, false}};
   FakeTransportState state = {};
   state.Attempts = attempts;
@@ -384,7 +353,7 @@ void TestRetryLoopHonorsShouldRetryFalse() {
 
 void TestRetryLoopDisabledPolicyIsPassthrough() {
   Arena a = ArenaCreate();
-  HttpRetryPolicy policy = HttpRetryPolicy_Default();  // Enabled == false
+  HttpRetryPolicy policy = HttpRetryPolicy_Default();
 
   FakeAttempt attempts[1] = {{500, false, false, false}};
   FakeTransportState state = {};
@@ -403,7 +372,6 @@ void TestRetryLoopDisabledPolicyIsPassthrough() {
   HttpResult r = Http_StreamWithRetryDeps(&a, &req, sink, nullptr, &policy, &deps);
   CHECK_ALL(state.Calls == 1, state.SleepCalls == 0, r.Status == 500);
 
-  // nullptr policy behaves the same as an explicit disabled one.
   FakeTransportState state2 = {};
   state2.Attempts = attempts;
   state2.Count = 1;
@@ -420,16 +388,16 @@ void TestRetryLoopAbortDuringBackoffStopsRetrying() {
   HttpRetryPolicy policy = HttpRetryPolicy_Default();
   policy.Enabled = true;
   policy.MaxRetries = 5;
-  policy.BaseDelayMs = 1000;  // several 100ms sleep increments per attempt
+  policy.BaseDelayMs = 1000;
 
-  FakeAttempt attempts[1] = {{500, false, false, false}};  // always retryable
+  FakeAttempt attempts[1] = {{500, false, false, false}};
   FakeTransportState state = {};
   state.Attempts = attempts;
   state.Count = 1;
 
   volatile i32 abort = 0;
   state.AbortAfterSleep = &abort;
-  state.AbortAfterSleepCalls = 2;  // cancel partway through the first backoff
+  state.AbortAfterSleepCalls = 2;
   policy.EventUser = &state;
   policy.OnEvent = FakeRetryEvent;
 
@@ -444,8 +412,6 @@ void TestRetryLoopAbortDuringBackoffStopsRetrying() {
   HttpStreamSink sink = {};
   HttpResult r = Http_StreamWithRetryDeps(&a, &req, sink, &abort, &policy, &deps);
 
-  // Only one transport attempt: the abort fired while sleeping before a
-  // second attempt could be made, and it isn't masked by another retry.
   CHECK_ALL(state.Calls == 1, r.Status == -1,
             StrView_EqCStr(r.Error, "aborted"), state.SleepCalls == 2,
             state.RetryStarts == 1, state.RetryEnds == 1,
@@ -453,8 +419,6 @@ void TestRetryLoopAbortDuringBackoffStopsRetrying() {
 
   ArenaRelease(&a);
 }
-
-// ---- real local-socket integration: header capture + body suppression -----
 
 #if defined(_WIN32)
 bool NetInit() {
@@ -480,7 +444,6 @@ void SendAll(SOCKET c, const char* data, u32 len) {
   }
 }
 
-// Bind an ephemeral 127.0.0.1 listener; returns the socket (or INVALID_SOCKET).
 SOCKET OpenLoopbackListener(u16* outPort) {
   if (!NetInit()) return INVALID_SOCKET;
   SOCKET fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -506,7 +469,7 @@ SOCKET OpenLoopbackListener(u16* outPort) {
 
 struct OneShotServerCtx {
   SOCKET ListenFd;
-  StrView RawResponse;  // full "HTTP/1.1 ...\r\n...\r\n\r\n<body>" bytes to send back
+  StrView RawResponse;
 };
 
 void ServeOneRequest(void* arg) {
@@ -551,9 +514,6 @@ StrView BuildResponse(Arena* a, const char* statusLine, const char* extraHeaders
   return StrBuf_View(&b);
 }
 
-// A retryable, non-2xx response with should-retry/retry-after-ms headers:
-// when the caller opts into BufferNonSuccessBody, the sink must never see any
-// of these bytes, and Http_Stream must still surface Status/Meta/Body.
 void TestRealServerBuffersNonSuccessBody() {
   Arena a = ArenaCreate();
   Http_GlobalInit();
@@ -602,9 +562,6 @@ void TestRealServerBuffersNonSuccessBody() {
   ArenaRelease(&a);
 }
 
-// The same non-2xx response, but with BufferNonSuccessBody left false (the
-// default): existing callers like Http_Fetch rely on every byte reaching the
-// sink regardless of status, and that behavior must be unchanged.
 void TestRealServerDefaultForwardsNonSuccessBody() {
   Arena a = ArenaCreate();
   Http_GlobalInit();
@@ -637,7 +594,6 @@ void TestRealServerDefaultForwardsNonSuccessBody() {
   HttpRequest req = {};
   req.Method = SVL("GET");
   req.Url = StrBuf_View(&url);
-  // req.BufferNonSuccessBody left false (default).
 
   HttpResult streamed = Http_Stream(&a, &req, sink, nullptr);
   Thread_Join(&server);
@@ -650,8 +606,6 @@ void TestRealServerDefaultForwardsNonSuccessBody() {
   ArenaRelease(&a);
 }
 
-// A successful (2xx) response is always forwarded to the sink, and
-// BodyStarted is set, regardless of BufferNonSuccessBody.
 void TestRealServerSuccessStreamsToSink() {
   Arena a = ArenaCreate();
   Http_GlobalInit();
@@ -684,7 +638,7 @@ void TestRealServerSuccessStreamsToSink() {
   HttpRequest req = {};
   req.Method = SVL("GET");
   req.Url = StrBuf_View(&url);
-  req.BufferNonSuccessBody = true;  // irrelevant for a 2xx response
+  req.BufferNonSuccessBody = true;
 
   HttpResult r = Http_Stream(&a, &req, sink, nullptr);
   Thread_Join(&server);
@@ -697,16 +651,12 @@ void TestRealServerSuccessStreamsToSink() {
   ArenaRelease(&a);
 }
 
-// ---- live network smoke test (unchanged behavior) --------------------------
-
 bool LiveOnData(void* user, StrView chunk) {
   ((Counter*)user)->Bytes += chunk.Length;
   return true;
 }
 
 void TestLiveHttp() {
-  // Overridable so the suite can be pointed at a local server in sandboxed or
-  // offline environments.
   const char* url = getenv("CLIPPI_TEST_HTTP_URL");
   if (!url) url = "https://example.com";
 
@@ -730,7 +680,6 @@ void TestLiveHttp() {
   }
   CHECK_ALL(streamed.Status >= 200, streamed.Status < 400, c.Bytes > 0);
 
-  // The non-streaming path shares the same curl backend; check it agrees.
   HttpResponse fetched = Http_Fetch(&a, &req, nullptr);
   CHECK_ALL(fetched.Status >= 200, fetched.Status < 400,
             fetched.Body.Length > 0);
@@ -739,7 +688,7 @@ void TestLiveHttp() {
   Http_GlobalShutdown();
 }
 
-}  // namespace
+}
 
 void TestHttp() {
   TestStatusLineParsing();

@@ -72,10 +72,6 @@ bool Finish(LineModel* model, StrView id, StrView result, bool isError = false) 
   return LineModel_FinishTool(model, id, result, result, isError);
 }
 
-// Concatenated text of every span in `row` from index `from` on that is painted
-// with foreground `fg`. Wrapping can split one styled run across spans, so
-// colour assertions compare the joined text instead of individual span
-// boundaries.
 StrView SpansWithFg(Arena* a, const SpanLine* row, u8 fg, u32 from = 0) {
   StrBuf out = StrBuf_Make(a, 64);
   for (u32 i = from; i < row->Spans.Count; i++) {
@@ -84,16 +80,8 @@ StrView SpansWithFg(Arena* a, const SpanLine* row, u8 fg, u32 from = 0) {
   return StrBuf_View(&out);
 }
 
-// Spans 0-2 of a tool header are the left padding, the status marker and the
-// gap after it, which shares the marker's style.
+// Spans 0-2 of a tool header are the left padding, the status marker and its gap.
 constexpr u32 TOOL_TEXT_SPAN = 3;
-
-// ---- differential fuzzing ------------------------------------------------
-//
-// Random operation sequences, laid out incrementally at random points, must
-// render exactly what a full re-render of the same entries renders. Uncapped
-// runs are also replayed into a fresh model with no intermediate layouts, so a
-// mutation whose result depends on when layout ran is caught too.
 
 enum class FuzzOp : u8 {
   User, Notice, Error, Footer, Thinking, EndThinking, BeginAssistant, Append, EndAssistant,
@@ -199,7 +187,6 @@ u64 FuzzMix(u64 hash, u64 value) {
   return hash;
 }
 
-// Everything a row paints, plus the entry it belongs to.
 u64 FuzzRowSignature(const LineModel* m, u32 row) {
   const SpanLine* line = LineModel_At(m, row);
   u64 hash = FuzzMix(1469598103934665603ull, LineModel_RowEntryId(m, row));
@@ -226,7 +213,6 @@ Array<u64> FuzzCapture(Arena* a, const LineModel* m) {
   return rows;
 }
 
-// Index of the first differing row, or UINT32_MAX when equal.
 u32 FuzzDiff(const Array<u64>& expected, const Array<u64>& actual) {
   u32 n = ClippiMin(expected.Count, actual.Count);
   for (u32 i = 0; i < n; i++)
@@ -246,7 +232,6 @@ void FuzzReport(Arena* a, const char* what, u64 seed, u32 step, const LineModel*
   }
 }
 
-// Cheap invariants that hold after every layout.
 bool FuzzInvariants(const LineModel* m, u64 seed, u32 step) {
   u32 count = LineModel_Count(m);
   bool ok = count <= m->Cap;
@@ -303,7 +288,6 @@ bool FuzzOne(u64 seed, u32 steps) {
       if (roll < 45) {
         s.Op = FuzzOp::Append;
         s.Text = FuzzText(&scratch, &rng, 6, true);
-        // Deltas can end inside a scalar; the remainder arrives with the next.
         if (s.Text.Length > 1 && rng.Chance(20)) s.Text.Length = 1 + rng.Below(s.Text.Length);
       } else if (roll < 55) {
         s.Op = FuzzOp::EndAssistant;
@@ -406,7 +390,6 @@ bool FuzzOne(u64 seed, u32 steps) {
     Array_Push(&log, s);
 
     if (s.Op == FuzzOp::FitsAtWidth) {
-      // A probe of another width must leave the rendered rows untouched.
       Array<u64> before = FuzzCapture(&scratch, &model);
       FuzzApply(&model, s);
       Array<u64> after = FuzzCapture(&scratch, &model);
@@ -420,8 +403,6 @@ bool FuzzOne(u64 seed, u32 steps) {
     }
     if (s.Op == FuzzOp::Layout && !FuzzInvariants(&model, seed, step)) ok = false;
 
-    // Full re-render of the same entries; Rounded round-trips to invalidate
-    // everything without the eviction a width change would trigger.
     if (ok && step % 25 == 24) {
       Array<u64> incremental = FuzzCapture(&scratch, &model);
       LineModel_SetRounded(&model, !model.Rounded);
@@ -436,8 +417,6 @@ bool FuzzOne(u64 seed, u32 steps) {
     }
   }
 
-  // Nothing was evicted from an uncapped model, so a fresh replay without any
-  // intermediate layout must render the same rows at the final width.
   if (ok && cap == (1u << 20)) {
     Array<u64> incremental = FuzzCapture(&scratch, &model);
     Arena freshMem = ArenaCreate();
@@ -463,7 +442,7 @@ bool FuzzOne(u64 seed, u32 steps) {
   return ok;
 }
 
-}  // namespace
+}
 
 // Seeds are deterministic; set CLIPPI_LINEMODEL_FUZZ_SEEDS for a longer run.
 void TestLineModelFuzz() {
@@ -691,9 +670,6 @@ void TestLineModel() {
     LineModel_Release(&reflow);
   }
 
-  // Markdown blocks own their wrap prefix, and the assistant icon indent is
-  // concatenated onto it rather than replacing it. Without this a wrapped list
-  // item would snap back to the margin and a wrapped quote would lose its bar.
   {
     LineModel wrapped;
     LineModel_Init(&wrapped, &a, 20, 5000);
@@ -723,8 +699,6 @@ void TestLineModel() {
     LineModel_Release(&quoted);
   }
 
-  // A width change re-renders width-dependent blocks: the rule tracks the
-  // content width, and the table reflows instead of overflowing.
   {
     LineModel reflowMd;
     LineModel_Init(&reflowMd, &a, 30, 5000);
@@ -900,7 +874,6 @@ void TestLineModel() {
     LineModel_Release(&simpleTurns);
   }
 
-  // The accent colours the user marker, the live markers and blockquote bars.
   {
     LineModel accented;
     LineModel_Init(&accented, &a, 40, 5000, true, true, 33);
@@ -924,8 +897,6 @@ void TestLineModel() {
     LineModel_Release(&accented);
   }
 
-  // The thinking row is transient: it redraws only when its seconds change,
-  // and whatever the run shows next takes its place.
   {
     LineModel live;
     LineModel_Init(&live, &a, 40, 5000);
@@ -956,7 +927,6 @@ void TestLineModel() {
     CHECK_ALL(live.Entries.Count == 3, live.Entries.Data[2].Kind == EntryKind::Assistant,
               !AnyRowHas(&a, &live, "Thinking"));
 
-    // A steer is a user turn labelled as joining the running one.
     LineModel_SetThinking(&live, 1000, 1200);
     LineModel_AddUser(&live, SVL("also b"), 0, true);
     CHECK_ALL(live.Entries.Count == 4, live.Entries.Data[3].Kind == EntryKind::User,
@@ -966,7 +936,6 @@ void TestLineModel() {
     LineModel_Release(&live);
   }
 
-  // A run closes with a rule carrying its totals, one cell short of the edge.
   {
     LineModel footer;
     LineModel_Init(&footer, &a, 60, 5000);
@@ -1028,19 +997,16 @@ void TestLineModel() {
          SVL("Successfully replaced 1 block(s) in b.cpp.\n\n"
              " 1 context\n-2 old\n+2 new\n"),
          "+1 -1", nullptr},
-        // Pure addition and pure removal keep the zero side visible.
         {SVL("add-only-edit"), SVL("edit"),
          SVL("{\"path\":\"c.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"),
          SVL("Successfully replaced 1 block(s) in c.cpp.\n\n"
              " 1 context\n+2 added one\n+3 added two\n"),
          "+2 -0", nullptr},
-        // Body text starting with '-' must not be counted as a removal.
         {SVL("dash-body-edit"), SVL("edit"),
          SVL("{\"path\":\"d.md\",\"oldText\":\"a\",\"newText\":\"b\"}"),
          SVL("Successfully replaced 1 block(s) in d.md.\n\n"
              " 1 intro\n+2 - bullet added\n- not a diff line\n"),
          "+1 -0", nullptr},
-        // Unparsable result shape falls back to the block count.
         {SVL("fallback-edit"), SVL("edit"),
          SVL("{\"path\":\"e.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"),
          SVL("Successfully replaced 1 block(s) in e.cpp."), "1 block replaced", nullptr},
@@ -1069,8 +1035,6 @@ void TestLineModel() {
     CHECK_ALL(unknownFinished, AnyRowHas(&a, &summaries, "custom"),
               AnyRowHas(&a, &summaries, "completed"));
 
-    // Diff stats colour the added half green and the removed half red, as two
-    // separate spans; the surrounding detail stays neutral.
     LineModel_AddTool(&summaries, SVL("colour-edit"), SVL("edit"),
                       SVL("{\"path\":\"f.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"));
     CHECK(Finish(&summaries, SVL("colour-edit"),
@@ -1079,13 +1043,10 @@ void TestLineModel() {
     const SpanLine* statRow = FindRow(&a, &summaries, "+2 -1");
     CHECK(statRow != nullptr);
     if (statRow != nullptr) {
-      // Wrapping may split a run into several spans, so compare the text
-      // accumulated per colour rather than matching individual spans.
       CHECK_ALL(TextEq(SpansWithFg(&a, statRow, 71, TOOL_TEXT_SPAN), SVL("+2 ")),
                 TextEq(SpansWithFg(&a, statRow, 167, TOOL_TEXT_SPAN), SVL("-1")));
     }
 
-    // A non-diff outcome carries no diff colouring at all.
     const SpanLine* plainOutcome = FindRow(&a, &summaries, "3 bytes written");
     CHECK(plainOutcome != nullptr);
     if (plainOutcome != nullptr) {
@@ -1102,7 +1063,6 @@ void TestLineModel() {
                 failed->Spans.Data[1].St.Fg == 196);
     }
 
-    // Shell outcomes name the exit status and how much output there was.
     struct ShellCase {
       StrView Result;
       bool IsError;
@@ -1141,7 +1101,6 @@ void TestLineModel() {
     CHECK(row != nullptr);
     CHECK(row->Spans.Data[1].St.Fg == COL_DEFAULT);
 
-    // Diff stat colours must also collapse to the terminal default.
     LineModel_AddTool(&noColor, SVL("nc-edit"), SVL("edit"),
                       SVL("{\"path\":\"g.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"));
     CHECK(Finish(&noColor, SVL("nc-edit"),
@@ -1190,8 +1149,6 @@ void TestLineModel() {
   }
 
   {
-    // Timed tools: a live spinner placeholder, whole seconds while running,
-    // tenths once finished, and nothing for sub-second calls.
     LineModel timed;
     LineModel_Init(&timed, &a, 60, 5000);
     LineModel_AddTool(&timed, SVL("slow"), SVL("shell"), SVL("{\"command\":\"make\"}"), 1000);
@@ -1230,7 +1187,6 @@ void TestLineModel() {
               slowRow && TextEq(slowRow->Right.Text, SVL("4.2s")),
               fastRow && !fastRow->HasRight);
 
-    // Agent end settles calls whose end event never arrived.
     LineModel_AddTool(&timed, SVL("lost"), SVL("shell"), SVL("{\"command\":\"hang\"}"), 6000);
     CHECK(timed.LiveTools == 1);
     LineModel_SettleTools(&timed);
@@ -1241,8 +1197,6 @@ void TestLineModel() {
   }
 
   {
-    // Running output stays hidden until the row is expanded, then shows only
-    // the newest lines.
     LineModel tail;
     LineModel_Init(&tail, &a, 60, 5000);
     LineModel_AddTool(&tail, SVL("t"), SVL("shell"), SVL("{\"command\":\"build\"}"), 1);
@@ -1261,7 +1215,6 @@ void TestLineModel() {
   }
 
   {
-    // Expanded edit previews colour diff lines and drop the summary sentence.
     LineModel diff;
     LineModel_Init(&diff, &a, 60, 5000);
     LineModel_AddTool(&diff, SVL("e"), SVL("edit"),
@@ -1350,8 +1303,6 @@ void TestLineModel() {
     LineModel_EndAssistant(&cached);
     LineModel_Layout(&cached);
 
-    // A single new entry evicts a large prefix. Allocation advances only by
-    // that entry's cache, not by one re-layout for every removed entry.
     cached.Cap = 8;
     LineModel_AddNotice(&cached, EntryKind::Info, SVL("newest"));
     usize beforeEviction = cached.RowsMem.Used;
@@ -1415,7 +1366,6 @@ void TestLineModel() {
                                             SVL("flat-only sentinel"));
       CHECK(untouched);
 
-      // Cropping advances the ring, rather than moving the historical prefix.
       LineModel_AppendAssistant(&tail, SVL("\nnext\nthird\nfourth\nfifth"));
       CHECK_ALL(tail.FirstDirtyEntry == historyCount, !tail.PreviewBudgetDirty);
       LineModel_Layout(&tail);

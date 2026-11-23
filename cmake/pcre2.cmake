@@ -49,9 +49,8 @@ function(clippi_fetch_pcre2)
     SOURCE_SUBDIR clippi-populate-only)
   FetchContent_MakeAvailable(pcre2)
 
-  # PCRE2 has no install-disable option. Populate without adding it, then exclude
-  # its unconditional install rules and unused POSIX wrapper from the parent.
-  # This also works with CMake 3.24, before FetchContent's EXCLUDE_FROM_ALL option.
+  # PCRE2 has no install-disable option: populate only, then add it EXCLUDE_FROM_ALL
+  # (works on CMake 3.24, before FetchContent's EXCLUDE_FROM_ALL).
   add_subdirectory("${pcre2_SOURCE_DIR}" "${pcre2_BINARY_DIR}" EXCLUDE_FROM_ALL)
   # Do not force a CRT switch: upstream inherits CMAKE_MSVC_RUNTIME_LIBRARY.
   set(pcre2_SOURCE_DIR "${pcre2_SOURCE_DIR}" PARENT_SCOPE)

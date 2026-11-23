@@ -87,8 +87,6 @@ void LoadTemplateFile(LoadContext* ctx, Arena* scratch, StrView path) {
   tmpl.Description = StrView_Dup(ctx->Mem, parsed.Description);
   tmpl.ArgumentHint = StrView_Dup(ctx->Mem, parsed.ArgumentHint);
   tmpl.FilePath = StrView_Dup(ctx->Mem, parsed.FilePath);
-  // Unlike skills, bodies are retained: expansion happens without touching the
-  // disk again, and templates are small by construction.
   tmpl.Content = StrView_Dup(ctx->Mem, parsed.Content);
   Array_Push(&ctx->Out->Templates, tmpl);
   ArenaRestore(scratch, mark);
@@ -148,8 +146,8 @@ StrView JoinArgs(Arena* arena, const StrView* args, u32 argCount) {
 void AppendSlice(StrBuf* out, const StrView* args, u32 argCount, u32 start,
                  u32 count) {
   bool first = true;
-  // Widened because an absent length is represented as the u32 maximum, which
-  // would wrap `start + count` back below `start`.
+  // Widened: an absent length is the u32 maximum and would wrap `start +
+  // count`.
   u64 end = (u64)start + count;
   for (u64 i = start; i < argCount && i < end; i++) {
     if (!first) StrBuf_AppendChar(out, ' ');
@@ -158,8 +156,7 @@ void AppendSlice(StrBuf* out, const StrView* args, u32 argCount, u32 start,
   }
 }
 
-// Parses a run of digits, saturating rather than wrapping so a pathological
-// index cannot alias a real argument.
+// Saturating so a pathological index cannot alias a real argument.
 u32 ParseIndex(StrView text, u32* pos) {
   u64 value = 0;
   while (*pos < text.Length && IsDigit(text.Data[*pos])) {
@@ -169,8 +166,6 @@ u32 ParseIndex(StrView text, u32* pos) {
   return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : (u32)value;
 }
 
-// `${...}` forms. `pos` points just past the `{`; on success it is advanced
-// past the closing `}` and the expansion is appended.
 bool ExpandBraced(StrBuf* out, StrView content, u32* pos, const StrView* args,
                   u32 argCount, StrView allArgs) {
   u32 cursor = *pos;
@@ -221,14 +216,13 @@ bool ExpandBraced(StrBuf* out, StrView content, u32* pos, const StrView* args,
   StrView value = isAll ? allArgs
                         : (index && index <= argCount ? args[index - 1]
                                                       : StrView{});
-  // pi tests the resolved value for truthiness, so an argument that was
-  // supplied but empty also falls back to the default.
+  // pi tests truthiness, so a supplied but empty argument also falls back.
   StrBuf_Append(out, value.Length ? value : fallback);
   *pos = cursor + 1;
   return true;
 }
 
-}  // namespace
+}
 
 bool PromptTemplates_ParseFile(Arena* arena, StrView filePath, StrView content,
                                PromptTemplate* out) {
@@ -276,8 +270,7 @@ void PromptTemplates_SplitArgs(Arena* arena, StrView argsString,
         quote = 0;
       else
         StrBuf_AppendChar(&current, c);
-      // An empty quoted string is still an argument, so track it separately
-      // from the buffer length.
+      // An empty quoted string is still an argument.
       pending = true;
     } else if (c == '"' || c == '\'') {
       quote = c;

@@ -1,10 +1,4 @@
-"""Tool registry: the single source of truth for what gets measured.
-
-Everything about a tool lives here -- where its binary is, how to launch it,
-how to recognise its processes, and what first-run state it needs seeded. The
-measure, watch and demo commands all read from this, so adding a tool is one
-entry rather than three.
-"""
+"""Tool registry: the single source of truth for measure, watch and demo."""
 
 from __future__ import annotations
 
@@ -32,14 +26,10 @@ def _binary(var: str, command: str, fallback: Path) -> str:
 
 @dataclass
 class SetupContext:
-    """What a setup hook is given: the run's scratch space and environment.
-
-    `env` is mutable and is what every session inherits, so a hook that needs
-    to point a tool at a private socket or config directory writes it here.
-    """
+    """`env` is mutable and inherited by every session; hooks write private paths here."""
     root: Path              # throwaway per-run root, removed afterwards
-    home: Path              # HOME for this run
-    cwd: Path               # where the agents are launched
+    home: Path
+    cwd: Path
     env: dict[str, str]
     timeout_s: float
     settle_s: float
@@ -47,11 +37,7 @@ class SetupContext:
 
 @dataclass
 class Launch:
-    """What a setup hook contributes beyond the session processes.
-
-    A tool that serves its sessions from a separate daemon has to declare that
-    daemon: it is charged for in the RSS total and torn down with the run.
-    """
+    """A daemon must be declared here to be charged in RSS and torn down with the run."""
     argv: list[str]
     extra_pids: list[int] = field(default_factory=list)
     extra_pgids: list[int] = field(default_factory=list)
@@ -65,16 +51,10 @@ class Tool:
     args: list[str] = field(default_factory=list)
     version_args: list[str] = field(default_factory=lambda: ["--version"])
     env: dict[str, str] = field(default_factory=dict)
-    # Given a pid, its resolved exe path, the full cmdline, and this tool's
-    # resolved binary, is this process ours?
     matches: Callable[[int, str, str, str], bool] = lambda pid, exe, cmd, real: exe == real
-    # Seed whatever first-run state the tool needs to reach a real prompt.
     prepare: Callable[[str, Path], None] | None = None
-    # Start whatever has to exist before the sessions do, and say how to launch
-    # them. Only tools with a daemon need this.
     setup: Callable[[SetupContext], Launch] | None = None
-    # Some tools ship a launcher that execs the real image beside it. Matching
-    # a running process and sizing the install both have to follow that hop.
+    # Launcher -> real image; process matching and install sizing must follow it.
     image: Callable[[str], str] | None = None
     note: str = ""
 
@@ -105,10 +85,7 @@ def _node_script_match(script_name: str):
 
 
 def _jcode_image(resolved: str) -> str:
-    """`jcode` can be a small sh launcher that execs a platform image beside
-    it, so the launcher's path is neither what
-    a running process reports as its exe nor what the install actually weighs.
-    """
+    """`jcode` may be an sh launcher that execs a platform image beside it."""
     directory = os.path.dirname(resolved)
     try:
         names = sorted(os.listdir(directory))
@@ -121,9 +98,7 @@ def _jcode_image(resolved: str) -> str:
 
 
 def _prepare_claude(home: str, cwd: Path) -> None:
-    """In a fresh HOME, Claude Code opens on a theme picker and then a
-    folder-trust prompt. Sampling there measures an onboarding wizard rather
-    than an agent session, so record both as already answered."""
+    """Skip the theme picker and folder-trust prompt a fresh HOME would show."""
     cfg = {
         "hasCompletedOnboarding": True,
         "theme": "dark",
@@ -144,9 +119,7 @@ def _prepare_claude(home: str, cwd: Path) -> None:
 
 
 def _prepare_pi(home: str, cwd: Path) -> None:
-    """pi downloads fd and ripgrep into ~/.pi on first run. Point the fresh
-    home at the already-populated cache so it is measured warm, like the
-    others."""
+    """Link the real ~/.pi cache so pi's first-run fd/ripgrep download is skipped."""
     real_agent = HOME / ".pi" / "agent"
     if not real_agent.exists():
         return
@@ -156,15 +129,10 @@ def _prepare_pi(home: str, cwd: Path) -> None:
         os.symlink(real_agent, link)
 
 
-# Global flags, before any subcommand. --no-update stops jcode self-updating
-# mid-benchmark and changing the version under measurement; --no-selfdev only
-# bites inside the jcode repo but costs nothing here.
+# Global flags go before any subcommand; --no-update keeps the measured version fixed.
 _JCODE_FLAGS = ["--no-update", "--no-selfdev"]
 
-# Taken warm from the real profile so jcode opens on a prompt rather than a
-# login screen -- the same exception _prepare_pi already makes for pi's cache.
-# Copied, not symlinked: jcode rejects auth files that are symlinks (its own
-# scripts/onboarding_sandbox.sh says so, and copies for the same reason).
+# Copied, not symlinked: jcode rejects auth files that are symlinks.
 _JCODE_AUTH = ("anthropic-auth.json", "openai-auth.json", "antigravity_oauth.json",
                "gemini_oauth.json", "config.toml")
 
@@ -181,19 +149,8 @@ def _link_if_present(src: Path, dst: Path) -> None:
 
 
 def _setup_jcode(memory_enabled: bool):
-    """jcode serves every session from one daemon, so the benchmark starts that
-    daemon itself.
-
-    Letting jcode spawn its own would measure the wrong thing three ways: the
-    daemon is `setsid()`-detached, so it is in neither the client's descendant
-    tree nor its process group and would go uncounted entirely; it outlives the
-    run on a five-minute idle timeout, so the next repeat would find it warm;
-    and its socket lives outside HOME, so the throwaway home does not stop it
-    colliding with a jcode the user is really running.
-
-    This mirrors jcode's own scripts/bench_memory_cli.py, which is what makes
-    the numbers comparable to the table jcode publishes.
-    """
+    """Start jcode's daemon ourselves: a self-spawned one is setsid-detached (uncounted),
+    outlives the run, and its socket escapes the throwaway HOME."""
 
     def setup(ctx: SetupContext) -> Launch:
         jcode_home = ctx.root / "jcode-home"
@@ -206,26 +163,17 @@ def _setup_jcode(memory_enabled: bool):
             "JCODE_HOME": str(jcode_home),
             "JCODE_RUNTIME_DIR": str(runtime),
             "JCODE_TEMP_SERVER": "1",
-            # Ties the daemon's lifetime to the benchmark's, so a crash between
-            # here and teardown cannot leave it running against the next repeat.
             "JCODE_SERVER_OWNER_PID": str(os.getpid()),
             "JCODE_THEME": "dark",
         })
-        # JCODE_MEMORY_ENABLED comes from the entry's static environment.
 
         real = HOME / ".jcode"
         for name in _JCODE_AUTH:
             _copy_if_present(real / name, jcode_home / name)
         if memory_enabled:
-            # The embedding model is the whole difference between the two
-            # variants; linking it measures it warm rather than mid-download.
             _link_if_present(real / "models", jcode_home / "models")
 
-        # jcode's server exits rather than start without a credential. Nothing
-        # is ever sent -- measure types its probe and never submits it -- so a
-        # placeholder only gets past the gate, and it is what jcode's own idle
-        # profiling scripts use. A real credential, linked above or already in
-        # the environment, is left alone.
+        # The server refuses to start without a credential; nothing is ever sent.
         ctx.env.setdefault("ANTHROPIC_API_KEY", "sk-ant-agentbench-placeholder")
 
         binary = _binary("JCODE_BIN", "jcode", HOME / ".local/bin/jcode")
@@ -246,8 +194,7 @@ def _setup_jcode(memory_enabled: bool):
             argv=[binary, *_JCODE_FLAGS, "--socket", str(socket_path)],
             extra_pids=[server.pid],
             extra_pgids=[server.pid],
-            # With the embedding model on, the server is still loading it well
-            # past the usual one second and samples low.
+            # The embedding model is still loading well past the default settle.
             settle_s=5.0 if memory_enabled else None,
         )
 
@@ -312,15 +259,11 @@ def registry() -> dict[str, Tool]:
 
 DEFAULT_TOOLS = ["clippi", "jcode", "jcode-embed-off", "pi", "claude", "opencode"]
 
-# watch and demo attribute processes to tools live, and every jcode session on
-# a machine is served by one daemon. Two jcode panes would share it and both
-# would be misread, so the live views carry a single jcode.
+# One jcode only: all jcode sessions share a daemon, so live views would misattribute two.
 LIVE_TOOLS = ["clippi", "jcode", "pi", "claude", "opencode"]
 
 
 def resolve(names: list[str] | None, default: list[str] | None = None) -> list[Tool]:
-    """Look up tools by name, erroring on anything unknown rather than
-    silently measuring a shorter list."""
     all_tools = registry()
     wanted = names or default or DEFAULT_TOOLS
     missing = [n for n in wanted if n not in all_tools]

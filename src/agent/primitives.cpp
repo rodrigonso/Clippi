@@ -194,8 +194,7 @@ void ToolWorker(void* argument) {
     if (index < pool->Count) pool->Next = index + 1;
     Mutex_Unlock(&pool->Lock);
     if (index >= pool->Count) break;
-    // Reserved when claimed rather than when the batch was planned, so the
-    // address space reserved tracks the workers running, not the batch size.
+    // Reserved when claimed so address space tracks running workers, not batch size.
     // Completion is published under the lock, which hands both fields over.
     AgentPreparedTool* job = pool->Jobs[index];
     job->Worker = ArenaCreate(WORKER_ARENA_RESERVE);
@@ -242,7 +241,7 @@ void FinalizeOne(Arena* arena, AgentPreparedTool* prepared,
   }
 }
 
-}  // namespace
+}
 
 void AgentToolBatch_ReleaseWorkers(AgentToolBatchPlan* plan) {
   if (!plan) return;
@@ -259,9 +258,7 @@ void AgentProvider_BuildRequest(Arena* arena, StrView systemPrompt,
                                 const Tool* tools, u32 toolCount,
                                 AgentProviderRequest* out) {
   AgentProviderRequest request = {};
-  // Request-time-only Pi-style replay normalization: excludes errored/
-  // aborted assistant turns and synthesizes "No result provided" tool
-  // results for orphaned calls. Never mutates or persists the session log.
+  // Request-time-only replay normalization; never mutates the session log.
   Array<Message> replay =
       SessionReplay_TransformMessages(arena, messages, messageCount);
   if (toolCount) {

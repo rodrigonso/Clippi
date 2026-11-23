@@ -14,11 +14,6 @@
 #include "tools/tools.h"
 #include "tui/tui.h"
 
-// Shared state and the renderer-neutral seams every interactive command is
-// written against. A command handler never asks whether it is running under the
-// TUI or the plain REPL; it goes through the Runtime* calls below, which is what
-// lets the handlers live outside main.cpp and be driven by tests.
-
 struct HarnessEventPump;
 struct MemoryExtension;
 
@@ -28,8 +23,6 @@ struct AppAuth {
   AuthTokenCache Cache;
 };
 
-// Human-facing consumer of the ordered watch stream. The pump owns event
-// ordering and tool-completion dedup; consumers just render what arrives.
 struct HarnessEventSink {
   void* User;
   void (*OnEvent)(void* user, const AgentHarnessEvent* ev);
@@ -42,11 +35,8 @@ inline void HarnessEventSink_Emit(const HarnessEventSink& sink,
 
 struct InteractiveRuntime {
   Arena* Mem;
-  // Scratch for one slash command's user-visible result. Reset at the start of
-  // every dispatch, so a command that renders a large report (`/tree` on a big
-  // session is tens of KB) costs that once rather than once per invocation for
-  // the life of the process. Only values consumed before the next dispatch may
-  // live here; anything installed on the runtime or the harness belongs on Mem.
+  // Reset at every dispatch: only values consumed before the next one may live
+  // here; anything installed on the runtime or harness belongs on Mem.
   Arena CommandMem;
   StrView AuthPath;
   StrView SettingsPath;
@@ -55,16 +45,14 @@ struct InteractiveRuntime {
   ModelRequestProfile PreferredProfile;
   AgentHarness* Harness;
   SessionRepository* Sessions;
-  // Concrete backend, when there is one, so a session announcement can name
-  // the durable log and artifact directory. Null under `--no-session`.
+  // Null under `--no-session`.
   JsonlRepository* JsonlSessions;
   StrView ProjectKey;
   StrView WorkingDirectory;
   StrView AgentDirectory;
   StrView TrustPath;
   bool NoSession;
-  // Whether a user is present to answer a prompt. Reported to hooks as
-  // `interactive` so a gate can fail closed when nobody could approve.
+  // Reported to hooks so a gate can fail closed when nobody could approve.
   bool Interactive;
   bool ProjectTrusted;
   bool HasProjectResources;
@@ -81,35 +69,24 @@ struct InteractiveRuntime {
   bool Rounded = true;
   PromptContext* Prompt;
   PromptContextOptions PromptOptions;
-  // Set by `/skill:<name>` so the REPL loop submits the expanded skill as an
-  // ordinary prompt. Allocated from CommandMem, so the loop must consume it
-  // before dispatching anything else.
+  // Allocated from CommandMem: consume it before dispatching anything else.
   StrView PendingPrompt;
   HarnessEventPump* EventPump;
   HarnessEventSink EventSink;
   Tui* TuiView;
   AppAuth* Auth;
-  // Told about every session change and fed the ordered event stream.
   AppExtensions* Extensions;
-  // The memory wiki extension; null when `--no-memory` or CLIPPI_NO_MEMORY
-  // turned memory off for this run.
+  // Null when memory is off for this run.
   MemoryExtension* Memory;
-  // The persisted settings, which a run-level override leaves untouched.
+  // The persisted setting, which a run-level override leaves untouched.
   bool MemoryEnabled = true;
   StrView DreamModel;
 };
 
-// The wiki store the prompt should read with memory `enabled`, or empty when
-// memory is off for this run.
 StrView RuntimeMemoryStore(const InteractiveRuntime* rt, bool enabled);
 
-// Rebuilds the prompt context from the current options, as `/reload` does
-// without rereading settings. False leaves the old context in place.
 bool RuntimeRebuildPrompt(InteractiveRuntime* rt, StrBuf* error);
 
-// Keeps the shell tool's overflow logs beside the live session's log. Under
-// `--no-session` the directory stays empty, which falls the tool back to the
-// OS temp directory.
 struct ShellDirectoryExtension {
   ShellToolContext* Shell;
   Arena Mem;
@@ -118,22 +95,15 @@ struct ShellDirectoryExtension {
 AppExtension ShellDirectoryExtension_Make(ShellDirectoryExtension* state,
                                           ShellToolContext* shell);
 
-// Tells every extension which durable session is now live. Called once at
-// startup and after every session switch.
 void RuntimeAnnounceSession(InteractiveRuntime* rt, StrView projectKey,
                             DurableId sessionId);
 
-// ---- process-wide session state -----------------------------------------
-// Exactly one session runs per process, and the signal handler has no other
-// way to reach the run it must cancel.
+// One session per process; the signal handler has no other way to reach it.
 
 extern volatile i32 g_abort;
 extern AgentHarness* g_activeHarness;
 
-// Runs a prompt with the harness published for the signal handler to cancel.
 SessionResult RunHarnessPrompt(AgentHarness* harness, StrView prompt);
-
-// ---- command UX ----------------------------------------------------------
 
 void PlainCommandNotice(void* user, StrView message);
 void PlainCommandError(void* user, StrView message);
@@ -155,16 +125,10 @@ RuntimeInputResult RuntimeReadText(InteractiveRuntime* rt, Arena* arena,
                                    StrView category = SVL("Commands"),
                                    TextInputMode mode = TextInputMode::Plain);
 
-// The `ask_user` seam, backed by the two calls above. Safe to invoke from a
-// tool worker thread: under the TUI the modal is served by the TUI's own input
-// thread, and in the plain REPL the main thread is parked inside
-// AgentHarness_Run for the whole run, so nothing else is reading stdin.
+// Safe from a tool worker thread: the TUI's input thread serves the modal, and
+// the plain REPL's main thread is parked in AgentHarness_Run.
 AgentAskUser RuntimeAskUser(InteractiveRuntime* rt);
 
-// Long-running command work reports through these so the TUI can show a
-// cancellable operation and the plain REPL can fall back to printed notices.
-// `yieldsToInput` lets a submission through to end the operation; otherwise
-// the TUI refuses input until the operation is over.
 volatile i32* RuntimeBeginOperation(InteractiveRuntime* rt, const AppCommandUx* ux,
                                     StrView label, bool yieldsToInput = false);
 void RuntimeSetOperationStatus(InteractiveRuntime* rt, const AppCommandUx* ux,
@@ -175,9 +139,7 @@ AppCommandHandlerResult CommandResult(SessionResult result, StrView successMessa
 AppCommandHandlerResult RuntimeOwnedFailure(InteractiveRuntime* rt, StrView message);
 AppCommandHandlerResult ReturnToCommandPalette(InteractiveRuntime* rt);
 
-// Zero-initializes `rt` and creates the arenas it owns. Every InteractiveRuntime
-// must go through this: command results allocate from CommandMem, and an arena
-// that was never created traps on its first allocation rather than failing.
+// Every InteractiveRuntime must go through this: uncreated arenas trap.
 void InteractiveRuntime_Init(InteractiveRuntime* rt, Arena* mem);
 void InteractiveRuntime_Release(InteractiveRuntime* rt);
 void RuntimeSetPromptOptions(InteractiveRuntime* rt,
@@ -185,18 +147,13 @@ void RuntimeSetPromptOptions(InteractiveRuntime* rt,
 bool RuntimePersistSettings(InteractiveRuntime* rt);
 bool RuntimeRefreshPermissionReviewer(InteractiveRuntime* rt);
 
-// Dispatches one slash command, recycling the previous command's result
-// storage first. Every caller must go through this rather than
-// AppCommand_Dispatch so CommandMem cannot be left to grow.
+// Use this, not AppCommand_Dispatch, so CommandMem cannot grow.
 AppCommandDispatchResult RuntimeDispatchCommand(InteractiveRuntime* rt, StrView input,
                                                 const AppCommandHandlers* handlers,
                                                 const AppCommandUx* ux);
-
-// ---- prompt context reporting -------------------------------------------
 
 StrView PromptContextReport(Arena* arena, const PromptContext* context,
                             bool hasProjectResources, bool projectTrusted,
                             StrView heading);
 void EmitPromptDiagnostics(const PromptContext* context, const AppCommandUx* ux);
-// Startup path, before any renderer exists.
 void PrintPromptDiagnostics(const PromptContext* context);

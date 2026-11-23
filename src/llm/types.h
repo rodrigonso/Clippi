@@ -4,13 +4,8 @@
 #include "base/basics.h"
 #include "base/str.h"
 
-// =============================================================================
-// Core LLM data model (port of pi's packages/ai/src/types.ts).
-//
-// Memory note: all text is a StrView (a non-owning UTF-8 slice). In a live
-// session every StrView points into the session content blob, so messages cost
-// only their fixed struct size plus the bytes of text appended once to the blob.
-// =============================================================================
+// Port of pi's packages/ai/src/types.ts. In a live session every StrView points into the
+// session content blob.
 
 enum class Role : u8 { User, Assistant, ToolResult };
 
@@ -18,28 +13,18 @@ enum class ContentKind : u8 { Text, Thinking, ToolCall, Image };
 
 struct Content {
   ContentKind Kind;
-  // Text / Thinking
   StrView Text;
-  // ToolCall
   StrView ToolId;
   StrView ToolName;
-  StrView ToolArgsJson;  // raw JSON object text; tools parse on demand
-  // Image
+  StrView ToolArgsJson;
   StrView ImageData;      // base64
-  StrView ImageMimeType;  // e.g. "image/png"
-  // The provider's own identity for this block, replayed verbatim on the next
-  // request so a turn resumes the chain it started. The Responses API keys
-  // conversation state on these: a reasoning block carries its whole item JSON
-  // (including encrypted_content), a text block its item id, a tool call the id
-  // of the function_call item. Empty for blocks Clippi synthesized itself, which
-  // are then sent under a generated id instead.
+  StrView ImageMimeType;
+  // Provider identity replayed verbatim on the next request (a reasoning block's whole item JSON,
+  // including encrypted_content). Empty for blocks Clippi synthesized, sent under a generated id.
   StrView Signature;
 };
 
-// Several structs below carry a `Content` member whose type is also `Content`.
-// MSVC accepts that; GCC rejects it ([basic.scope.class] -- a name must mean
-// one thing throughout a class), so declare those members through this alias
-// and the type name is never re-used as a member name.
+// GCC rejects a member named like its type ([basic.scope.class]), so `Content` members use this alias.
 using ContentArray = Array<Content>;
 
 inline Content Content_Text(StrView text) {
@@ -70,8 +55,6 @@ inline Content Content_Image(StrView data, StrView mimeType) {
   return c;
 }
 
-// Deep-copy every text slice into `arena`, so the result outlives whatever
-// arena the source pointed into.
 inline Content Content_Clone(Arena* arena, const Content& source) {
   Content result = source;
   result.Text = StrView_Dup(arena, source.Text);
@@ -92,8 +75,6 @@ inline Array<Content> Content_CloneArray(Arena* arena, const Array<Content>& sou
   return result;
 }
 
-// Payload of one SSE "data:" line, with the optional space after the colon
-// removed. `has` is false for any other line (comments, "event:", blanks).
 inline bool Sse_DataPayload(StrView line, StrView* out) {
   if (line.Length < 5 || memcmp(line.Data, "data:", 5) != 0) return false;
   StrView data = {line.Data + 5, line.Length - 5};
@@ -175,20 +156,16 @@ struct ModelRequestProfile {
   u32 ContextWindow;
 };
 
-// One transcript message. A flat struct keyed by Role (role-specific fields are
-// unused for other roles). Kept flat for clarity; text lives in the blob.
 struct Message {
   Role Kind;
   ContentArray Content;
 
-  // assistant
   StopReason Stop;
   Usage Use;
   StrView ErrorMessage;
   StrView Model;
   StrView Provider;
 
-  // toolResult
   StrView ToolCallId;
   StrView ToolName;
   bool IsError;
@@ -227,14 +204,12 @@ inline Message Message_ToolResult(Arena* arena, StrView toolCallId, StrView tool
   return m;
 }
 
-// Tool advertised to the model.
 struct ToolDef {
   StrView Name;
   StrView Description;
-  StrView ParamsJsonSchema;  // JSON Schema object as text
+  StrView ParamsJsonSchema;
 };
 
-// A single provider request snapshot.
 struct LlmContext {
   StrView SystemPrompt;
   const Message* Messages;
@@ -243,7 +218,6 @@ struct LlmContext {
   u32 ToolCount;
 };
 
-// Static model metadata + resolved auth.
 struct Model {
   StrView Id;
   StrView Name;
@@ -400,11 +374,7 @@ inline u32 ModelContextWindow_Format(char* buffer, u32 capacity,
   return length;
 }
 
-// -----------------------------------------------------------------------------
-// Streaming protocol (port of AssistantMessageEvent). Replaces JS async
-// iterators with a push callback. The provider builds the final assistant
-// Message and emits deltas as it goes.
-// -----------------------------------------------------------------------------
+// Port of pi's AssistantMessageEvent, as a push callback instead of async iterators.
 enum class StreamEventKind : u8 {
   Start,
   TextStart,
@@ -435,21 +405,19 @@ inline void StreamSink_Emit(const StreamSink& sink, const StreamEvent& ev) {
   if (sink.OnEvent) sink.OnEvent(sink.User, ev);
 }
 
-struct HttpRetryPolicy;  // llm/retry.h
+struct HttpRetryPolicy;
 
 struct ProviderAuth {
-  StrView Token;      // empty only when the endpoint allows anonymous access
-  StrView AccountId;  // account the token is scoped to, for backends that ask
+  StrView Token;
+  StrView AccountId;
 };
 
 enum class LlmToolChoice : u8 { Auto, NamedFunction };
 
-// Wire-level controls shared by providers that advertise function tools.
-// Zero initialization preserves the normal request shape: automatic tool
-// choice, parallel calls enabled, and non-strict schemas.
+// Zero initialization preserves the normal request shape.
 struct LlmRequestControls {
   LlmToolChoice ToolChoice;
-  StrView ToolName;  // used when ToolChoice is NamedFunction
+  StrView ToolName;
   bool StrictTools;
   bool DisableParallelToolCalls;
 };
@@ -459,17 +427,13 @@ struct StreamOptions {
   i32 MaxTokens;            // 0 => use model default
   ModelRequestProfile Profile;
   LlmRequestControls Request;
-  volatile i32* Abort;     // non-zero => abort in progress
-  // Opt-in transport-level HTTP retry policy for this request (transport
-  // failures and HTTP 408/409/429/5xx). Null (the default) disables it, so
-  // provider behavior is unchanged unless a caller explicitly sets this.
+  volatile i32* Abort;
+  // Null (the default) disables transport-level retry.
   const HttpRetryPolicy* Retry;
 };
 
-// A provider streams one assistant turn. Emits StreamEvents to `sink`, writes
-// the final assistant Message (allocated from `arena`) into `out`. Returns true
-// on a normal completion; false means an error was produced (still in `out`,
-// with Stop == Error/Aborted and ErrorMessage set).
+// The final Message is allocated from `arena`; on false the error is still in `out` with
+// Stop == Error/Aborted.
 struct Provider {
   void* Ctx;
   bool (*Stream)(void* ctx, Arena* arena, const Model* model, const LlmContext* context,

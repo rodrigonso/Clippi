@@ -21,40 +21,29 @@ struct JsonlLogHandle {
   u32 ClaimIndex;
   ProcessFileLock WriterLock;
   Arena State;
-  // Every record, in order. Records retained after the file exists are
-  // envelopes (see RetainRecord): the file holds their content, and a
-  // conversation's text would otherwise be held twice -- here and in whatever
-  // the caller built from ReadAll.
+  // Once the file exists, retained records are envelopes (RetainRecord) so
+  // content is not held twice.
   Array<SessionRecord> Records;
-  // Persistent fold state, arena-backed by `State` so it lives as long as
-  // the handle. Built once (index+fold over every loaded/created record)
-  // and updated in O(1) per appended record; AppendBatch never re-validates
-  // or re-folds prior history.
   SessionReduction Reduction;
   StrView Path;
   StrView LockPath;
   FILE* AppendFile;
   Mutex AppendLock;
   bool Writable;
-  // True once the file holds every record, which is from the start for an
-  // opened session. A created session stays buffered in memory, with complete
-  // records and no file, until RecordsWarrantPersist.
+  // A created session stays buffered, with no file, until RecordsWarrantPersist.
   bool Flushed;
   bool Faulted;
   bool Closed;
 };
 
 namespace {
-// Builds `handle->Reduction` from already-validated records without
-// re-running SessionRecords_Validate (the caller -- LoadRecords or the
-// initial Created record -- has already validated them).
 void FoldAllValidated(JsonlLogHandle* handle) {
   DurableIdIndex_Init(&handle->Reduction.Index, &handle->State,
                       handle->Records.Count ? handle->Records.Count : 1);
   for (u32 i = 0; i < handle->Records.Count; i++)
     SessionReducer_Fold(&handle->Reduction, handle->Records.Data, i + 1);
 }
-}  // namespace
+}
 
 namespace {
 
@@ -199,9 +188,7 @@ bool ClaimedInProcess(JsonlRepository* repository, StrView projectKey,
   return false;
 }
 
-// Project-independent variant. A session that is still buffered in memory has
-// no file for FindGlobalProject to find, so an explicitly requested id must be
-// checked against live claims too or two sessions could share it.
+// Buffered sessions have no file, so live claims must be checked too.
 bool ClaimedAnywhere(JsonlRepository* repository, DurableId sessionId) {
   ScopedLock lock(&repository->Lock);
   for (u32 i = 0; i < repository->Claims.Count; i++)
@@ -211,10 +198,6 @@ bool ClaimedAnywhere(JsonlRepository* repository, DurableId sessionId) {
   return false;
 }
 
-// Copies the records of a session this process holds open into `arena`. A
-// session that has not yet earned a file cannot be read back through the
-// filesystem, so readers that would otherwise fail with NotFound take the
-// authoritative copy from the live writer instead.
 SessionResult CopyLiveRecords(JsonlRepository* repository, Arena* arena,
                               StrView projectKey, DurableId sessionId,
                               Array<SessionRecord>* out) {
@@ -231,9 +214,8 @@ SessionResult CopyLiveRecords(JsonlRepository* repository, Arena* arena,
   if (!source)
     return SessionResult_Error(SessionStatus::NotFound,
                                SVL("session file was not found"));
-  // The repository lock is released first: only the handle's own append lock
-  // is needed to read its records, and taking them in this order matches the
-  // append/destroy path, which holds the append lock across ReleaseClaim.
+  // Lock order: repository lock released first, matching append/destroy, which
+  // holds the append lock across ReleaseClaim.
   ScopedLock reading(&source->AppendLock);
   if (source->Closed || source->Records.Count == 0)
     return SessionResult_Error(SessionStatus::NotFound,
@@ -282,14 +264,8 @@ bool WriteAll(FILE* file, StrView bytes) {
   return fflush(file) == 0;
 }
 
-// A session only earns a file once the user actually says something. Launching
-// the agent writes a SessionStarted record and the harness's Model record
-// without any human input, so persisting on creation is what left an orphan
-// log behind for every launch the user abandoned.
-//
-// pi's SessionManager defers on the same principle but keys off the first
-// assistant message; clippi keys off the first user message so a prompt that
-// never gets a reply still survives.
+// No file until the first user message, so abandoned launches leave no log.
+// Divergence: pi keys off the first assistant message; unanswered prompts survive here.
 bool RecordsWarrantPersist(const SessionRecord* records, u32 count) {
   for (u32 i = 0; i < count; i++)
     if (records[i].Kind == SessionRecordKind::Message &&
@@ -318,8 +294,6 @@ bool AppendNewline(Arena* arena, StrView path) {
   return ok;
 }
 
-// Every line is decoded in `scratch` and only its clone is kept in `arena`, so
-// neither the file's bytes nor any line's JSON tree outlives the call.
 SessionResult DecodeRecords(Arena* arena, Arena* scratch, StrView path,
                             bool repair, Array<SessionRecord>* out) {
   StrView content = {};
@@ -407,9 +381,7 @@ SessionResult LoadRecords(Arena* arena, StrView path, bool repair,
   return loaded;
 }
 
-// What a handle keeps of a record once the file holds it: the envelope plus
-// every field folding and append validation read (kinds, ids, parents, and the
-// model/thinking/tools settings), but no message or compaction content.
+// Must keep every field folding and append validation read; drops content.
 SessionResult RetainRecord(Arena* arena, const SessionRecord* source,
                            bool envelope, SessionRecord* out) {
   if (!envelope || (source->Kind != SessionRecordKind::Message &&
@@ -428,11 +400,8 @@ SessionResult RetainRecord(Arena* arena, const SessionRecord* source,
   return SessionResult_Ok(source->Seq);
 }
 
-// Requires AppendLock. A buffered session's records are complete in memory; a
-// flushed one's content is read back from its file, which this handle is the
-// only writer of, so it holds at least the records the handle has accepted. A
-// read-only handle can see records a writer appended since it opened, which
-// are left out so every reader agrees with its own handle.
+// Requires AppendLock. Records appended by a writer after a read-only handle
+// opened are left out, so readers agree with their own handle.
 SessionResult CopyHandleRecordsLocked(JsonlLogHandle* handle, Arena* arena,
                                       Array<SessionRecord>* out) {
   u32 count = handle->Records.Count;
@@ -476,12 +445,8 @@ SessionResult BuildInfo(Arena* arena, const SessionRecord* records, u32 count,
 
 SessionLog LogInterface(JsonlLogHandle* handle);
 
-// Materializes a session whose file creation was deferred. The directory and
-// the writer lock were established at Create time, and on Windows the open
-// lock handle pins the directory, so this only has to author the file itself.
-// The no-clobber check lives here rather than in Create because this is where
-// the truncating open happens, and a buffered session can sit for a whole
-// conversation between the two.
+// The no-clobber check lives here, at the truncating open, not in Create: a
+// buffered session can sit a whole conversation in between.
 SessionResult OpenForFirstWrite(JsonlLogHandle* handle, Arena* scratch) {
   if (Fs_Exists(handle->Path))
     return SessionResult_Error(SessionStatus::Conflict,
@@ -508,8 +473,7 @@ void DestroyHandle(JsonlLogHandle* handle, bool removeData) {
     fclose(handle->AppendFile);
     handle->AppendFile = nullptr;
   }
-  // A session still buffered in memory has no file to remove; removing the
-  // absent path simply fails, which is the intended outcome either way.
+  // A buffered session has no file; the failed remove is intended.
   if (removeData) File_Remove(&handle->State, handle->Path);
   ProcessFileLock_Release(&handle->WriterLock, handle->LockPath);
   if (handle->Writable)
@@ -542,10 +506,6 @@ SessionResult AppendBatch(void* context, SessionRecord* input, u32 count) {
     return SessionResult_Error(SessionStatus::Faulted, SVL("session log is faulted"));
 
   Arena scratch = ArenaCreate();
-  // Two-phase validation against the already-folded
-  // `handle->Reduction` (plus a bounded scan over just this small batch);
-  // never rebuilds a full existing+new candidate array or re-validates
-  // prior history.
   Array<SessionRecord> prepared = Array_Make<SessionRecord>(&scratch, count);
   u64 firstSeq = (u64)handle->Records.Count + 1;
   for (u32 i = 0; i < count; i++) {
@@ -565,9 +525,6 @@ SessionResult AppendBatch(void* context, SessionRecord* input, u32 count) {
     Array_Push(&prepared, record);
   }
 
-  // Until the first user message arrives the session lives only in memory, so
-  // this batch is retained below without touching the disk. The batch that
-  // trips the trigger carries every buffered record with it.
   if (handle->Flushed ||
       RecordsWarrantPersist(prepared.Data, prepared.Count)) {
     u32 leading = handle->Flushed ? 0 : handle->Records.Count;
@@ -589,8 +546,7 @@ SessionResult AppendBatch(void* context, SessionRecord* input, u32 count) {
       }
       StrBuf_AppendChar(&bytes, '\n');
     }
-    // Opened only after every record encodes, so an encoding failure leaves no
-    // empty file behind and the session stays buffered for a later attempt.
+    // Opened only after every record encodes, so a failure leaves no empty file.
     bool authored = !handle->Flushed;
     if (authored) {
       SessionResult opened = OpenForFirstWrite(handle, &scratch);
@@ -601,10 +557,7 @@ SessionResult AppendBatch(void* context, SessionRecord* input, u32 count) {
     }
     if (!WriteAll(handle->AppendFile, StrBuf_View(&bytes))) {
       if (authored) {
-        // Undo the file this call just created. Leaving a zero-length log
-        // behind would be a permanently unreadable session that every listing
-        // reports as skipped -- the same orphan the deferral exists to avoid.
-        // Dropping back to buffered also keeps the append retryable.
+        // No zero-length orphan; dropping back to buffered keeps the append retryable.
         fclose(handle->AppendFile);
         handle->AppendFile = nullptr;
         handle->Flushed = false;
@@ -668,8 +621,6 @@ SessionResult InitializeHandle(JsonlRepository* repository, Arena* callerArena,
   handle->Writable = writable;
   Mutex_Init(&handle->AppendLock);
 
-  // The complete records are needed only to describe the session; the handle
-  // keeps envelopes, since the file already holds every record's content.
   Arena scratch = ArenaCreate();
   Array<SessionRecord> loaded = {};
   SessionResult result = LoadRecords(&scratch, handle->Path, writable, &loaded);
@@ -776,9 +727,7 @@ SessionResult Create(void* context, Arena* arena, const SessionCreateOptions* op
 
   SessionRecord started = SessionRecord_MakeStarted(sessionId, options);
 
-  // Deliberately no file write here: the session starts life in memory and is
-  // materialized by the first append that warrants persisting. The writer lock
-  // already reserves the id, so nothing else can claim it meanwhile.
+  // Deliberately no file yet; the writer lock already reserves the id.
   JsonlLogHandle* handle = AllocateHandle(repository);
   *handle = JsonlLogHandle{};
   handle->Repository = repository;
@@ -831,9 +780,7 @@ SessionResult Open(void* context, Arena* arena, const SessionOpenOptions* option
   StrView path =
       SessionPath(&scratch, repository, options->ProjectKey, options->SessionId);
   if (!Fs_Exists(path)) {
-    // A writer holding a session that is still buffered in memory owns an id
-    // with no file yet. Calling that NotFound would describe a taken session
-    // as absent, so the writer's claim is reported instead.
+    // A buffered session is taken, not NotFound.
     bool busy =
         SessionBusy(repository, options->ProjectKey, options->SessionId);
     ArenaRelease(&scratch);
@@ -1025,9 +972,6 @@ SessionResult Fork(void* context, Arena* arena, const SessionForkOptions* option
   Array<SessionRecord> sourceRecords = {};
   SessionResult loaded =
       LoadRecords(&scratch, sourcePath, false, &sourceRecords);
-  // Forking a session that has not yet earned a file -- /fork before the first
-  // prompt -- must read the source from its live writer rather than report the
-  // session missing.
   if (loaded.Status == SessionStatus::NotFound)
     loaded = CopyLiveRecords(repository, &scratch, options->ProjectKey,
                              options->SourceSessionId, &sourceRecords);
@@ -1101,8 +1045,6 @@ SessionResult Fork(void* context, Arena* arena, const SessionForkOptions* option
       return appended;
     }
   }
-  // Described from the complete records: once the copies reach the file, the
-  // handle keeps only their envelopes.
   JsonlLogHandle* handle = (JsonlLogHandle*)targetLog.Ctx;
   Array<SessionRecord> forked =
       Array_Make<SessionRecord>(&scratch, targetRoot.Count + copies.Count);
@@ -1124,7 +1066,7 @@ void CloseRepository(void* context) {
   JsonlRepository_Destroy((JsonlRepository*)context);
 }
 
-}  // namespace
+}
 
 void JsonlRepository_Init(JsonlRepository* repository, StrView dataRoot) {
   if (!repository) return;

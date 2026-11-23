@@ -4,9 +4,7 @@
 #include "base/arena.h"
 #include "base/basics.h"
 
-// Arena-backed growable array. Growth reallocates within the backing arena
-// (the old block is abandoned, which is the arena tradeoff); size with a
-// sensible initial capacity to avoid churn.
+// Growth reallocates within the arena, so element pointers do not survive an append.
 template <typename T>
 struct Array {
   T* Data;
@@ -27,7 +25,7 @@ inline void Grow(Array<T>* a, u32 minCapacity) {
   a->Data = nd;
   a->Capacity = (u32)newCap;
 }
-}  // namespace ArrayInternal
+}
 
 template <typename T>
 inline Array<T> Array_Make(Arena* arena, u32 initialCapacity = 8) {
@@ -42,7 +40,7 @@ inline Array<T> Array_Make(Arena* arena, u32 initialCapacity = 8) {
 
 template <typename T>
 inline T* Array_Push(Array<T>* a, const T& value) {
-  FFI(a->Count == 0xFFFFFFFFu);  // Count + 1 would wrap
+  FFI(a->Count == 0xFFFFFFFFu);
   if (a->Count >= a->Capacity) ArrayInternal::Grow(a, a->Count + 1);
   a->Data[a->Count] = value;
   return &a->Data[a->Count++];
@@ -69,8 +67,7 @@ inline void Array_Clear(Array<T>* a) {
   a->Count = 0;
 }
 
-// Stable insertion sort; `before(x, y)` is true when `x` must precede `y`.
-// Meant for the short arrays Clippi orders (paths, pages, matches, sessions).
+// Stable insertion sort; only for short arrays.
 template <typename T, typename Before>
 inline void Array_Sort(Array<T>* a, Before before) {
   for (u32 i = 1; i < a->Count; i++) {

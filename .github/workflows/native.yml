@@ -23,7 +23,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Official labels: https://github.com/actions/runner-images#available-images
           - platform: Windows-x86_64
             runner: windows-2025-vs2026
           - platform: Darwin-arm64
@@ -59,8 +58,7 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: source
         run: bash tools/build.sh --build-dir out/ci-cli --test --package
-      # The workspace root is outside the checkout at source/. Smoke files stay
-      # in the workspace, not a runner/user temporary directory or home directory.
+      # Smoke from the workspace root: outside source/, and not in a temp or home directory.
       - name: Smoke fresh Windows archive outside source
         if: runner.os == 'Windows'
         run: node .\source\tools\ci\package.cjs smoke source source\out\ci-cli\packages Windows-x86_64

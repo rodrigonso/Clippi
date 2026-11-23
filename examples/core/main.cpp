@@ -34,7 +34,7 @@ bool Report(SessionResult result) {
   return false;
 }
 
-}  // namespace
+}
 
 int main() {
   Arena arena = ArenaCreate();

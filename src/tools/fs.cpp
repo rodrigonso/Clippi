@@ -129,7 +129,6 @@ FsStat Fs_Stat(StrView path) {
     ULARGE_INTEGER written;
     written.LowPart = lastWrite.dwLowDateTime;
     written.HighPart = lastWrite.dwHighDateTime;
-    // FILETIME counts 100ns ticks from 1601.
     const u64 kUnixEpochTicks = 116444736000000000ull;
     if (written.QuadPart > kUnixEpochTicks)
       r.ModifiedMs = (written.QuadPart - kUnixEpochTicks) / 10000ull;
@@ -177,8 +176,6 @@ bool Fs_Remove(Arena* arena, StrView path) {
 #endif
 }
 
-// Whether `path` is a real directory to descend into, as opposed to a file or
-// a link (symlink, junction) that must be removed without being followed.
 static bool Fs_IsPlainDir(Arena* arena, StrView path) {
 #if defined(_WIN32)
   (void)arena;
@@ -297,9 +294,7 @@ static StrView Fs_AbsoluteForPermission(Arena* arena, StrView path,
     if (path.Data[i] == '\0') *safe = false;
   }
 #if defined(_WIN32)
-  // GetFullPathNameW also resolves drive-relative and rooted paths in the
-  // same way the process will interpret them. The former remains unsafe for
-  // workspace classification and is rejected by the caller.
+  // Drive-relative paths resolve here but stay unsafe; the caller rejects them.
   return Fs_RealPath(arena, path);
 #else
   if (Fs_PathIsAbsolute(path)) return StrView_Dup(arena, path);
@@ -509,8 +504,6 @@ static bool Fs_IsProtectedComponent(StrView name) {
          StrView_EqInsensitiveAscii(name, SVL(".agents"));
 }
 
-// Whether any component of `path` after its first `rootLength` bytes is
-// protected.
 static bool Fs_HasProtectedComponent(StrView path, u32 rootLength) {
   u32 start = ClippiMin(rootLength, path.Length);
   for (u32 i = start; i <= path.Length; i++) {
@@ -521,10 +514,6 @@ static bool Fs_HasProtectedComponent(StrView path, u32 rootLength) {
   return false;
 }
 
-// Whether canonical `target` lies inside `root` once the root is
-// canonicalized the same way. A root that does not fully exist contains
-// nothing, so a missing directory can never widen what is allowed.
-// `rootLength` receives the canonical root's length.
 static bool Fs_RootContains(Arena* arena, StrView root,
                             const FsCanonicalPermissionPath& target,
                             u32* rootLength) {
@@ -568,8 +557,7 @@ FsPermissionTarget Fs_ResolvePermissionTarget(Arena* arena,
   FsCanonicalPermissionPath targetPath =
       Fs_CanonicalizePermissionAbsolute(arena, targetAbsolute, targetSafe);
   result.Path = targetPath.Path;
-  // A target is protected only when every root containing it sees a protected
-  // component below that root; a writable root granted inside one is explicit.
+  // Every containing root must see it protected; nested writable roots are explicit.
   u32 rootLength = 0;
   result.Contained =
       rootSafe && Fs_RootContains(arena, rootAbsolute, targetPath, &rootLength);
@@ -749,7 +737,6 @@ bool Fs_ForEachEntry(Arena* scratch, StrView dir, volatile i32* abort, StrBuf* e
   if (Fs_Cancelled(abort, err)) return false;
   bool ok = true;
 #if defined(_WIN32)
-  // Off the stack: a walk nests one enumeration per directory level.
   usize mark = scratch->Used;
   StrBuf pattern = StrBuf_Make(scratch, dir.Length + 3);
   StrBuf_Append(&pattern, dir);
@@ -769,7 +756,6 @@ bool Fs_ForEachEntry(Arena* scratch, StrView dir, volatile i32* abort, StrBuf* e
     if (code == ERROR_FILE_NOT_FOUND && Fs_IsDir(dir)) return true;
     return Fs_Error(err, "Cannot list directory", dir, code);
   }
-  // cFileName holds at most MAX_PATH UTF-16 units, at most three bytes each.
   const u32 nameCapacity = MAX_PATH * 3 + 1;
   char* name = ArenaPushArray(scratch, char, nameCapacity);
   for (;;) {
@@ -874,9 +860,8 @@ static bool Fs_HasSlash(StrView s) {
   return false;
 }
 
-// GetFullPathNameW returns backslashes, so Windows splits on both separators.
-// Kept whole, a path whose leaf is missing would leave short (8.3) names and
-// junctions above that leaf unresolved.
+// Windows splits on both separators, else 8.3 names and junctions above a
+// missing leaf stay unresolved.
 static bool Fs_IsSegmentSep(char c) {
 #if defined(_WIN32)
   return Fs_IsSep(c);
@@ -1072,8 +1057,6 @@ static bool Fs_LoadScope(Arena* arena, FsIgnoreScope* scope, StrView absDir,
                          const FsWalkOptions& opts, StrBuf* err) {
   scope->Git.Backing = arena;
   scope->Ignore.Backing = arena;
-  // Absolute matching coordinates keep parent-file anchoring intact when the
-  // visitor's relative paths start below the repository root.
   StrView base = Fs_ToPosix(arena, absDir);
   if (opts.RespectGitignore &&
       !Fs_LoadIgnoreFileChecked(arena, &scope->Git, absDir, base, SVL(".gitignore"),
@@ -1087,8 +1070,7 @@ static bool Fs_LoadScope(Arena* arena, FsIgnoreScope* scope, StrView absDir,
 static bool Fs_ScopeIgnored(const FsIgnoreScope* scope, StrView path, bool isDir,
                             bool* ignored, StrBuf* err) {
   *ignored = false;
-  // .ignore outranks .gitignore across scopes; within each source type, the
-  // deepest scope wins and the last matching rule wins within that file.
+  // .ignore outranks .gitignore across scopes; then deepest scope, last rule.
   for (u32 source = 0; source < 2; source++) {
     for (const FsIgnoreScope* current = scope; current; current = current->Parent) {
       const Array<FsIgnorePattern>* rules = source == 0 ? &current->Ignore : &current->Git;
@@ -1128,8 +1110,6 @@ struct FsWalkDir {
   bool Failed;
 };
 
-// Entries are handled as the directory streams them, descending inline, so a
-// walk holds one entry per level rather than every listing on its path.
 static bool Fs_WalkEntry(void* user, const FsEntry& e) {
   FsWalkDir* dir = (FsWalkDir*)user;
   FsWalkState* state = dir->State;
@@ -1248,8 +1228,7 @@ static bool Fs_LoadParentScopes(FsWalkState* state, StrView root,
       return false;
     *inherited = scope;
   }
-  // Searching an explicit subdirectory does not let a file negation resurrect
-  // a directory excluded by an inherited rule.
+  // A file negation must not resurrect a dir excluded by an inherited rule.
   StrView path = Fs_ToPosix(arena, root);
   for (u32 end = 1; end <= path.Length; end++) {
     if (end != path.Length && path.Data[end] != '/') continue;

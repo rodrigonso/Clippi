@@ -1,4 +1,4 @@
-# Runtime installation and release packaging, using build.ps1's selected toolchain.
+# Dot-sourced by build.ps1; relies on its selected toolchain.
 function Write-Changed([string]$Path, [string]$Text) {
     if (-not (Test-Path -LiteralPath $Path) -or [IO.File]::ReadAllText($Path) -cne $Text) {
         [IO.File]::WriteAllText($Path, $Text, [Text.UTF8Encoding]::new($false))
@@ -107,7 +107,6 @@ function Package-Clippi {
     $name = "clippi-$version-Windows-x86_64"
     $packages = Join-Path $build 'packages'
     New-Item -ItemType Directory -Force $packages | Out-Null
-    # A fresh, owned staging directory prevents stale optional files leaking in.
     $stage = Join-Path $packages ("stage-" + [Guid]::NewGuid().ToString('N'))
     $prefix = Join-Path $stage $name
     $archive = Join-Path $packages "$name.zip"

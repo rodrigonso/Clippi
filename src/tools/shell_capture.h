@@ -27,8 +27,6 @@ struct ShellCapture {
   bool Finished;
 };
 
-// Null io selects the native artifact writer. All retained buffers and paths
-// belong to arena; Feed never allocates in proportion to accumulated output.
 void ShellCapture_Init(ShellCapture* capture, Arena* arena, StrView directory,
                        const ShellCaptureIo* io = nullptr);
 bool ShellCapture_Feed(ShellCapture* capture, StrView chunk);

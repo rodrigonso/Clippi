@@ -33,7 +33,6 @@ bool ParseU64(StrView s, u64* out) {
   return true;
 }
 
-// Strip a trailing CR/LF (curl's header callback includes the line ending).
 StrView StripEol(StrView s) {
   while (s.Length && (s.Data[s.Length - 1] == '\n' || s.Data[s.Length - 1] == '\r')) s.Length--;
   return s;
@@ -48,20 +47,19 @@ struct XferCtx {
   u32 maxResponseBytes;
   u32 responseBytes;
   bool bodyLimitExceeded;
-  i32 status;          // -1 until a status line is seen
-  bool bodyStarted;    // true once any body byte reached `sink`
+  i32 status;
+  bool bodyStarted;
   HttpRetryMeta meta;
-  StrBuf errBody;      // buffered non-2xx body when bufferNonSuccessBody is set
+  StrBuf errBody;
 };
 
 size_t HeaderCb(char* buffer, size_t size, size_t nitems, void* userdata) {
   XferCtx* w = (XferCtx*)userdata;
   size_t n = size * nitems;
   StrView line = StripEol(StrView{buffer, (u32)n});
-  if (line.Length == 0) return n;  // blank line: end of a header block
+  if (line.Length == 0) return n;
   if (line.Length >= 5 && memcmp(line.Data, "HTTP/", 5) == 0) {
-    // A new status line starts a new header block (redirects, 100-continue).
-    // Reset so only the final response's status and retry hints are kept.
+    // A new status line starts a new header block (redirects, 100-continue); keep only the final one's hints.
     w->meta = HttpRetryMeta{};
     w->meta.RetryAfterMs = -1;
     w->errBody = {};
@@ -109,14 +107,14 @@ int XferCb(void* p, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
   return 0;
 }
 
-}  // namespace
+}
 
 i32 HttpRetryMeta_ParseStatusLine(StrView line) {
   if (line.Length < 5 || memcmp(line.Data, "HTTP/", 5) != 0) return -1;
   u32 i = 5;
-  while (i < line.Length && line.Data[i] != ' ') i++;  // skip "1.1"/"2"/etc.
+  while (i < line.Length && line.Data[i] != ' ') i++;
   if (i >= line.Length) return -1;
-  i++;  // skip the space
+  i++;
   u32 start = i;
   while (i < line.Length && line.Data[i] >= '0' && line.Data[i] <= '9') i++;
   if (i == start) return -1;
@@ -267,7 +265,7 @@ bool FetchOnData(void* user, StrView chunk) {
   StrBuf_Append((StrBuf*)user, chunk);
   return true;
 }
-}  // namespace
+}
 
 HttpResponse Http_Fetch(Arena* arena, const HttpRequest* req, volatile i32* abort) {
   StrBuf buf = StrBuf_Make(arena, 1024);
@@ -282,8 +280,6 @@ HttpResponse Http_Fetch(Arena* arena, const HttpRequest* req, volatile i32* abor
   return res;
 }
 
-// ---- provider-request (transport-level) retry policy -----------------------
-
 bool HttpStatus_IsRetryable(i32 status) {
   if (status == 408 || status == 409 || status == 429) return true;
   return status >= 500 && status < 600;
@@ -292,7 +288,7 @@ bool HttpStatus_IsRetryable(i32 status) {
 bool HttpRetry_ShouldRetry(const HttpRetryPolicy* policy, i32 status, bool transportFailure,
                            const HttpRetryMeta* meta, u32 attemptsMade) {
   if (!policy || !policy->Enabled) return false;
-  if (attemptsMade >= policy->MaxRetries + 1) return false;  // no attempts remain
+  if (attemptsMade >= policy->MaxRetries + 1) return false;
   if (meta && meta->HasShouldRetry) return meta->ShouldRetry;  // server signal wins
   if (transportFailure) return true;
   return HttpStatus_IsRetryable(status);
@@ -323,7 +319,7 @@ u32 HttpRetry_DelayMs(const HttpRetryPolicy* policy, const HttpRetryMeta* meta, 
 
   if (jitterRandom01 < 0) jitterRandom01 = 0;
   if (jitterRandom01 > 1) jitterRandom01 = 1;
-  double factor = 0.75 + jitterRandom01 * 0.5;  // +/-25% jitter
+  double factor = 0.75 + jitterRandom01 * 0.5;
   double jittered = (double)backoff * factor;
   if (jittered < 0) jittered = 0;
   if (jittered > maxDelay) jittered = maxDelay;
@@ -339,7 +335,7 @@ HttpResult Http_StreamWithRetryDeps(Arena* arena, const HttpRequest* req, HttpSt
     r = deps->Transport(deps->TransportUser, arena, req, sink, abort);
     attempts++;
 
-    if (!policy || !policy->Enabled) return r;  // policy off -> single attempt, passthrough
+    if (!policy || !policy->Enabled) return r;
     if (r.BodyStarted) return r;                // already forwarded success bytes -> never retry
     if (r.BodyLimitExceeded) return r;
     if (abort && Atomic_LoadI32(abort)) return r;              // user cancellation isn't masked by a retry
@@ -384,7 +380,7 @@ HttpResult RealTransport(void*, Arena* arena, const HttpRequest* req, HttpStream
 }
 void RealSleep(void*, u32 ms) { Sleep_Ms(ms); }
 double RealRand(void*) { return (double)rand() / ((double)RAND_MAX + 1.0); }
-}  // namespace
+}
 
 HttpResult Http_StreamWithRetry(Arena* arena, const HttpRequest* req, HttpStreamSink sink,
                                 volatile i32* abort, const HttpRetryPolicy* policy) {

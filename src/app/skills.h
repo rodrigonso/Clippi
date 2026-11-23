@@ -39,8 +39,8 @@ StrView Skills_ExtractBody(Arena* arena, StrView content);
 
 const Skill* Skills_Find(const SkillSet* skills, StrView name);
 
-// Appends pi's `<available_skills>` block. Returns false without appending a
-// partial block when the result would exceed `maxBytes`.
+// pi's `<available_skills>` block; appends nothing if it would exceed
+// `maxBytes`.
 bool Skills_AppendPromptBlock(StrBuf* out, const SkillSet* skills, u32 maxBytes);
 
 StrView Skills_FormatInvocation(Arena* arena, const Skill* skill, StrView body,

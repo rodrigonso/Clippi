@@ -1,5 +1,3 @@
-"""`watch` -- live RSS readout for matching agent processes."""
-
 from __future__ import annotations
 
 import os

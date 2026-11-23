@@ -1,9 +1,5 @@
 #include "app/provider_registry.h"
 
-// OpenRouter is the default provider; ChatGPT serves a ChatGPT subscription
-// through the Codex backend. Each live catalog owns model availability and
-// capabilities; this registry contains no model table.
-
 namespace {
 
 const ResponsesEndpoint OPENROUTER_ENDPOINT = {
@@ -66,7 +62,7 @@ const ProviderSpec PROVIDERS[] = {
     },
 };
 
-}  // namespace
+}
 
 u32 ProviderRegistry_Count() {
   return (u32)(sizeof(PROVIDERS) / sizeof(PROVIDERS[0]));

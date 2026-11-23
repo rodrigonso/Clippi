@@ -39,8 +39,7 @@ struct AtomicFlagWaiter {
   volatile i32 Observed;
 };
 
-// Spins on the flag the way a cancellation poll does, then records that it saw
-// the store. A cached read would spin forever and hang the join below.
+// A cached read would spin forever and hang the join below.
 void AtomicFlagWorker(void* arg) {
   AtomicFlagWaiter* w = (AtomicFlagWaiter*)arg;
   while (Atomic_LoadI32(w->Flag) == 0) Sleep_Ms(1);
@@ -48,8 +47,6 @@ void AtomicFlagWorker(void* arg) {
 }
 
 void TestAtomicFlag() {
-  // Round-trip through the accessors, including the negative and max values a
-  // plain bool flag would silently truncate.
   volatile i32 v = 0;
   CHECK(Atomic_LoadI32(&v) == 0);
   Atomic_StoreI32(&v, 1);
@@ -59,19 +56,15 @@ void TestAtomicFlag() {
   Atomic_StoreI32(&v, 0);
   CHECK(Atomic_LoadI32(&v) == 0);
 
-  // A load must not mutate: the OR-with-zero trick on Windows would be a bug
-  // if it wrote anything back.
   Atomic_StoreI32(&v, 42);
   for (int i = 0; i < 8; i++) CHECK(Atomic_LoadI32(&v) == 42);
 
-  // Cross-thread visibility: the flag is set by this thread and polled by
-  // another, which is exactly how cancellation is delivered.
   volatile i32 flag = 0;
   AtomicFlagWaiter waiter = {&flag, 0};
   Thread t;
   CHECK(Thread_Start(&t, AtomicFlagWorker, &waiter));
   Sleep_Ms(5);
-  CHECK(Atomic_LoadI32(&waiter.Observed) == 0);  // nothing set it yet
+  CHECK(Atomic_LoadI32(&waiter.Observed) == 0);
   Atomic_StoreI32(&flag, 1);
   Thread_Join(&t);
   CHECK(Atomic_LoadI32(&waiter.Observed) == 1);
@@ -101,12 +94,10 @@ void TestMonotonicMicros() {
   CHECK(skew <= 25);  // GetTickCount64 can advance on a ~16 ms tick.
 }
 
-}  // namespace
+}
 
 void TestThread() {
   TestAtomicFlag();
-  // Mutex mutual-exclusion: N threads each increment ITERS times; the sum must
-  // be exact (no lost updates).
   Mutex m;
   Mutex_Init(&m);
   int val = 0;
@@ -127,7 +118,6 @@ void TestThread() {
   CHECK(val == N * ITERS);
   Mutex_Destroy(&m);
 
-  // CondVar signal/wait: consumer blocks until the producer publishes.
   Box b;
   Mutex_Init(&b.M);
   Cond_Init(&b.Cv);

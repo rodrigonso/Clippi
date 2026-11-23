@@ -17,10 +17,7 @@ struct P {
   bool ok;
 };
 
-// Fails a container that would nest deeper than JSON_MAX_DEPTH. The parser and
-// every consumer that walks the DOM recurse once per level, so the bound is
-// what keeps hostile input (a tool call's arguments, a session line) from
-// exhausting a worker thread's stack.
+// The parser and every DOM walker recurse per level; this bound keeps hostile input from exhausting a worker stack.
 bool EnterContainer(P* s) {
   if (++s->depth > JSON_MAX_DEPTH) {
     s->ok = false;
@@ -32,8 +29,6 @@ bool EnterContainer(P* s) {
 
 bool IsDigit(char c) { return c >= '0' && c <= '9'; }
 
-// Returns the end of the RFC 8259 number starting at p, or null when p does not
-// start one.
 const char* ScanNumber(const char* p, const char* end) {
   if (p < end && *p == '-') p++;
   if (p == end || !IsDigit(*p)) return nullptr;
@@ -74,7 +69,7 @@ JsonValue* NewVal(P* s, JsonKind k) {
 }
 
 StrView ParseString(P* s) {
-  s->p++;  // opening quote
+  s->p++;
   StrBuf b = StrBuf_Make(s->a, 16);
   while (s->p < s->end) {
     char c = *s->p++;
@@ -130,8 +125,7 @@ StrView ParseString(P* s) {
 
 JsonValue* ParseValue(P* s);
 
-// Containers only succeed through their closing bracket; running out of input
-// first is a parse error, so a truncated document never reads as complete.
+// Running out of input before the closing bracket is an error, so a truncated document never reads as complete.
 JsonValue* ParseObject(P* s) {
   if (!EnterContainer(s)) return nullptr;
   Array<JsonMember> members = Array_Make<JsonMember>(s->a, 8);
@@ -268,9 +262,8 @@ JsonValue* ParseValue(P* s) {
     s->ok = false;
     return nullptr;
   }
-  // Only JSON's own number grammar is accepted, and strtod must consume exactly
-  // that span: alone it would also take "+1", "-inf", "0x10", "01" and "1.",
-  // none of which re-serialize as JSON. A finite check rejects "1e400".
+  // strtod alone would also take "+1", "-inf", "0x10", "01" and "1.", so it must consume exactly
+  // the JSON number span. A finite check rejects "1e400".
   const char* numberEnd = ScanNumber(s->p, s->end);
   if (!numberEnd) {
     s->ok = false;
@@ -294,7 +287,7 @@ JsonValue* ParseValue(P* s) {
   return v;
 }
 
-}  // namespace
+}
 
 JsonValue* Json_Parse(Arena* arena, StrView text) {
   P s;
@@ -392,12 +385,8 @@ void Json_WriteString(StrBuf* b, StrView s) {
   for (u32 i = 0; i < s.Length; i++) {
     char c = s.Data[i];
     if ((u8)c >= 0x80) {
-      // Every provider rejects a request body that is not well-formed UTF-8.
-      // One bad byte -- a legacy-codepage shell byte, a chopped multi-byte
-      // character, binary file content -- would otherwise fail this request and
-      // every later one, since the poisoned text is replayed from history. This
-      // is the single serialization choke point, so it is the one place that
-      // has to hold the invariant.
+      // Providers reject non-UTF-8 bodies, and bad text would be replayed from history on every
+      // later request; this is the single serialization choke point that holds the invariant.
       u32 length = StrView_Utf8SequenceLength(s, i);
       if (length) {
         StrBuf_Append(b, StrView{s.Data + i, length});

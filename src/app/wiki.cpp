@@ -16,8 +16,6 @@ const StrView kTypeNames[] = {SVL(""),        SVL("user"),      SVL("feedback"),
                               SVL("project"), SVL("reference"), SVL("topic")};
 constexpr u32 kTypeCount = sizeof(kTypeNames) / sizeof(kTypeNames[0]);
 
-// Pages larger than this are reported by size without being read; they break
-// the page budget by orders of magnitude either way.
 constexpr u64 kMaxReadBytes = (u64)1 << 20;
 constexpr u32 kCatalogSummaryMaxBytes = 240;
 
@@ -96,8 +94,6 @@ StrView LinkMessage(Arena* arena, const char* prefix, StrView slug,
   return StrBuf_View(&message);
 }
 
-// Page indices with pinned pages first, then the most recently modified, then
-// by slug so the order is stable across scans.
 Array<u32> CatalogOrder(Arena* arena, const Wiki* wiki) {
   u32 count = wiki->Pages.Count;
   Array<u32> order = Array_Make<u32>(arena, count ? count : 1);
@@ -113,7 +109,7 @@ Array<u32> CatalogOrder(Arena* arena, const Wiki* wiki) {
   return order;
 }
 
-}  // namespace
+}
 
 StrView Wiki_DefaultStore(Arena* arena) { return ClippiDataPath(arena, "memory"); }
 
@@ -123,9 +119,7 @@ bool Wiki_Locate(Arena* arena, StrView store, StrView workingDirectory,
   if (!arena || !store.Length || !workingDirectory.Length) return false;
   StrView workTree = {};
   StrView common = Sys_GitCommonDir(arena, workingDirectory, &workTree);
-  // The key follows the common git directory, which every linked worktree
-  // shares. The files to read live in the main checkout when there is one;
-  // a submodule or a bare repository's worktree only has the tree it is in.
+  // Keyed by the git common directory, which every linked worktree shares.
   StrView identity = {};
   if (common.Length) {
     identity = Fs_RealPath(arena, common);
@@ -374,7 +368,6 @@ void Wiki_AppendCatalog(Arena* arena, StrBuf* out, const Wiki* wiki,
   if (!stats) stats = &local;
   Array<u32> order = CatalogOrder(arena, wiki);
   u32 start = out->Length;
-  // Room for the closing count line, so a full catalog still ends with it.
   const u32 kReserve = 96;
   StrBuf line = StrBuf_Make(arena, 512);
   for (u32 i = 0; i < order.Count; i++) {
@@ -452,7 +445,7 @@ namespace {
 
 const StrView kJournalKinds[] = {SVL(""), SVL("session"), SVL("page"), SVL("dream")};
 
-}  // namespace
+}
 
 bool WikiJournal_Append(Arena* scratch, StrView journalPath,
                         const WikiJournalEntry* entry) {
@@ -490,8 +483,7 @@ void WikiJournal_Read(Arena* arena, StrView journalPath, u64 offset,
   *outEnd = offset;
   StrView content = {};
   if (File_ReadAll(arena, journalPath, &content) != FileIoResult::Success) return;
-  // A journal shorter than the offset was replaced; start over rather than
-  // skip whatever the new one holds.
+  // A journal shorter than the offset was replaced; start over.
   u64 pos = offset <= content.Length ? offset : 0;
   while (pos < content.Length) {
     u64 end = pos;

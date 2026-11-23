@@ -8,7 +8,6 @@ namespace {
 
 constexpr f64 JSON_SAFE_INTEGER_MAX = 9007199254740991.0;
 
-// Durable-record extensions over the shared JsonWriter in json/json.h.
 void WriteId(JsonWriter* w, const char* key, DurableId id) {
   JsonWrite_Key(w, key);
   Json_WriteString(w->Out, DurableId_View(&id));
@@ -138,8 +137,6 @@ bool ReadRequiredBool(const JsonValue* object, const char* key, bool* out) {
   return true;
 }
 
-// Absent is not an error: a block Clippi synthesized has no provider identity,
-// and neither does one recorded before signatures were written.
 bool ReadOptionalString(const JsonValue* object, const char* key,
                         StrView* out) {
   JsonValue* value = Json_Get(object, key);
@@ -196,8 +193,6 @@ void WriteContent(StrBuf* out, const Content* content) {
       JsonWrite_String(&w, "mimeType", content->ImageMimeType);
       break;
   }
-  // Only blocks the provider identified carry one, so it is written only when
-  // present rather than as an empty field on every block.
   if (content->Signature.Length)
     JsonWrite_String(&w, "signature", content->Signature);
   JsonWrite_End(&w);
@@ -241,8 +236,7 @@ void WriteMessage(StrBuf* out, const Message* message) {
   JsonWrite_End(&w);
 }
 
-// Decoded strings are views into the JSON document, which the caller's arena
-// already owns, so nothing here allocates.
+// Views into the JSON document, which the caller's arena owns.
 bool DecodeContent(const JsonValue* object, Content* out) {
   if (!Json_IsObject(object)) return false;
   Content result = {};
@@ -393,8 +387,7 @@ void WriteStringArray(StrBuf* out, const Array<StrView>* values) {
   StrBuf_AppendChar(out, ']');
 }
 
-// Decodes an optional array of non-empty strings. A missing key yields an empty
-// array so records written before the field existed stay readable.
+// A missing key yields an empty array so older records stay readable.
 bool ReadOptionalStringArray(Arena* arena, const JsonValue* payload, const char* key,
                              Array<StrView>* out) {
   *out = Array_Make<StrView>(arena, 1);
@@ -554,7 +547,7 @@ DurableId ParentIdFor(const SessionRecord* record) {
   }
 }
 
-}  // namespace
+}
 
 bool SessionRecord_IsTreeNode(SessionRecordKind kind) {
   return kind != SessionRecordKind::SessionName && kind != SessionRecordKind::Leaf;

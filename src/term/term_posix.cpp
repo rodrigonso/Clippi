@@ -19,9 +19,7 @@ bool Term_IsInteractive() { return isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)
 
 bool Term_SystemAccent(u8* r, u8* g, u8* b) {
 #if defined(__APPLE__)
-  // macOS stores a named accent (-1 graphite, 0 red ... 6 pink), not a colour;
-  // these are the dark-appearance system colours for each. An absent key is
-  // Multicolor, whose accent is blue.
+  // macOS stores a named accent (-1 graphite ... 6 pink), not a colour; an absent key is Multicolor (blue).
   static const u8 ACCENTS[8][3] = {
       {0x98, 0x98, 0x9d}, {0xff, 0x45, 0x3a}, {0xff, 0x9f, 0x0a}, {0xff, 0xd6, 0x0a},
       {0x32, 0xd7, 0x4b}, {0x0a, 0x84, 0xff}, {0xbf, 0x5a, 0xf2}, {0xff, 0x37, 0x5f},

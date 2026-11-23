@@ -79,7 +79,7 @@ StrView BlockScalar(Arena* arena, StrView yaml, u32* pos, bool folded) {
   return StrView_Trim(StrBuf_View(&out));
 }
 
-}  // namespace
+}
 
 bool Frontmatter_ParseBool(StrView value) {
   return StrView_EqInsensitiveAscii(value, SVL("true")) ||
@@ -113,8 +113,7 @@ void Frontmatter_Parse(Arena* arena, StrView content, FrontmatterField* fields,
         break;
       }
     }
-    // A block scalar's continuation lines must be consumed even when the key
-    // is unrecognized, or they would be parsed as top-level keys.
+    // Consume block-scalar continuations even for unknown keys.
     bool isBlock = raw.Length && (raw.Data[0] == '|' || raw.Data[0] == '>');
     StrView value = isBlock ? BlockScalar(arena, yaml, &pos, raw.Data[0] == '>')
                             : ScalarValue(raw);

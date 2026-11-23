@@ -50,7 +50,6 @@ void WriteModel(StrBuf* out, const Model* model) {
   JsonWrite_End(&w);
 }
 
-// A positive integral number that fits in u32, else 0.
 u32 PositiveU32(const JsonValue* value) {
   if (!value || value->Kind != JsonKind::Number) return 0;
   f64 number = value->Number;
@@ -59,9 +58,7 @@ u32 PositiveU32(const JsonValue* value) {
   return (u32)number;
 }
 
-// Fills the catalog fields of `model` from its cache entry. Effort names this
-// build does not know are skipped, so a cache written by a newer Clippi still
-// applies; anything else malformed rejects the entry.
+// Unknown effort names are skipped so newer caches still apply.
 bool ReadEntry(const JsonValue* entry, Model* model) {
   model->ContextWindow = PositiveU32(Json_Get(entry, "contextWindow"));
   JsonValue* options = Json_Get(entry, "contextWindowOptions");
@@ -91,7 +88,7 @@ bool ReadEntry(const JsonValue* entry, Model* model) {
   return Model_MetadataIsValid(model);
 }
 
-}  // namespace
+}
 
 bool ModelCache_Save(StrView agentDirectory, StrView providerId,
                      const Model* models, u32 count) {

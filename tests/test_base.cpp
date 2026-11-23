@@ -30,33 +30,25 @@ void TestArena() {
   big[5 * 1024 * 1024 - 1] = 2;
   CHECK(big[0] == 1 && big[5 * 1024 * 1024 - 1] == 2);
 
-  // ArenaReset recycles address space but keeps the pages, so an arena that
-  // spiked once holds that peak for its whole life. ArenaTrim is what gives it
-  // back, and the reservation survives so the arena keeps working.
   usize peak = a.Committed;
   CHECK(peak >= 5 * 1024 * 1024);
   ArenaReset(&a);
-  CHECK_ALL(a.Used == 0, a.Committed == peak);  // reset alone frees nothing
+  CHECK_ALL(a.Used == 0, a.Committed == peak);
 
   ArenaTrim(&a, 64 * 1024);
   CHECK_ALL(a.Committed < peak, a.Committed <= 64 * 1024, a.Used == 0);
 
-  // Still usable: the range is reserved, so it commits again on demand.
   byte* again = (byte*)ArenaAlloc(&a, 2 * 1024 * 1024, 1);
   again[0] = 3;
   again[2 * 1024 * 1024 - 1] = 4;
   CHECK_ALL(again[0] == 3, again[2 * 1024 * 1024 - 1] == 4,
             a.Committed >= 2 * 1024 * 1024);
 
-  // Trimming to at or above what is committed is a no-op, which is what keeps
-  // it cheap to call unconditionally.
   usize before = a.Committed;
   ArenaReset(&a);
   ArenaTrim(&a, before * 2);
   CHECK(a.Committed == before);
 
-  // A keep near SIZE_MAX must stay a no-op: rounding it up to a commit chunk
-  // wraps to zero, which would decommit everything the keep was covering.
   ArenaTrim(&a, (usize)0 - 1);
   CHECK(a.Committed == before);
 
@@ -151,16 +143,10 @@ void TestHostInfo() {
   u64 peakRss = PeakRssBytes();
   CHECK_ALL(currentRss > 0, peakRss >= currentRss);
 
-  // NowMillis must actually be millisecond-resolution wall clock. It used to be
-  // time(nullptr)*1000, which only ever landed on exact multiples of 1000 and
-  // made sub-second timestamps indistinguishable.
   {
     u64 now = NowMillis();
-    // Sanity: after 2020-01-01 and before 2100, i.e. plausibly a Unix epoch ms.
     CHECK_ALL(now > 1577836800000ull, now < 4102444800000ull);
 
-    // Sample across a short sleep; a 1-second-granularity clock would report
-    // every sample as a multiple of 1000.
     bool sawSubSecond = (now % 1000ull) != 0;
     for (int i = 0; i < 40 && !sawSubSecond; i++) {
       Sleep_Ms(3);
@@ -168,24 +154,20 @@ void TestHostInfo() {
     }
     CHECK(sawSubSecond);
 
-    // Monotone across a sleep, and advancing by roughly the slept amount.
     u64 before = NowMillis();
     Sleep_Ms(30);
     u64 after = NowMillis();
     CHECK_ALL(after >= before, after - before < 5000ull);
   }
 
-  // Pure HEAD parsing: "ref: refs/heads/<branch>" -> <branch> (slashes kept).
   CHECK_ALL(StrView_EqCStr(Git_BranchFromHead(SVL("ref: refs/heads/main\n")), "main"),
             StrView_EqCStr(
                 Git_BranchFromHead(SVL("ref: refs/heads/worktree/swift-mortar-e0e4\n")),
                 "worktree/swift-mortar-e0e4"),
             StrView_EqCStr(Git_BranchFromHead(SVL("ref: refs/heads/feature/x")),
                            "feature/x"));
-  // Detached HEAD (raw SHA) -> empty.
   CHECK(Git_BranchFromHead(SVL("0123456789abcdef0123456789abcdef01234567\n")).Length == 0);
 
-  // Pure gitdir-file parsing (worktree/submodule indirection), trailing sep stripped.
   CHECK_ALL(StrView_EqCStr(
                 Git_GitdirFromFile(SVL("gitdir: C:/repo/.git/worktrees/wt/\n")),
                 "C:/repo/.git/worktrees/wt"),
@@ -193,19 +175,14 @@ void TestHostInfo() {
                            "../.git/modules/sub"),
             Git_GitdirFromFile(SVL("not a gitdir file")).Length == 0);
 
-  // Home abbreviation.
   StrView home = SVL("C:\\Users\\rodri");
   CHECK_ALL(
       StrView_EqCStr(Sys_AbbreviatePath(&a, SVL("C:\\Users\\rodri\\.worktrees\\wt"), home),
                      "~\\.worktrees\\wt"),
       StrView_EqCStr(Sys_AbbreviatePath(&a, home, home), "~"));
-  // A path that only shares a partial final segment must NOT be abbreviated.
   CHECK(StrView_EqCStr(Sys_AbbreviatePath(&a, SVL("C:\\Users\\rodrigo\\x"), home), "C:\\Users\\rodrigo\\x"));
-  // Empty home -> unchanged copy.
   CHECK(StrView_EqCStr(Sys_AbbreviatePath(&a, SVL("D:\\proj"), StrView{nullptr, 0}), "D:\\proj"));
 
-  // Live queries: cwd is a non-empty path; the branch lookup must not crash and,
-  // when it resolves, returns a clean single-line name (may be empty off-repo).
   StrView cwd = Sys_CurrentDir(&a);
   CHECK(cwd.Length > 0);
   StrView executable = Sys_ExecutablePath(&a);
@@ -218,7 +195,6 @@ void TestHostInfo() {
 #else
     CHECK(executable.Data[0] == '/');
 #endif
-    // Discovery must not start resolving argv[0] relative to the new cwd.
     CHECK(Sys_SetCurrentDir(SVL("..")));
     CHECK(StrView_Eq(Sys_ExecutablePath(&a), executable));
     CHECK(Sys_SetCurrentDir(cwd));

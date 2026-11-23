@@ -14,7 +14,7 @@ const StrView kContextCandidates[] = {
     SVL("AGENTS.override.md"), SVL("AGENTS.md"), SVL("AGENTS.MD"),
     SVL("CLAUDE.md"), SVL("CLAUDE.MD")};
 
-// Identity text for the built-in prompt, mirroring pi's `buildSystemPrompt`.
+// Mirrors pi's `buildSystemPrompt`.
 constexpr const char* kDefaultPromptPreamble =
     "You are an expert coding assistant operating inside Clippi, a coding agent "
     "harness. You help users by reading files, executing commands, editing "
@@ -314,9 +314,7 @@ bool HasTool(const PromptContextOptions* options, StrView name) {
   return false;
 }
 
-// The wiki is read only at build time, so pages written during a session reach
-// the prompt on the next build (a new session, `/reload`, or a project switch)
-// and the system prompt stays stable within one.
+// Read only at build time so the system prompt stays stable within a session.
 void DiscoverMemory(PromptContext* context, const PromptContextOptions* options) {
   if (!options->MemoryStore.Length) return;
   WikiLocation location = {};
@@ -327,8 +325,7 @@ void DiscoverMemory(PromptContext* context, const PromptContextOptions* options)
   Wiki wiki = {};
   Wiki_Scan(&context->Mem, location.Pages, &wiki);
   context->MemoryPageCount = wiki.Pages.Count;
-  // pi exposes skills only when the model can read their files; the wiki's
-  // pages are reached the same way.
+  // pi exposes skills only when the model can read files; wiki pages likewise.
   if (!HasTool(options, SVL("read"))) return;
 
   bool writable = HasTool(options, SVL("write")) || HasTool(options, SVL("edit"));
@@ -357,8 +354,6 @@ void AddGuideline(Array<StrView>* guidelines, StrView value) {
   Array_Push(guidelines, value);
 }
 
-// A tool is listed only when it supplies a snippet, so tools that exist purely
-// for the model's benefit stay out of the prompt.
 bool AppendToolList(const PromptContextOptions* options, StrBuf* prompt) {
   bool listedAny = false;
   for (u32 i = 0; i < options->ToolCount; i++) {
@@ -374,14 +369,10 @@ bool AppendToolList(const PromptContextOptions* options, StrBuf* prompt) {
   return listedAny || AppendCStrLimited(prompt, "(none)\n");
 }
 
-// Guideline order mirrors pi: the shell fallback bullet, then each tool's own
-// bullets in tool order, then the always-on pair. Duplicates are dropped so
-// tools can share advice without repeating it in the prompt.
+// Guideline order mirrors pi: shell fallback, per-tool bullets, always-on pair.
 Array<StrView> CollectGuidelines(Arena* arena,
                                  const PromptContextOptions* options) {
   Array<StrView> guidelines = Array_Make<StrView>(arena, 16);
-  // Only worth steering the model toward the shell when no dedicated search or
-  // listing tool is active. Keyed on Clippi's built-in tool names.
   if (HasTool(options, SVL("shell")) && !HasTool(options, SVL("grep")) &&
       !HasTool(options, SVL("find")) && !HasTool(options, SVL("ls")))
     AddGuideline(&guidelines,
@@ -399,9 +390,7 @@ Array<StrView> CollectGuidelines(Arena* arena,
   return guidelines;
 }
 
-// Mirrors pi's `buildSystemPrompt` default branch: a fixed preamble, an
-// opt-in tool list built from one-line snippets, then guidelines composed from
-// the active tool set.
+// Mirrors pi's `buildSystemPrompt` default branch.
 bool BuildDefaultPrompt(PromptContext* context,
                         const PromptContextOptions* options, StrBuf* prompt) {
   if (!AppendCStrLimited(prompt, kDefaultPromptPreamble) ||
@@ -480,7 +469,7 @@ too_large:
   return false;
 }
 
-}  // namespace
+}
 
 bool PromptContext_Build(const PromptContextOptions* options, PromptContext* out,
                          StrBuf* error) {

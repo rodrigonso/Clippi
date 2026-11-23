@@ -48,8 +48,6 @@ EventLog MakeLog(Arena* arena) {
   return log;
 }
 
-// Feeds an SSE transcript one byte at a time, which is the harshest framing a
-// real socket can produce and the only way to prove the line buffer is right.
 void FeedByByte(ResponsesParse* state, const char* sse) {
   for (const char* p = sse; *p; p++) ResponsesParse_Feed(state, StrView{p, 1u});
 }
@@ -67,15 +65,11 @@ Model TestModel() {
   return model;
 }
 
-// ---- URL joining ---------------------------------------------------------
-
 void TestUrls() {
   Arena arena = ArenaCreate();
   CHECK(StrView_EqCStr(
       Responses_Url(&arena, SVL("https://openrouter.ai/api/v1"), "responses"),
       "https://openrouter.ai/api/v1/responses"));
-  // OpenRouter's address already ends in /v1; appending a second one is the
-  // most common way to get a 404 here.
   CHECK(StrView_EqCStr(
       Responses_Url(&arena, SVL("https://gateway.test/api/v1"), "models"),
       "https://gateway.test/api/v1/models"));
@@ -97,8 +91,6 @@ void TestUrls() {
   ArenaRelease(&arena);
 }
 
-// ---- request building ----------------------------------------------------
-
 void TestRequestBasics() {
   Arena arena = ArenaCreate();
   Model model = TestModel();
@@ -117,8 +109,6 @@ void TestRequestBasics() {
             Contains(body, "\"store\":false"), Contains(body, "\"stream\":true"),
             Contains(body, "\"instructions\":\"be brief\""),
             Contains(body, "\"max_output_tokens\":4096"));
-  // Reasoning must be requested with a summary, and asked back encrypted --
-  // without the include there is nothing to replay on the next turn.
   CHECK_ALL(
       Contains(body, "\"reasoning\":{\"effort\":\"low\",\"summary\":\"auto\"}"),
       Contains(body, "\"include\":[\"reasoning.encrypted_content\"]"));
@@ -126,7 +116,6 @@ void TestRequestBasics() {
                  "{\"type\":\"message\",\"role\":\"user\",\"content\":"
                  "[{\"type\":\"input_text\",\"text\":\"hello \\\"world\\\"\"}]}"));
 
-  // "ultra" is Clippi's name for the tier the wire calls "max".
   options.Profile.Effort = ModelEffort::Ultra;
   StrBuf ultra = Responses_BuildRequest(&arena, &model, &context, &options);
   CHECK(Contains(StrBuf_View(&ultra), "\"reasoning\":{\"effort\":\"max\""));
@@ -135,7 +124,6 @@ void TestRequestBasics() {
   StrBuf xhigh = Responses_BuildRequest(&arena, &model, &context, &options);
   CHECK(Contains(StrBuf_View(&xhigh), "\"reasoning\":{\"effort\":\"xhigh\""));
 
-  // A model that advertises no effort support sends no reasoning block at all.
   Model plain = model;
   plain.EffortMask = 0;
   plain.DefaultEffort = ModelEffort::None;
@@ -146,8 +134,6 @@ void TestRequestBasics() {
   CHECK_ALL(!Contains(bare, "\"reasoning\":{"),
             !Contains(bare, "max_output_tokens"));
 
-  // The ChatGPT backend refuses an output budget and a request without
-  // instructions, and takes its own effort names back verbatim.
   options.Profile.Effort = ModelEffort::Ultra;
   LlmContext unprompted = context;
   unprompted.SystemPrompt = {};
@@ -192,18 +178,13 @@ void TestRequestTools() {
 
   StrBuf request = Responses_BuildRequest(&arena, &model, &context, &options);
   StrView body = StrBuf_View(&request);
-  // The regression this whole endpoint exists for: function tools and a
-  // reasoning effort in one request, which chat-completions rejects.
   CHECK_ALL(Contains(body, "\"reasoning\":{\"effort\":\"high\""),
             Contains(body, "\"tool_choice\":\"auto\""),
             Contains(body, "\"parallel_tool_calls\":true"),
             Contains(body, "\"strict\":false"));
-  // Responses declares a function tool flat, not nested under "function".
   CHECK_ALL(Contains(body, "{\"type\":\"function\",\"name\":\"read\""),
             Contains(body, "\"strict\":false"),
             !Contains(body, "\"function\":{\"name\""));
-  // Schemas are re-serialized canonically, and an unparseable one degrades to
-  // an empty object rather than corrupting the request.
   CHECK_ALL(Contains(body,
                      "\"parameters\":{\"type\":\"object\",\"properties\":{\"path\""
                      ":{\"type\":\"string\"}}}"),
@@ -230,7 +211,6 @@ void TestRequestTools() {
       !Contains(reviewerBody, "\"parallel_tool_calls\":true"),
       !Contains(reviewerBody, "\"strict\":false"));
 
-  // A turn with no tools still declares the rest of its shape.
   context.ToolCount = 0;
   StrBuf toolless = Responses_BuildRequest(&arena, &model, &context, &options);
   CHECK(!Contains(StrBuf_View(&toolless), "\"tools\":["));
@@ -266,8 +246,6 @@ void TestRequestMessageShapes() {
   Array_Push(&errored.Content, Content_Text(SVL("half a thought")));
   errored.Stop = StopReason::Error;
 
-  // Reasoning with no signature cannot be reconstructed, so the turn carries
-  // nothing the server can act on.
   Message thinkingOnly = Message_AssistantEmpty(&arena);
   thinkingOnly.Provider = SVL("openrouter");
   thinkingOnly.Model = SVL("test-model");
@@ -284,7 +262,6 @@ void TestRequestMessageShapes() {
             Contains(body,
                      "{\"type\":\"input_image\",\"detail\":\"auto\",\"image_url\":"
                      "\"data:image/png;base64,QUJD\"}"));
-  // The reasoning item is replayed verbatim, encrypted content and all.
   CHECK(Contains(body,
                  "{\"type\":\"reasoning\",\"id\":\"rs_1\",\"encrypted_content\""
                  ":\"xx\"}"));
@@ -294,8 +271,6 @@ void TestRequestMessageShapes() {
             Contains(body,
                      "{\"type\":\"output_text\",\"text\":\"calling\","
                      "\"annotations\":[]}"));
-  // `arguments` is a JSON string holding JSON, and the item id rides alongside
-  // the call id.
   CHECK(Contains(body,
                  "{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":"
                  "\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":"
@@ -305,8 +280,6 @@ void TestRequestMessageShapes() {
                  "\"output\":\"body\"}"));
   CHECK_ALL(!Contains(body, "mulling"), !Contains(body, "half a thought"));
 
-  // Item ids are scoped to the model that issued them. Against a different
-  // model the turn still goes, but under a generated id and with no reasoning.
   Model other = model;
   other.Id = SVL("other-model");
   StrBuf foreign = Responses_BuildRequest(&arena, &other, &context, nullptr);
@@ -317,8 +290,6 @@ void TestRequestMessageShapes() {
             Contains(foreignBody, "\"text\":\"calling\""));
   ArenaRelease(&arena);
 }
-
-// ---- streaming -----------------------------------------------------------
 
 void TestStreamText() {
   Arena arena = ArenaCreate();
@@ -351,19 +322,15 @@ void TestStreamText() {
   CHECK_ALL(message.Content.Count == 1,
             StrView_EqCStr(message.Content.Data[0].Text, "Hello"),
             StrView_EqCStr(StrBuf_View(&log.Text), "Hello"));
-  // The item's identity is kept so the next request can replay it.
   CHECK(StrView_EqCStr(message.Content.Data[0].Signature,
                        "{\"id\":\"msg_1\",\"phase\":\"final\"}"));
   CHECK_ALL(CountKind(&log, StreamEventKind::TextStart) == 1,
             CountKind(&log, StreamEventKind::TextEnd) == 1,
             CountKind(&log, StreamEventKind::TextDelta) == 2);
-  // input_tokens is inclusive of the cache hit; Input must end up meaning
-  // "billed at full rate" so context accounting stays honest.
   CHECK_ALL(state.Use.Input == 20, state.Use.CacheRead == 100,
             state.Use.Output == 8, state.Use.Reasoning == 3,
             state.Use.TotalTokens == 128);
 
-  // Finish is idempotent: a second call must not duplicate content.
   ResponsesParse_Finish(&state);
   CHECK(message.Content.Count == 1);
   ArenaRelease(&arena);
@@ -408,8 +375,6 @@ void TestStreamReasoningAndTools() {
             message.Content.Count == 2);
   CHECK_ALL(message.Content.Data[0].Kind == ContentKind::Thinking,
             StrView_EqCStr(message.Content.Data[0].Text, "think\n\nmore"));
-  // The whole reasoning item is kept verbatim: it is the only thing that can
-  // be handed back, and it cannot be rebuilt from the summary text.
   CHECK_ALL(Contains(message.Content.Data[0].Signature, "\"encrypted_content\""),
             Contains(message.Content.Data[0].Signature, "ENC"),
             Contains(message.Content.Data[0].Signature, "\"type\":\"reasoning\""));
@@ -428,7 +393,6 @@ void TestStreamReasoningAndTools() {
 }
 
 void TestStreamEdgeCases() {
-  // Hitting the output cap is truncation, not failure.
   {
     Arena arena = ArenaCreate();
     EventLog log = MakeLog(&arena);
@@ -444,7 +408,6 @@ void TestStreamEdgeCases() {
               ResponsesParse_SawTerminal(&state));
     ArenaRelease(&arena);
   }
-  // Any other incomplete reason is an error.
   {
     Arena arena = ArenaCreate();
     EventLog log = MakeLog(&arena);
@@ -488,9 +451,6 @@ void TestStreamEdgeCases() {
               StrView_EqCStr(state.Error, "stream broke"));
     ArenaRelease(&arena);
   }
-  // Noise a real stream carries: comments, keepalives, unparseable payloads,
-  // an unknown item type, and a truncated tail. None may crash or fabricate a
-  // terminal state, and whatever text arrived before the cut is kept.
   {
     Arena arena = ArenaCreate();
     EventLog log = MakeLog(&arena);
@@ -518,8 +478,6 @@ void TestStreamEdgeCases() {
     ArenaRelease(&arena);
   }
 }
-
-// ---- model catalog -------------------------------------------------------
 
 void TestModelsCatalog() {
   Arena arena = ArenaCreate();
@@ -567,7 +525,7 @@ void TestModelsCatalog() {
   ArenaRelease(&arena);
 }
 
-}  // namespace
+}
 
 void TestResponses() {
   TestUrls();

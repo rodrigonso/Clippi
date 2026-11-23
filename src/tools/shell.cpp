@@ -30,7 +30,6 @@ static void Shell_AppendHex16(StrBuf* b, u64 v) {
 static void* Shell_OpenOutput(void*, Arena* arena, StrView directory, StrView* outPath) {
   StrBuf path = StrBuf_Make(arena, 256);
   if (directory.Length) {
-    // Created lazily: a session that never overflows leaves no directory.
     if (!Fs_MkdirP(arena, directory)) return nullptr;
     StrBuf_Append(&path, directory);
     char last = path.Data[path.Length - 1];
@@ -58,12 +57,8 @@ static void* Shell_OpenOutput(void*, Arena* arena, StrView directory, StrView* o
   }
   u32 prefixLength = path.Length;
 
-  // The OS temp directory is world-writable on POSIX, so a guessable name lets
-  // another user pre-create the path (or a symlink to it) and capture or
-  // redirect the command output. The name is drawn from the CSPRNG and the
-  // file is created exclusively, so an existing path is an error rather than
-  // something to overwrite. A session directory is not shared, but it costs
-  // nothing to hold it to the same standard.
+  // Security: temp dirs are world-writable, so the name comes from the CSPRNG
+  // and the file is created exclusively (no pre-created path or symlink).
   for (u32 attempt = 0; attempt < 8; attempt++) {
     path.Length = prefixLength;
     u64 unique = 0;
@@ -102,8 +97,7 @@ static bool Shell_CloseOutput(void*, void* file) {
   return fclose((FILE*)file) == 0;
 }
 
-// The extra byte preserves whether the byte-limited tail starts immediately
-// after a newline. Trunc_Tail also uses it when snapping a UTF-8 boundary.
+// +1 tells Trunc_Tail whether the tail starts after a newline / UTF-8 boundary.
 static constexpr u32 SHELL_TAIL_CAPACITY = TRUNC_MAX_BYTES + 1;
 
 void ShellCapture_Init(ShellCapture* capture, Arena* arena, StrView directory,

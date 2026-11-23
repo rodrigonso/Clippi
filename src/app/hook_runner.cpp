@@ -6,12 +6,8 @@
 
 namespace {
 
-// A hook is a status notification: dropping one under a burst is strictly
-// better than blocking the agent loop that produced it.
 constexpr u32 HOOK_QUEUE_CAPACITY = 64;
 constexpr u32 HOOK_TOOL_NAME_CAPACITY = 64;
-// Long enough that an ordinary run delivers everything it queued, short enough
-// that a wedged or spammed hook cannot hold the process open.
 constexpr u32 HOOK_SHUTDOWN_DRAIN_MS = 5000;
 
 struct HookQueueItem {
@@ -20,8 +16,7 @@ struct HookQueueItem {
   u32 ToolNameLength;
 };
 
-// A value that does not fit is reported as absent rather than truncated: half a
-// path is worse than no path, because a consumer would act on it.
+// Too long is absent, not truncated: a consumer would act on half a path.
 void StoreField(char* destination, u32 capacity, u32* outLength, StrView value) {
   if (value.Length > capacity) {
     *outLength = 0;
@@ -31,7 +26,7 @@ void StoreField(char* destination, u32 capacity, u32* outLength, StrView value) 
   *outLength = value.Length;
 }
 
-}  // namespace
+}
 
 void HookSession_Store(HookSessionStorage* out, const HookSessionInfo* source) {
   memset(out, 0, sizeof(*out));
@@ -64,12 +59,9 @@ struct HookRunner {
   u32 Head;
   u32 Count;
   bool StopRequested;
-  // Set when the drain grace period expires, to abandon whatever is queued.
   bool Abandon;
-  // Distinguishes a drained queue from one whose last item is still in flight.
   bool Busy;
-  // Cuts a running command short. Separate from StopRequested so the terminal
-  // event can still run to completion after the worker has stopped.
+  // Separate from StopRequested so the terminal event still runs after stop.
   volatile i32 Abort;
 
   Thread Worker;
@@ -104,16 +96,12 @@ void HookRunner_BuildPayload(StrBuf* out, HookEvent event, const HookSessionInfo
   if (tool && tool->Name.Length) {
     JsonWrite_String(&w, "tool_name", tool->Name);
     if (tool->CallId.Length) JsonWrite_String(&w, "tool_call_id", tool->CallId);
-    // Written through JsonWrite_Key so the arguments land as a nested object
-    // rather than an escaped string; see json.h on opening a value yourself.
     if (tool->InputJson.Length) {
       JsonWrite_Key(&w, "tool_input");
       StrBuf_Append(out, tool->InputJson);
     }
     if (tool->InputOmitted) JsonWrite_Bool(&w, "tool_input_omitted", true);
   }
-  // Only meaningful where a decision is being asked for; a one-way notification
-  // has nobody to prompt.
   if (session && event == HookEvent::PreToolUse)
     JsonWrite_Bool(&w, "interactive", session->Interactive);
   JsonWrite_End(&w);
@@ -121,14 +109,10 @@ void HookRunner_BuildPayload(StrBuf* out, HookEvent event, const HookSessionInfo
 
 namespace {
 
-// `session` is a caller-owned snapshot rather than a read of runner->Session,
-// which HookRunner_SetSession may be rewriting concurrently.
+// Caller-owned snapshot: HookRunner_SetSession may rewrite runner->Session.
 void RunOne(HookRunner* runner, Arena* scratch, const HookQueueItem* item,
             const HookSessionInfo* session, volatile i32* abort) {
   StrView toolName = {item->ToolName, item->ToolNameLength};
-  // Sized from the whole table, which bounds any single event's selection, so
-  // configuring one more command than some fixed cap cannot silently stop it
-  // from ever firing.
   u32 capacity = runner->Config->CommandCount;
   if (!capacity) return;
   const HookCommand** commands = ArenaPushArray(scratch, const HookCommand*, capacity);
@@ -142,14 +126,9 @@ void RunOne(HookRunner* runner, Arena* scratch, const HookQueueItem* item,
   HookRunner_BuildPayload(&payload, item->Event, session, &toolInfo);
   StrView payloadView = StrBuf_View(&payload);
 
-  // Output and exit code carry no meaning on this path: the queue is a one-way
-  // status report, and a broken hook must not become an agent failure.
-  // PreToolUse is the exception and does not come through here -- it is
-  // evaluated synchronously by the gate, which does read both.
+  // Output and exit code are ignored: a broken hook is not an agent failure.
   for (u32 i = 0; i < count; i++) {
-    // Checked between commands as well as inside the wait loop: once shutdown
-    // has given up, spawning the rest of an unbounded group only to kill each
-    // one is pure latency.
+    // Also checked between commands, so an abandoned shutdown stops spawning.
     if (abort && Atomic_LoadI32(abort)) break;
     Exec_RunShellInput(scratch, commands[i]->Command, payloadView, commands[i]->TimeoutMs,
                        abort);
@@ -169,8 +148,7 @@ void RunHookWorker(void* user) {
     HookQueueItem item = runner->Items[runner->Head];
     runner->Head = (runner->Head + 1) % HOOK_QUEUE_CAPACITY;
     runner->Count--;
-    // Snapshotted by value, not by view: HookRunner_SetSession may rewrite the
-    // runner's copy the moment the lock is released.
+    // By value: HookRunner_SetSession may rewrite the copy after unlock.
     HookSessionStorage session = runner->Session;
     runner->Busy = true;
     Mutex_Unlock(&runner->Lock);
@@ -187,15 +165,15 @@ void RunHookWorker(void* user) {
   ArenaRelease(&scratch);
 }
 
-}  // namespace
+}
 
 HookRunner* HookRunner_Create(Arena* arena, const HookConfig* config,
                               const HookSessionInfo* session) {
   if (!arena || !config || !config->CommandCount) return nullptr;
 
   HookRunner* runner = ArenaPushStruct(arena, HookRunner);
-  // memset rather than `*runner = HookRunner{}`: the volatile Abort member
-  // makes the implicit copy-assignment ill-formed, and MSVC crashes on it.
+  // memset: the volatile Abort makes copy-assignment ill-formed and crashes
+  // MSVC.
   memset(runner, 0, sizeof(*runner));
   runner->Config = config;
   HookSession_Store(&runner->Session, session);
@@ -264,8 +242,7 @@ void HookRunner_Shutdown(HookRunner* runner, HookEvent finalEvent) {
   Thread_Join(&runner->Worker);
   runner->Started = false;
 
-  // Runs on the caller's thread with cancellation cleared: it is the one report
-  // a consumer cannot do without, and is bounded by its own configured timeout.
+  // Caller's thread, uncancelled: the one report consumers cannot do without.
   runner->Abort = 0;
   HookQueueItem terminal = {};
   terminal.Event = finalEvent;

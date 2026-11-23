@@ -11,32 +11,15 @@
 #include "term/term.h"
 #include "ui/widgets.h"
 
-// Full-screen TUI controller. Owns the terminal, a differential renderer, the
-// transcript line model and the multi-line input editor. Runs two background
-// threads (input + render); the caller's thread drives the agent loop and feeds
-// progress through the Tui_* reporting calls below.
-//
-// This layer knows nothing about the agent. The three things it needs from a
-// running agent arrive as TuiAgentHooks, and progress arrives as ordinary
-// calls, so `clippi_tui` does not link `clippi_agent`.
-
-// What the controller asks of whatever is driving it. All callbacks are invoked
-// while the TUI lock is held, which fixes the lock order as
-// `Tui::Lock -> (whatever the implementation takes)`; an implementation must
-// not call back into the TUI.
+// TuiAgentHooks callbacks run under the TUI lock (order `Tui::Lock -> implementation`)
+// and must not call back into the TUI.
 enum class TuiPermissionMode : u8 { Ask, Auto, Yolo };
 
 struct TuiAgentHooks {
   void* User;
-  // Queue `text` as a steering message for the turn already in flight. Returns
-  // false and sets `outError` when it was refused.
   bool (*Steer)(void* user, StrView text, StrView* outError);
-  // Ask for cancellation. Returns false when the request could not be made, in
-  // which case the TUI falls back to raising its own abort flag.
   bool (*RequestCancel)(void* user);
-  // True while the driver still owns the session.
   bool (*IsBusy)(void* user);
-  // Atomically cycle the live permission mode and return the new value.
   TuiPermissionMode (*CyclePermission)(void* user);
 };
 
@@ -90,7 +73,7 @@ struct TuiDisplayEvent {
   u64 Timestamp;
   u16 ToolUpdateSlot;
   bool IsError;
-  bool Steer;  // User: sent into a running turn
+  bool Steer;
 };
 
 struct TuiDisplayBatch {
@@ -115,15 +98,11 @@ struct TuiToolUpdateSlot {
 
 enum { TUI_TOOL_UPDATE_SLOT_COUNT = 64 };
 
-// What the TUI may do the moment a command is submitted, rather than leaving it
-// to the main loop, which sits inside the agent turn for its whole duration.
-// Actions name a TUI-local effect, not an app command, so the app decides which
-// of its commands map onto them. Every other command is refused mid-turn.
 enum class TuiCommandInline : u8 {
-  None,        // runs only between turns
-  Debug,       // toggle the performance overlay
-  Stop,        // quit; nothing is submitted
-  CancelTurn,  // cancel a running turn, then run once it ends
+  None,
+  Debug,
+  Stop,
+  CancelTurn,
 };
 
 struct TuiCommandSpec {
@@ -134,25 +113,16 @@ struct TuiCommandSpec {
   bool PrivateArguments = false;
 };
 
-// Strings whose storage belongs to SessionMem and which nothing rebuilds when
-// that arena is swapped. Grouping them is what makes the swap safe by
-// construction: RebuildTranscriptLocked clears this whole struct, so a member
-// added here is covered automatically, and a SessionMem-backed StrView added
-// anywhere else on Tui is now visibly the wrong thing to do.
-//
-// Model and Edit are explicitly re-initialised against the new arena.
-// Modal input, display events, reveal and status strings own separate storage.
+// Strings backed by SessionMem. RebuildTranscriptLocked clears this whole struct on
+// an arena swap, so any SessionMem-backed view on Tui belongs here.
 struct TuiSessionStrings {
   StrView ModalTitle;
-  StrView ModalCategory;    // breadcrumb before the title; empty hides it
+  StrView ModalCategory;
   StrView ModalPrompt;
   StrView* ModalOptions;    // array itself is also SessionMem-owned
   u32 ModalOptionCount;
 };
 
-// A run being rebuilt from the log, so a restored transcript gets the footers
-// the live one drew. It outlives one hydration call so history appended in
-// pieces closes its runs exactly where the whole would.
 struct TuiHydratedRun {
   bool Open;
   u64 StartMs;
@@ -168,7 +138,6 @@ struct TuiOpts {
   bool YoloAcknowledged = false;
   bool Color = true;
   bool Rounded = true;
-  // Palette index of the system accent; 0 keeps DEFAULT_ACCENT_FG.
   u8 Accent = 0;
   const TuiCommandSpec* Commands = nullptr;
   u32 CommandCount = 0;
@@ -176,11 +145,8 @@ struct TuiOpts {
 
 struct Tui {
   Arena* Mem;
-  // Resettable conversation/UI arena. Terminal, screen, synchronization, cwd,
-  // branch, and current model survive Tui_ClearSession.
+  // Terminal, screen, synchronization, cwd, branch and model survive Tui_ClearSession.
   Arena SessionMem;
-  // SessionMem.Used right after the last compaction, i.e. the size of the live
-  // transcript. Compaction waits for the arena to double past it.
   usize SessionMemBaseline;
   Arena CommandMem;
   Arena ModalMem;
@@ -213,9 +179,6 @@ struct Tui {
   bool Color;
   u8 Accent;
 
-  // Main-thread submission handoff. Input is never queued behind a running turn
-  // or a busy main loop: text steers or is refused, and slash commands that
-  // cannot run inline are refused, so at most one user submission waits here.
   TuiSubmission Queue[64];
   u32 QHead, QTail, QCount;
 
@@ -228,15 +191,12 @@ struct Tui {
   u64 LastEscapeMs;
   bool EscapeArmed;
 
-  // Status.
   TuiState State;
   TuiTransientText StateTool;
   TuiTransientText RetryStatus;
   TuiTransientText OperationLabel;
   TuiTransientText OperationStatus;
   Usage Use;
-  // Tokens the active branch occupies in the model's context window, shown as
-  // the status bar's usage bar. 0 when unknown, which reads as an empty bar.
   u32 ContextTokens;
   u32 Spinner;
   u64 SpinnerStartMs;
@@ -253,20 +213,16 @@ struct Tui {
   u32 CommandPaletteFirst;
   bool CommandPaletteDismissed;
   bool OperationActive;
-  bool OperationYields;  // a submission ends the operation instead of being refused
+  bool OperationYields;
   volatile i32 OperationAbortFlag;
 
-  // The agent run in progress, totalled into its footer when it ends. Wall
-  // clock, so a rebuilt transcript derives the same numbers from the log.
+  // Wall clock, so a rebuilt transcript derives the same numbers from the log.
   u64 RunStartMs;
   u32 RunResponses;
   TurnStats RunStats;
-  // When the thinking row became due; 0 while it is not. It waits briefly so
-  // the gaps between a tool and the next response do not flicker.
   u64 ThinkingSinceMs;
   TuiHydratedRun Hydrated;
 
-  // Modal selection / text entry.
   TuiModalKind ModalKind;
   TuiModalResult ModalResult;
   TextInputMode ModalInputMode;
@@ -275,17 +231,14 @@ struct Tui {
   u32 ModalSelected;
   u32 ModalFirst;
 
-  // Everything above owns its storage or has Tui-lifetime backing. These do not:
-  // see TuiSessionStrings.
+  // Everything above owns its storage; these do not -- see TuiSessionStrings.
   TuiSessionStrings Sess;
 
-  // Startup context shown on the sticky line below the prompt.
-  StrView Cwd;     // working directory, home-abbreviated for display
-  StrView Branch;  // git branch, or empty when not in a repo / detached
+  StrView Cwd;
+  StrView Branch;
   char CwdStorage[4096];
   char BranchStorage[512];
 
-  // Scroll.
   bool Follow;
   u32 Top;
   u32 LastTop;
@@ -296,7 +249,6 @@ struct Tui {
   u16 LastScrollbarThumbH;
   u16 ScrollbarDragOffset;
 
-  // Mouse interaction with the last rendered transcript viewport.
   u64 HoveredEntryId;
   u64 PressedEntryId;
   u16 MouseX;
@@ -307,8 +259,7 @@ struct Tui {
   bool MouseDragMoved;
   bool TranscriptDragging;
 
-  // Selection state. Transcript points are absolute display-row/cell
-  // coordinates in the LineModel revision captured when the drag began.
+  // Coordinates in the LineModel revision captured when the drag began.
   u32 TranscriptAnchorRow;
   u32 TranscriptFocusRow;
   u16 TranscriptAnchorCell;
@@ -318,17 +269,14 @@ struct Tui {
   i32 SelectionEdgeDirection;
   u64 NextSelectionScrollMs;
 
-  // Clipboard text is queued under Lock, then encoded by the render/shutdown path.
+  // Queued under Lock, then encoded by the render/shutdown path.
   StrBuf ClipboardRaw;
   StrBuf ClipboardOsc;
 
-  // Transient "copied N chars" status-bar confirmation. Armed by the copy key
-  // handler; the deadline is assigned and enforced against the compose clock.
   u32 CopyNoticeChars;
   u64 CopyNoticeExpiryMs;  // 0 while armed but not yet stamped by a frame
   bool CopyNoticeActive;
 
-  // Received assistant text coalesced at render-frame boundaries.
   StreamReveal Reveal;
   TuiDisplayBatch* DisplayFirst;
   TuiDisplayBatch* DisplayLast;
@@ -336,65 +284,38 @@ struct Tui {
   TuiDisplayBatch* RevealBatch;
   TuiToolUpdateSlot ToolUpdates[TUI_TOOL_UPDATE_SLOT_COUNT];
 
-  // Process-level samples survive conversation resets.
   TuiPerf Perf;
 };
 
-// Enter the alt screen, paint the first frame synchronously, then start input
-// and render threads. Returns false if not a TTY.
 bool Tui_Start(Tui* t, Arena* mem, TuiOpts opts);
 void Tui_Stop(Tui* t);
 
-// Populate the sticky cwd/branch line after startup is already responsive.
 void Tui_LoadStartupContext(Tui* t);
 void Tui_SetStartupContext(Tui* t, StrView cwd, StrView branch);
 
-// Non-terminal state init (model, editor, locks). Used by Tui_Start and by
-// headless tests that drive the event mapping without a real terminal.
 void Tui_InitModel(Tui* t, Arena* mem, TuiOpts opts);
 
-// Clear conversation/UI state at an idle boundary without emitting a notice.
-// Returns false while the agent is active or shutdown is in progress.
 bool Tui_ClearSession(Tui* t);
-// `follow` scrolls to the end; otherwise the viewport stays where it was. With
-// the agent idle, the last run is complete and gets its footer.
 void Tui_ReplaceTranscript(Tui* t, const Message* messages, u32 count,
                            bool follow = false);
-// Adds messages after the transcript already shown, as if they had been part
-// of the last Tui_ReplaceTranscript. Idle only: nothing may be streaming. The
-// last appended run is never known to have ended, so it has no footer. Start
-// from an empty Tui_ReplaceTranscript: a non-empty one closes its last run.
+// Idle only: nothing may be streaming. Start from an empty Tui_ReplaceTranscript;
+// a non-empty one closes its last run.
 void Tui_AppendTranscript(Tui* t, const Message* messages, u32 count);
 
-// SessionMem is a bump allocator, so transcript entries dropped by the
-// scrollback cap stay resident until the survivors are copied elsewhere.
-// `WantsCompaction` samples the threshold and the idle conditions; the caller
-// then builds a transcript and hands it to `CompactSessionMemory`, which
-// re-checks under the lock and returns false if the moment has passed.
+// CompactSessionMemory re-checks under the lock and returns false if the moment passed.
 bool Tui_SessionMemoryWantsCompaction(Tui* t);
 bool Tui_CompactSessionMemory(Tui* t, const Message* messages, u32 count);
 
-// Push raw input bytes, decode them, and apply the resulting keys under the
-// lock. InputLoop uses this; headless tests use it to drive input (scroll,
-// editing) without a real terminal.
 void Tui_FeedInput(Tui* t, const char* data, u32 n);
 
-// Block until the user submits a prompt/command (returns true) or asks to quit
-// (false). Slash-prefixed submissions are commands, including unknown commands.
 bool Tui_WaitForSubmit(Tui* t, TuiSubmission* out);
 
-// Waits up to `waitMs` for a submission without taking it. True once one is
-// queued or shutdown has begun, so a command holding the main loop can step
-// aside for whatever the user asked for next.
 bool Tui_SubmissionPending(Tui* t, u32 waitMs);
 
-// Add an idle prompt to the visible transcript after application-level preflight
-// (such as credential resolution) has accepted it. Atomically commits the turn
-// against shutdown and returns false if shutdown already won.
+// Commits the turn atomically against shutdown; false if shutdown already won.
 bool Tui_AcceptPrompt(Tui* t, StrView text);
 
-// Thread-safe command UI. These calls only update TUI-owned state; callers must
-// perform network, credential, and other blocking work after the call returns.
+// Thread-safe; callers must do network, credential and other blocking work after return.
 void Tui_CommandNotice(Tui* t, StrView text);
 void Tui_CommandError(Tui* t, StrView text);
 enum class TuiToggleAction : u8 { Disable, Enable, Toggle };
@@ -405,15 +326,11 @@ void Tui_SetModelProfile(Tui* t, StrView modelName,
                          ModelRequestProfile profile);
 void Tui_SetPermissionMode(Tui* t, TuiPermissionMode mode,
                           bool yoloAcknowledged);
-// Input submitted while a yielding operation runs is handed to the main loop,
-// which ends the operation; otherwise input is refused until it finishes.
 void Tui_BeginOperation(Tui* t, StrView label, bool yieldsToInput = false);
 void Tui_SetOperationStatus(Tui* t, StrView status);
-// End the operation and atomically return whether cancellation was requested.
 bool Tui_EndOperation(Tui* t);
 volatile i32* Tui_OperationAbort(Tui* t);
 
-// Non-blocking modal entry points are useful to controllers and headless tests.
 // Selection results remain available until the next modal begins; text is consumed.
 bool Tui_BeginSelection(Tui* t, StrView title, const StrView* options, u32 optionCount,
                         u32 initialSelection = 0,
@@ -421,12 +338,10 @@ bool Tui_BeginSelection(Tui* t, StrView title, const StrView* options, u32 optio
 bool Tui_BeginTextEntry(Tui* t, StrView title, StrView prompt, StrView initial = {},
                         StrView category = SVL("Commands"),
                         TextInputMode mode = TextInputMode::Plain);
-// Requesting text consumes the result and copies it to the required arena.
 TuiModalResult Tui_GetModalResult(Tui* t, u32* selected, StrView* text,
                                  Arena* arena = nullptr);
 
-// Blocking conveniences. Cond_Wait releases the TUI lock, so input and render
-// threads remain active while the caller waits.
+// Cond_Wait releases the TUI lock, so input and render threads stay live meanwhile.
 TuiModalResult Tui_Select(Tui* t, StrView title, const StrView* options,
                          u32 optionCount, u32* selected,
                          u32 initialSelection = 0,
@@ -437,38 +352,26 @@ TuiModalResult Tui_ReadText(Tui* t, Arena* arena, StrView title, StrView prompt,
                            TextInputMode mode = TextInputMode::Plain);
 void Tui_OpenCommandPalette(Tui* t);
 
-// Progress reporting. Each call is what the driver has just observed, in the
-// order it observed it; the controller decides how to render it. There is no
-// intermediate event struct, so nothing is copied that the calls do not carry.
 void Tui_TurnStarted(Tui* t);
 void Tui_AppendAssistantText(Tui* t, StrView text);
-// The assistant message is complete. `errorMessage` is empty on success.
 void Tui_AssistantMessageEnded(Tui* t, StopReason stop, Usage use,
                                StrView errorMessage);
 void Tui_ToolStarted(Tui* t, StrView callId, StrView name, StrView argumentsJson);
 void Tui_ToolProgress(Tui* t, StrView callId, StrView preview);
 void Tui_ToolEnded(Tui* t, StrView callId, StrView preview, bool isError);
 void Tui_TurnEnded(Tui* t);
-// `providerLevel` distinguishes a transport retry from a whole-turn retry; the
-// controller only needs the two words it prints, not the driver's enum.
 void Tui_RetryStarted(Tui* t, bool providerLevel, u32 delayMs, u32 attempt,
                       u32 maxAttempts);
 void Tui_RetryEnded(Tui* t);
 void Tui_PermissionReviewStarted(Tui* t, StrView toolName);
 void Tui_PermissionReviewEnded(Tui* t);
-// Context window occupancy, measured by the caller: Set replaces it with a
-// fresh measurement (0 = unknown), Add accounts for a message appended since.
 void Tui_SetContextTokens(Tui* t, u32 tokens);
 void Tui_AddContextTokens(Tui* t, u32 tokens);
-// Progress updates were skipped to keep up; the transcript is still complete.
 void Tui_NoticeDroppedEvents(Tui* t, u32 count);
 
-// Advance the frame-coalesced display pipeline at `nowMs`. Compose uses this under the
-// TUI lock; headless tests call it directly when no TUI threads are running.
 bool Tui_AdvanceStream(Tui* t, u64 nowMs);
 bool Tui_HasPendingDisplay(const Tui* t);
 
-// Headless composition and inspection helpers.
 void Tui_ComposeFrame(Tui* t, u16 cols, u16 rows, u64 nowMs = 0);
 bool Tui_TestDrainShutdown(Tui* t, ScreenWriter write, void* user);
 

@@ -1,8 +1,7 @@
 #include "tui/internal.h"
 
-// Transcript text selection and the clipboard path it feeds. Selection is
-// keyed to a LineModel revision, so everything that reads it has to cope
-// with the model having been rebuilt underneath.
+// Selection is keyed to a LineModel revision; readers must cope with the model
+// having been rebuilt underneath.
 
 namespace TuiInternal {
 
@@ -213,4 +212,4 @@ bool DrainShutdownOutput(Tui* t, ScreenWriter write, void* user) {
   return true;
 }
 
-}  // namespace TuiInternal
+}

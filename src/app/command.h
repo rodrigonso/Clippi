@@ -49,12 +49,10 @@ struct AppCommand {
   AppCommandKind Kind;
   StrView Arguments;
   StrView SkillName;
-  // Raw token after `/`, including unknown template names.
   StrView Name;
 };
 
-// Parses an input line without allocating. Leading/trailing ASCII whitespace is
-// ignored, and Arguments excludes whitespace surrounding the argument text.
+// Views point into `input`.
 AppCommand AppCommand_Parse(StrView input);
 
 enum class AppLoopAction : u8 {
@@ -72,8 +70,6 @@ enum class AppCommandHandlerStatus : u8 {
 
 struct AppCommandHandlerResult {
   AppCommandHandlerStatus Status;
-  // Optional renderer-neutral detail. The dispatcher reports it as a notice for
-  // Success/Cancelled and as an error for Unsupported/Failed.
   StrView Message;
 };
 
@@ -88,7 +84,6 @@ typedef AppCommandHandlerResult (*AppCommandArgHandlerFn)(
     void* user, const AppCommandUx* ux, StrView arguments);
 typedef AppCommandHandlerResult (*AppCommandSkillHandlerFn)(
     void* user, const AppCommandUx* ux, StrView name, StrView arguments);
-// False leaves the command unresolved.
 typedef bool (*AppCommandTemplateHandlerFn)(void* user, const AppCommandUx* ux,
                                             StrView name, StrView arguments,
                                             AppCommandHandlerResult* out);
@@ -117,8 +112,7 @@ struct AppCommandHandlers {
 };
 
 struct AppCommandDispatchResult {
-  // False only for ordinary prompt text. Every slash-prefixed input, including
-  // malformed or unknown commands, is handled and must not be sent to the model.
+  // Every slash input, even unknown, is handled and never sent to the model.
   bool Handled;
   AppLoopAction Action;
 };

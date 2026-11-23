@@ -66,8 +66,13 @@ session switch.
   "Scratch" in this codebase means arena memory, not a file on disk.
 - Prefer explicit parameters over hidden state. Ownership of a string or array
   is always the arena it was allocated from.
-- Comment only what needs clarification -- why a non-obvious invariant holds,
-  not what the line does.
+- Comments are rare. Write one only when removing it would let a reader
+  introduce a bug: a non-obvious ownership/lifetime contract, a threading or
+  ordering constraint, a platform/protocol quirk, a deliberate pi divergence,
+  or why code that looks removable is not. Keep it to one or two lines. No API
+  docs that restate a signature, no section banners, no `// namespace`
+  closers, no trailing labels. Tests carry intent in names and checks, not
+  comments.
 
 ## Behavioral parity with pi
 

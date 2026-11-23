@@ -21,8 +21,6 @@
 #endif
 
 #if defined(_WIN32)
-// FILETIME counts 100 ns ticks from 1601-01-01; this is the gap to the Unix
-// epoch in the same units.
 static const u64 FILETIME_EPOCH_DELTA = 116444736000000000ull;
 
 u64 NowMillis() {
@@ -68,7 +66,6 @@ u64 CurrentRssBytes() {
 }
 #endif
 
-// ---- path helpers (no std) -----------------------------------------------
 namespace {
 
 bool IsSep(char c) { return c == '/' || c == '\\'; }
@@ -90,30 +87,24 @@ bool IsAbsPath(StrView p) {
   return false;
 }
 
-// Copy `s` into `a` and append a null terminator so the result is usable as a
-// C string (via .Data) while the returned Length excludes the terminator.
 StrView DupCStr(Arena* a, StrView s) {
   return StrView{StrView_DupCStr(a, s), s.Length};
 }
 
-// Strip any trailing path separators (view slice only).
 StrView StripTrailingSep(StrView p) {
   u32 e = p.Length;
   while (e > 0 && IsSep(p.Data[e - 1])) e--;
   return StrView{p.Data, e};
 }
 
-// Parent directory of `p` (one segment up), as a slice of `p`. Returns an empty
-// view once no further parent exists.
 StrView ParentDir(StrView p) {
   u32 e = p.Length;
-  while (e > 0 && IsSep(p.Data[e - 1])) e--;      // trailing separators
-  while (e > 0 && !IsSep(p.Data[e - 1])) e--;     // last segment
-  while (e > 0 && IsSep(p.Data[e - 1])) e--;      // separators before it
+  while (e > 0 && IsSep(p.Data[e - 1])) e--;
+  while (e > 0 && !IsSep(p.Data[e - 1])) e--;
+  while (e > 0 && IsSep(p.Data[e - 1])) e--;
   return StrView{p.Data, e};
 }
 
-// Join base + leaf into a fresh null-terminated buffer in `a`.
 StrBuf JoinPath(Arena* a, StrView base, StrView leaf) {
   StrBuf b = StrBuf_Make(a, base.Length + leaf.Length + 2);
   StrBuf_Append(&b, base);
@@ -138,10 +129,8 @@ PathKind StatKind(const char* path) {
 #endif
 }
 
-// .git files and HEAD are a line or two; anything bigger is not one.
 constexpr u64 GIT_SMALL_FILE_MAX_BYTES = 64 * 1024;
 
-// Read an entire (small) file into `a`. Empty view on failure.
 StrView ReadSmallFile(Arena* a, const char* path) {
   StrView content = {};
   if (File_ReadAll(a, SV(path), &content, GIT_SMALL_FILE_MAX_BYTES) !=
@@ -169,7 +158,7 @@ bool HasHomePrefix(StrView path, StrView home) {
   return path.Length == home.Length || IsSep(path.Data[home.Length]);
 }
 
-}  // namespace
+}
 
 StrView Sys_CurrentDir(Arena* a) {
 #if defined(_WIN32)
@@ -179,8 +168,7 @@ StrView Sys_CurrentDir(Arena* a) {
   StrView utf8 = {};
   if (!Win32_Utf8(a, buf, length, &utf8)) return StrView{nullptr, 0};
   StrView trimmed = StripTrailingSep(utf8);
-  // Win32_Utf8 allocated the buffer, so terminating the trimmed view in place
-  // keeps .Data usable as a C string without a second copy.
+  // Win32_Utf8 allocated the buffer, so terminating the trimmed view in place is safe.
   ((char*)trimmed.Data)[trimmed.Length] = 0;
   return trimmed;
 #else
@@ -281,7 +269,7 @@ StrView Git_GitdirFromFile(StrView c) {
 StrView Git_BranchFromHead(StrView c) {
   u32 i = 0;
   while (i < c.Length && c.Data[i] == ' ') i++;
-  if (!StartsWithAt(c, i, SVL("ref:"))) return StrView{nullptr, 0};  // detached HEAD
+  if (!StartsWithAt(c, i, SVL("ref:"))) return StrView{nullptr, 0};
   i += 4;
   while (i < c.Length && c.Data[i] == ' ') i++;
   StrView heads = SVL("refs/heads/");
@@ -307,10 +295,7 @@ StrView Git_CommonDirFromFile(StrView c) {
 
 namespace {
 
-// The git directory of the work tree containing `dir`: `.git` itself, or the
-// target of a `.git` file (linked worktree, submodule). The walk stops at the
-// first `.git` found, so an unreadable `.git` file yields empty rather than
-// an outer repository. `*workTree` receives the directory holding that `.git`.
+// Stops at the first `.git`, so an unreadable `.git` file yields empty rather than an outer repository.
 StrView FindGitDir(Arena* a, StrView dir, StrView* workTree = nullptr) {
   StrView cur = StripTrailingSep(dir);
   for (u32 guard = 0; guard < 260 && cur.Length > 0; guard++) {
@@ -326,13 +311,13 @@ StrView FindGitDir(Arena* a, StrView dir, StrView* workTree = nullptr) {
       return StrBuf_View(&joined);
     }
     StrView parent = ParentDir(cur);
-    if (parent.Length >= cur.Length) break;  // no progress -> at the root
+    if (parent.Length >= cur.Length) break;
     cur = parent;
   }
   return StrView{nullptr, 0};
 }
 
-}  // namespace
+}
 
 StrView Sys_GitBranch(Arena* a, StrView dir) {
   StrView gitdir = FindGitDir(a, dir);

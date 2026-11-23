@@ -27,8 +27,6 @@ TuiPermissionMode CyclePermission(void* user) {
   return state->Mode;
 }
 
-// The assistant turn's completion reaches the TUI as the durable record the
-// harness appends, not as a transient event.
 AgentHarnessEvent AssistantRecordEvent(SessionRecord* record, const Message* message) {
   *record = SessionRecord{};
   record->Kind = SessionRecordKind::Message;
@@ -49,7 +47,6 @@ bool AnyRow(Arena* a, Tui* t, const char* needle) {
   return false;
 }
 
-// Feed a NUL-terminated byte sequence through the controller's input path.
 void Feed(Tui* t, const char* s) {
   u32 n = 0;
   while (s[n]) n++;
@@ -172,8 +169,7 @@ bool ScreenRowContains(const Tui* t, u16 row, const char* needle) {
 
 u16 ScrollbarColumn(const Tui* t) { return (u16)(t->Scr.Cols - 1); }
 
-// The status row's context bar, one char per cell: '=' full, '>' half, '-'
-// empty track. Colors are the first fill and first track cell's foreground.
+// Context bar, one char per cell: '=' full, '>' half, '-' empty track.
 constexpr u16 kBarCells = 8;
 
 struct ContextBarCells {
@@ -403,8 +399,6 @@ void TestToolPayloadOwnership(Arena* outer) {
               StrView_Eq(StrBuf_View(&tool.View.Outcome), SVL("65536 lines read")),
               StrView_Eq(StrBuf_View(&tool.Preview), StrView{result.Data, 1500}));
   }
-  // Cards and their previews are live transcript data; the megabytes of raw
-  // arguments/results used to produce those cards are not.
   CHECK_ALL(t.SessionMem.Used <= baseline + (128u << 10),
             t.SessionMem.Committed <= committed + (192u << 10));
   Tui_Stop(&t);
@@ -467,8 +461,6 @@ void TestDisplayBatchOwnership(Arena* outer) {
       Arena* spare = &t.DisplaySpare->Mem;
       CHECK_ALL(spare->Used <= (64u << 10), spare->Committed <= (64u << 10),
                 !t.DisplaySpare->Next, !t.DisplaySpare->Count);
-      // Poison only reclaimed payload storage, leaving the cached batch's
-      // descriptor intact. The running-tool status must own its name.
       memset(spare->Base + spare->Used, 0xa5, spare->Committed - spare->Used);
       CHECK(StrView_Eq(t.StateTool.Text, SVL("read")));
     }
@@ -489,8 +481,6 @@ void TestDisplayBatchOwnership(Arena* outer) {
 
 void TestRevealOwnership(Arena* outer) {
   Arena input = ArenaCreate();
-  // A small adopted event shares its batch with the delayed completion; a
-  // large one is dequeued into a pinned batch before it has finished revealing.
   for (u32 mode = 0; mode < 4; mode++) {
     Tui t;
     InitHeadlessTui(&t, outer, false);
@@ -528,8 +518,6 @@ void TestRevealOwnership(Arena* outer) {
     CHECK(StrView_Eq(StrBuf_View(&t.Model.Entries.Data[assistant].Text.Content),
                      StrView{body.Data, 1}));
     if (mode == 3) {
-      // New deltas can grow the adopted buffer after its queue has become
-      // empty. Its detached batch is still the owner until the reveal drains.
       StrView tail = SVL(" \xf0\x9f\x98\x80");
       Tui_AppendAssistantText(&t, tail);
       StrBuf expected = StrBuf_Make(&input, body.Length + tail.Length + 1);
@@ -612,8 +600,6 @@ void TestToolUpdateOwnership(Arena* outer) {
   DrainDisplay(&t);
   usize baseline = t.SessionMem.Used;
   for (u32 i = 0; i < 24; i++) {
-    // A progress-only ID can arrive after lag recovery dropped its tool card.
-    // Its retirement still must compact around the other live/queued slot.
     Tui_ToolProgress(&t, largeId, largePreview);
     Tui_ToolProgress(&t, largeId, SVL("small"));
     Tui_ToolEnded(&t, largeId, SVL("done"), false);
@@ -642,7 +628,6 @@ void TestToolUpdateOwnership(Arena* outer) {
   }
   CHECK_ALL(t.SessionMem.Used <= baseline + (128u << 10),
             t.SessionMem.Committed <= baseline + (192u << 10));
-  // Running output keeps its newest bytes, cut at a line boundary.
   StrBuf longOutput = StrBuf_Make(&input, 2100);
   StrBuf_Append(&longOutput, RepeatText(&input, SVL("line\n"), 400));
   StrBuf_AppendCStr(&longOutput, "tail-line");
@@ -744,7 +729,6 @@ void TestHydrationPayloadOwnership(Arena* outer) {
       Array_Push(&messages, result);
     }
     Tui_ReplaceTranscript(&t, messages.Data, messages.Count);
-    // The user prompt, eight tool rows, and the footer closing the run.
     CHECK_ALL(DisplayStorageIdle(&t), t.Model.Entries.Count == 10,
               t.Model.Entries.Data[0].Kind == EntryKind::User,
               StrView_Eq(StrBuf_View(&t.Model.Entries.Data[0].Text.Content),
@@ -758,9 +742,6 @@ void TestHydrationPayloadOwnership(Arena* outer) {
                 StrView_Eq(StrBuf_View(&tool.View.Outcome), SVL("80001 lines read")),
                 StrView_Eq(StrBuf_View(&tool.Preview), StrView{resultPart.Data, 1500}));
     }
-    // The row index is SessionMem-owned and grows geometrically. Its live
-    // allocation plus all abandoned capacities sum to less than twice the
-    // final capacity; none of that storage is a hydration payload leak.
     usize rowStorage = (usize)2 * t.Model.Lines.Capacity * sizeof(SpanLine);
     CHECK_ALL(t.SessionMem.Used <= baseline + expected.Length + rowStorage + (64u << 10),
               t.SessionMem.Committed <=
@@ -770,8 +751,6 @@ void TestHydrationPayloadOwnership(Arena* outer) {
   ArenaRelease(&input);
 }
 
-// A transcript shown in pieces, with a tool call and its result and a run
-// boundary in different pieces, matches the same transcript shown at once.
 void TestTranscriptAppend(Arena* outer) {
   Arena input = ArenaCreate();
   Array<Message> messages = Array_Make<Message>(&input, 6);
@@ -804,7 +783,6 @@ void TestTranscriptAppend(Arena* outer) {
     } else {
       Tui_AppendTranscript(&t, messages.Data, messages.Count);
     }
-    // The first run closes when the next prompt arrives; the last never does.
     CHECK_ALL(t.Model.Entries.Count == 7, t.Model.Entries.Data[2].Kind == EntryKind::Tool,
               t.Model.Entries.Data[2].Tool.Done,
               t.Model.Entries.Data[4].Kind == EntryKind::Footer,
@@ -817,8 +795,7 @@ void TestTranscriptAppend(Arena* outer) {
   }
   CHECK(hashes[0] == hashes[1]);
 
-  // Shown whole while idle, the last run is complete too. TestTui's frame is
-  // already near the stack limit, so further fixtures live in the arena.
+  // TestTui's frame is near the stack limit, so further fixtures live in the arena.
   Tui* whole = ArenaPushStruct(&input, Tui);
   InitHeadlessTui(whole, outer, true);
   Tui_ReplaceTranscript(whole, messages.Data, messages.Count);
@@ -829,8 +806,6 @@ void TestTranscriptAppend(Arena* outer) {
   ArenaRelease(&input);
 }
 
-// A steer is logged after the work it interrupted but stamped when it was
-// typed, which is how a restored transcript tells it from a new prompt.
 void TestHydratedRuns(Arena* outer) {
   Arena input = ArenaCreate();
   Array<Message> messages = Array_Make<Message>(&input, 5);
@@ -871,7 +846,6 @@ void TestHydratedRuns(Arena* outer) {
             entries[4].Footer.OutputTokens == 842);
   CHECK(AnyRow(&input, t, "5.5s \xc2\xb7 1 tool \xc2\xb7 \xe2\x86\x91" "1.5k \xe2\x86\x93" "842"));
 
-  // Rebuilt mid-run, the open run keeps counting instead of closing early.
   t->AgentRunning = true;
   Tui_ReplaceTranscript(t, messages.Data, messages.Count);
   CHECK_ALL(t->Model.Entries.Count == 4, t->RunStartMs == 10000, t->RunResponses == 2,
@@ -881,12 +855,8 @@ void TestHydratedRuns(Arena* outer) {
   ArenaRelease(&input);
 }
 
-}  // namespace
+}
 
-// SessionMem is a bump allocator, so an entry dropped by the scrollback cap is
-// only reclaimed by copying the survivors to a fresh arena. Without compaction
-// the arena grew ~6 KB per turn forever, long after the visible transcript had
-// stopped growing.
 void TestSessionMemoryCompaction(Arena* outer) {
   TuiOpts opts;
   opts.ModelName = SVL("mem");
@@ -917,24 +887,20 @@ void TestSessionMemoryCompaction(Arena* outer) {
     DrainDisplay(&t, 1000 + turn * 32ull);
   };
 
-  // Long enough for the scrollback cap to start dropping entries.
   for (u32 turn = 0; turn < 200; turn++) runTurn(turn);
   u32 settledEntries = t.Model.Entries.Count;
   usize before = t.SessionMem.Used;
 
-  // Type something and build recall history: compaction must not eat either.
   Tui_FeedInput(&t, "draft prompt", 12);
   StrView typed = LineEdit_Text(&t.Edit);
   CHECK(StrView_EqCStr(typed, "draft prompt"));
 
   for (u32 turn = 200; turn < 320; turn++) runTurn(turn);
 
-  // The visible transcript has plateaued, so any further growth is dead weight.
   CHECK(t.Model.Entries.Count == settledEntries);
   usize after = t.SessionMem.Used;
   CHECK(after > before);
 
-  // Compact against the transcript the model is already showing.
   Arena scratch = ArenaCreate();
   Array<Message> transcript = Array_Make<Message>(&scratch, 8);
   for (u32 i = 0; i < 40; i++) {
@@ -946,31 +912,22 @@ void TestSessionMemoryCompaction(Arena* outer) {
   }
   CHECK(Tui_CompactSessionMemory(&t, transcript.Data, transcript.Count));
 
-  // The dead weight is gone and the live set is intact.
-  u32 rebuiltEntries = transcript.Count + transcript.Count / 2;  // a footer per run
+  u32 rebuiltEntries = transcript.Count + transcript.Count / 2;
   CHECK(t.SessionMem.Used < after / 2);
   CHECK(t.Model.Entries.Count == rebuiltEntries);
   CHECK(StrView_EqCStr(LineEdit_Text(&t.Edit), "draft prompt"));
 
-  // Compaction released the arena those strings pointed into, so every one of
-  // them must be gone. Checking the struct wholesale is what makes this survive
-  // someone adding a tenth field.
   const TuiSessionStrings zero = {};
   CHECK(memcmp(&t.Sess, &zero, sizeof(zero)) == 0);
 
-  // Still usable afterwards: the swap rebuilt every pointer into the arena.
   runTurn(320);
   CHECK(t.Model.Entries.Count > rebuiltEntries);
 
-  // An open modal is displaying SessionMem strings, so the arena must not move.
   StrView options[2] = {SVL("one"), SVL("two")};
   CHECK(Tui_BeginSelection(&t, SVL("pick"), options, 2));
   CHECK(!Tui_SessionMemoryWantsCompaction(&t));
   CHECK(!Tui_CompactSessionMemory(&t, transcript.Data, transcript.Count));
 
-  // ...but once it completes, compaction has to work again. ModalKind used to
-  // stay set forever, so confirming a single picker silently disabled
-  // reclamation for the rest of the process.
   Feed(&t, "\r");
   u32 picked = 0;
   CHECK(Tui_GetModalResult(&t, &picked, nullptr) == TuiModalResult::Confirmed);
@@ -978,8 +935,6 @@ void TestSessionMemoryCompaction(Arena* outer) {
   for (u32 turn = 321; turn < 400; turn++) runTurn(turn);
   CHECK(Tui_CompactSessionMemory(&t, transcript.Data, transcript.Count));
 
-  // Lag recovery runs on the event pump thread while the main thread is holding
-  // StrViews into SessionMem, so it rebuilds without reclaiming.
   for (u32 turn = 400; turn < 480; turn++) runTurn(turn);
   usize beforeReplace = t.SessionMem.Used;
   Tui_ReplaceTranscript(&t, transcript.Data, transcript.Count);
@@ -1120,7 +1075,7 @@ static void TestSecretText() {
             LineEdit_Empty(&t.ModalEdit), t.QCount == 0);
   Tui_ComposeFrame(&t, 80, 24);
   CHECK(ScreenContains(&t, "Input too long"));
-  Feed(&t, "\x15");  // Ctrl+U clears the rejected entry.
+  Feed(&t, "\x15");
   Feed(&t, secret.Data);
   Feed(&t, "\r");
   CHECK(Tui_GetModalResult(&t, nullptr, &entered, &resultArena) ==
@@ -1164,7 +1119,6 @@ static void TestPrivateCommandArguments() {
             AnyRow(&arena, &t, "/auth can't run during a turn."));
   t.AgentRunning = false;
   Feed(&t, "\r");
-  // One submission waits for the main loop at a time; the next is refused.
   Feed(&t, "/permissions key SYNTHETIC_INLINE_SECRET\r");
   DrainDisplay(&t);
   CHECK_ALL(t.QCount == 1, t.Edit.History.Count == 1,
@@ -1209,8 +1163,7 @@ void TestTui() {
   Tui t;
   Tui_InitModel(&t, &a, o);
 
-  // Frame hashes cover every cell glyph/style plus cursor state. These fixtures
-  // are the visual parity contract for the component-system migration.
+  // Golden frame hashes: re-capture from FrameHash() only for an intentional visual change.
   {
     Arena af = ArenaCreate();
     TuiCommandSpec commands[] = {
@@ -1258,8 +1211,6 @@ void TestTui() {
     ArenaRelease(&af);
   }
 
-  // Spinner animation follows elapsed time rather than the number of renders,
-  // so streaming and input-driven frames cannot accelerate it.
   {
     Arena spinnerArena = ArenaCreate();
     Tui spinnerTui;
@@ -1303,10 +1254,10 @@ void TestTui() {
 
     CHECK_ALL(ScreenContains(&ot, "debug"),
               ScreenContains(&ot, "58.8"),     // 1e7 / 17000us, in tenths
-              ScreenContains(&ot, "17.0ms"),   // mean frame interval
-              ScreenContains(&ot, "18.0ms"),   // worst frame interval
+              ScreenContains(&ot, "17.0ms"),
+              ScreenContains(&ot, "18.0ms"),
               ScreenContains(&ot, "5.0GiB"),
-              ScreenContains(&ot, "612.0ms"),  // time to first token
+              ScreenContains(&ot, "612.0ms"),
               ScreenContains(&ot, "43.0"),     // 362 output tokens over 8.4s
               ScreenContains(&ot, "grep"),
               ScreenContains(&ot, "214.0ms"));
@@ -1353,9 +1304,6 @@ void TestTui() {
   TuiBridge_HarnessEvent(&t, &ev);
   CHECK(t.State == TuiState::Thinking);
 
-  // A turn almost always starts with the prompt line still queued, so the
-  // transition has to travel through the queue rather than be dropped: the
-  // status must reach "thinking", not sit on "ready" until the first token.
   {
     Arena as = ArenaCreate();
     Tui ts;
@@ -1368,12 +1316,10 @@ void TestTui() {
     AgentHarnessEvent started = {};
     started.Kind = AgentHarnessEventKind::TransientAgentStart;
     TuiBridge_HarnessEvent(&ts, &started);
-    CHECK(ts.State == TuiState::Idle);  // still behind the user's own line
+    CHECK(ts.State == TuiState::Idle);
 
     DrainDisplay(&ts);
     CHECK(ts.State == TuiState::Thinking);
-    // Thinking belongs to the transcript, not the status bar, and waits out
-    // brief gaps before it appears.
     Tui_ComposeFrame(&ts, 60, 12, 5000);
     u16 statusRow = (u16)(ts.Scr.Rows - 1);
     CHECK_ALL(!ScreenRowContains(&ts, statusRow, "thinking"),
@@ -1385,7 +1331,6 @@ void TestTui() {
     const Entry* thinking = &ts.Model.Entries.Data[ts.Model.Entries.Count - 1];
     CHECK_ALL(thinking->Kind == EntryKind::Thinking, thinking->Thinking.ElapsedSeconds == 2);
 
-    // The reply replaces the row, and the run closes with a footer.
     Tui_AppendAssistantText(&ts, SVL("done"));
     DrainDisplay(&ts);
     CHECK_ALL(!AnyRow(&as, &ts, "Thinking"), AnyRow(&as, &ts, "done"));
@@ -1432,15 +1377,11 @@ void TestTui() {
   CHECK_ALL(t.State == TuiState::Thinking,
             !t.StateTool.Text.Length);
 
-  // The assistant entry is begun lazily on the first text delta, so a turn that
-  // streams no text (tool-only) renders no assistant header at all.
   ev = {};
   ev.Kind = AgentHarnessEventKind::TransientStream;
   ev.Stream.Kind = StreamEventKind::TextDelta;
   ev.Stream.Delta = SVL("Hello ");
   TuiBridge_HarnessEvent(&t, &ev);
-  // Text is paced across frames, so the first frame opens the entry with a
-  // prefix rather than the whole delta.
   CHECK(Tui_AdvanceStream(&t, 1000));
   CHECK_ALL(t.Model.Entries.Count == 1,
             t.Model.Entries.Data[0].Text.Content.Length > 0,
@@ -1477,10 +1418,9 @@ void TestTui() {
   ev.Tool.CallId = SVL("shell-1");
   ev.Tool.Result = tr;
   TuiBridge_HarnessEvent(&t, &ev);
-  // The tool result has not been billed yet: 16 bytes at 4/token plus 4.
+  // The tool result is not billed yet: 16 bytes at 4/token plus 4.
   CHECK(t.ContextTokens == 19 + 8);
 
-  // Only a compaction that landed invalidates the measurement.
   ev = {};
   ev.Kind = AgentHarnessEventKind::TransientTurnEnd;
   ev.Turn.Kind = AgentTurnKind::Compaction;
@@ -1506,7 +1446,6 @@ void TestTui() {
             t.State == TuiState::Tool, Tui_HasPendingDisplay(&t));
   DrainDisplay(&t, 1048);
 
-  // The transcript captured the unlabeled assistant text and compact tool row.
   CHECK_ALL(!AnyRow(&a, &t, "assistant"), AnyRow(&a, &t, "Hello world"),
             AnyRow(&a, &t, " \xe2\x9c\x93  Shell ls"),
             !AnyRow(&a, &t, "hello-from-shell"), t.State == TuiState::Idle,
@@ -1516,25 +1455,21 @@ void TestTui() {
   u64 toolEntryId = t.Model.Entries.Data[1].Id;
   CHECK(LineModel_IsEntryCollapsed(&t.Model, toolEntryId));
 
-  // Hover maps screen rows through the last rendered viewport. Separator and
-  // footer rows are not interactive.
   Tui_ComposeFrame(&t, 80, 11);
-  Feed(&t, "\x1b[<35;50;1M");  // assistant row; x does not limit the button
+  Feed(&t, "\x1b[<35;50;1M");
   CHECK(t.HoveredEntryId == assistantEntryId);
-  Feed(&t, "\x1b[<35;2;2M");  // separator
+  Feed(&t, "\x1b[<35;2;2M");
   CHECK(t.HoveredEntryId == 0);
-  Feed(&t, "\x1b[<35;2;3M");  // tool summary
+  Feed(&t, "\x1b[<35;2;3M");
   CHECK(t.HoveredEntryId == toolEntryId);
-  Feed(&t, "\x1b[<35;2;5M");  // run footer
+  Feed(&t, "\x1b[<35;2;5M");
   CHECK(t.HoveredEntryId == 0);
 
-  // Press/release on the same logical turn toggles it. Releasing on another
-  // turn cancels activation.
   Feed(&t, "\x1b[<0;2;3M\x1b[<0;2;3m");
   CHECK(!LineModel_IsEntryCollapsed(&t.Model, toolEntryId));
   CHECK(AnyRow(&a, &t, "hello-from-shell"));
   Tui_ComposeFrame(&t, 80, 12);
-  Feed(&t, "\x1b[<35;2;4M");  // expanded preview row is content, not a button
+  Feed(&t, "\x1b[<35;2;4M");
   CHECK(t.HoveredEntryId == 0);
   Feed(&t, "\x1b[<0;2;4M\x1b[<0;2;4m");
   CHECK(!LineModel_IsEntryCollapsed(&t.Model, toolEntryId));
@@ -1544,8 +1479,6 @@ void TestTui() {
   CHECK(LineModel_IsEntryCollapsed(&t.Model, toolEntryId));
   CHECK(!AnyRow(&a, &t, "hello-from-shell"));
 
-  // Ctrl+O expands all when any tool is collapsed, then collapses an
-  // all-expanded tool set.
   Feed(&t, "\x0f");
   CHECK(!LineModel_IsEntryCollapsed(&t.Model, toolEntryId));
   CHECK(AnyRow(&a, &t, "hello-from-shell"));
@@ -1553,16 +1486,11 @@ void TestTui() {
   CHECK(LineModel_IsEntryCollapsed(&t.Model, toolEntryId));
   CHECK(!AnyRow(&a, &t, "hello-from-shell"));
 
-  // No queued prompt input pending.
   CHECK(t.QCount == 0);
 
-  // Mouse-wheel scrolling. Seed enough rows to scroll, then drive wheel events
-  // through the input path. Wheel-up detaches follow and moves the viewport up;
-  // enough wheel-down returns to the bottom and re-enables follow.
   for (u32 i = 0; i < 40; i++)
     LineModel_AddNotice(&t.Model, EntryKind::Info, SVL("filler"));
 
-  // Global expansion above the viewport keeps the same logical top anchor.
   u64 anchorId = t.Model.Entries.Data[10].Id;
   u32 anchorRow = 0;
   CHECK(LineModel_FindEntryRows(&t.Model, anchorId, &anchorRow, nullptr));
@@ -1577,16 +1505,14 @@ void TestTui() {
 
   t.LastPaneH = 10;
   t.Follow = true;
-  Feed(&t, "\x1b[<64;1;1M");  // wheel up
+  Feed(&t, "\x1b[<64;1;1M");
   CHECK(!t.Follow);
   u32 afterUp = t.Top;
-  Feed(&t, "\x1b[<64;1;1M");  // wheel up again
+  Feed(&t, "\x1b[<64;1;1M");
   CHECK(t.Top < afterUp);
-  for (u32 i = 0; i < 20; i++) Feed(&t, "\x1b[<65;1;1M");  // wheel down to the bottom
+  for (u32 i = 0; i < 20; i++) Feed(&t, "\x1b[<65;1;1M");
   CHECK(t.Follow);
 
-  // A blank row separates the transcript viewport from the sticky cwd/branch
-  // context line above the composer.
   {
     Arena as = ArenaCreate();
     Tui ts;
@@ -1607,8 +1533,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // The scrollbar appears only on overflow, reserves the transcript's rightmost
-  // column, maps track clicks, and keeps dragging outside the scrollbar column.
   {
     Arena as = ArenaCreate();
     Tui ts;
@@ -1621,8 +1545,6 @@ void TestTui() {
     u16 scrollbarX = ScrollbarColumn(&ts);
     CHECK(ScrollbarRendered(&ts, scrollbarX));
 
-    // Clicking the track centers the thumb near the clicked row and cannot
-    // toggle the transcript entry under that screen row.
     u64 clickedId = LineModel_RowEntryId(&ts.Model, ts.LastTop + 3);
     CHECK(clickedId != 0);
     Feed(&ts, "\x1b[<0;20;4M\x1b[<0;20;4m");
@@ -1633,26 +1555,20 @@ void TestTui() {
         (u16)(ts.LastScrollbarThumbTop + ts.LastScrollbarThumbH / 2);
     CHECK(thumbCenter >= 2 && thumbCenter <= 4);
 
-    // Hovering the reserved column is never transcript hover.
     Feed(&ts, "\x1b[<35;20;4M");
     CHECK(ts.HoveredEntryId == 0);
 
-    // A top track click clamps to the beginning. Dragging the thumb to the
-    // bottom continues after the pointer leaves the scrollbar column.
     Feed(&ts, "\x1b[<0;20;1M\x1b[<0;20;1m");
     CHECK_ALL(ts.Top == 0, !ts.Follow);
     Tui_ComposeFrame(&ts, 20, 12);
     Feed(&ts, "\x1b[<0;20;1M\x1b[<32;10;7M\x1b[<0;10;7m");
     CHECK_ALL(!ts.ScrollbarDragging, ts.Follow, ts.Top == ScrollMaxTop(&ts));
 
-    // The release position itself is applied even if no final motion event is
-    // delivered.
     Feed(&ts, "\x1b[<0;20;1M\x1b[<0;20;1m");
     Tui_ComposeFrame(&ts, 20, 12);
     Feed(&ts, "\x1b[<0;20;1M\x1b[<0;10;7m");
     CHECK_ALL(ts.Follow, ts.Top == ScrollMaxTop(&ts));
 
-    // A detached logical top remains anchored when a resize rewraps the model.
     u64 resizeAnchorId = ts.Model.Entries.Data[6].Id;
     u32 resizeAnchorRow = 0;
     CHECK(LineModel_FindEntryRows(&ts.Model, resizeAnchorId, &resizeAnchorRow, nullptr));
@@ -1673,8 +1589,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Collapsing enough content to fit removes the scrollbar and restores the
-  // full transcript width. Tiny terminals also clear all scrollbar state.
   {
     Arena as = ArenaCreate();
     Tui ts;
@@ -1707,8 +1621,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Resizing from a narrower overflowing layout rechecks the full width, so a
-  // one-column wrap boundary cannot leave a history-dependent scrollbar.
   {
     Arena as = ArenaCreate();
     Tui ts;
@@ -1741,10 +1653,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Submit routing: ordinary text steers an active turn, marked as a steer, or
-  // waits for application preflight before an idle prompt is rendered. Nothing
-  // waits behind a turn or a busy loop: what cannot run now is refused and
-  // stays in the composer.
   {
     Arena a2 = ArenaCreate();
     ScriptProvider script = {};
@@ -1759,7 +1667,7 @@ void TestTui() {
     Tui_InitModel(&t2, &a2, o2);
     t2.Agent = TuiBridge_AgentHooks(&harness);
 
-    t2.AgentRunning = true;  // a turn is running
+    t2.AgentRunning = true;
     Feed(&t2, "steer me\r");
     CHECK_ALL(harness.Queues.Steering.Count == 1, t2.QCount == 0);
     DrainDisplay(&t2);
@@ -1788,7 +1696,7 @@ void TestTui() {
     LineEdit_Clear(&t2.Edit);
 
     TuiSubmission submission = {};
-    t2.AgentRunning = false;  // between turns
+    t2.AgentRunning = false;
     Feed(&t2, "next prompt\r");
     CHECK_ALL(t2.QCount == 1, harness.Queues.Steering.Count == 1);
     CHECK(Tui_WaitForSubmit(&t2, &submission));
@@ -1811,7 +1719,6 @@ void TestTui() {
     CHECK_ALL(t2.Model.Entries.Count == entriesAfterPrompt,
               !AnyRow(&a2, &t2, "/unknown"));
 
-    // An operation refuses input unless it yields to it.
     Tui_BeginOperation(&t2, SVL("busy"));
     Feed(&t2, "while busy\r");
     CHECK_ALL(t2.QCount == 0, StrView_Eq(LineEdit_Text(&t2.Edit), SVL("while busy")));
@@ -1831,10 +1738,6 @@ void TestTui() {
     ArenaRelease(&a2);
   }
 
-  // Commands the catalog marks inline act on the input thread instead of
-  // waiting for the main loop, which is inside the agent run for the whole
-  // turn. Every other command, including argument forms the dispatcher would
-  // reject, is refused until the turn ends.
   {
     Arena ai = ArenaCreate();
     ScriptProvider script = {};
@@ -1857,8 +1760,6 @@ void TestTui() {
     Tui_InitModel(&ti, &ai, oi);
     ti.Agent = TuiBridge_AgentHooks(&harness);
 
-    // /debug resolves entirely here: the overlay flips and nothing is queued,
-    // even though a turn owns the main loop.
     ti.AgentRunning = true;
     CHECK(!ti.Perf.Visible);
     Feed(&ti, "/deb\t");
@@ -1874,8 +1775,6 @@ void TestTui() {
     CHECK_ALL(ti.Perf.Visible, ti.QCount == 0);
     Feed(&ti, "/debug off\r");
 
-    // An argument the dispatcher rejects cannot run inline, so it waits for the
-    // turn like any other command.
     Feed(&ti, "/debug sideways\r");
     CHECK_ALL(!ti.Perf.Visible, ti.QCount == 0,
               StrView_Eq(LineEdit_Text(&ti.Edit), SVL("/debug sideways")));
@@ -1883,8 +1782,6 @@ void TestTui() {
     CHECK(AnyRow(&ai, &ti, "/debug can't run during a turn."));
     LineEdit_Clear(&ti.Edit);
 
-    // /clear cancels the turn from here, but the reset itself still queues:
-    // it swaps the session log, which cannot happen under a live turn.
     harness.Running = true;
     Feed(&ti, "/cle\t");
     CHECK_ALL(StrView_Eq(LineEdit_Text(&ti.Edit), SVL("/clear ")),
@@ -1898,8 +1795,6 @@ void TestTui() {
     CHECK_ALL(cleared.Kind == TuiSubmissionKind::Command,
               StrView_Eq(cleared.Text, SVL("/clear")));
 
-    // Idle, there is nothing to cancel and the loop is already waiting, so the
-    // command queues with no notice at all.
     harness.Running = false;
     Atomic_StoreI32(&harness.AbortFlag, 0);
     ti.AgentRunning = false;
@@ -1910,7 +1805,6 @@ void TestTui() {
     CHECK(ti.Model.Entries.Count == entriesBeforeIdleClear);
     CHECK(Tui_WaitForSubmit(&ti, &cleared));
 
-    // A command with no inline action is refused mid-turn rather than queued.
     ti.AgentRunning = true;
     Feed(&ti, "/model\r");
     CHECK_ALL(ti.QCount == 0, StrView_Eq(LineEdit_Text(&ti.Edit), SVL("/model")));
@@ -1918,9 +1812,8 @@ void TestTui() {
     CHECK(AnyRow(&ai, &ti, "/model can't run during a turn."));
     LineEdit_Clear(&ti.Edit);
 
-    // /exit cancels the turn holding the loop and stops without queueing.
     harness.Running = true;
-    Feed(&ti, "/exit now\r");  // argument policy is None; refused like /model
+    Feed(&ti, "/exit now\r");
     CHECK_ALL(ti.QCount == 0, !ti.Quit);
     LineEdit_Clear(&ti.Edit);
     Feed(&ti, "/quit\t");
@@ -1940,9 +1833,6 @@ void TestTui() {
     ArenaRelease(&ai);
   }
 
-  // Double Escape clears an idle composer or cancels an active agent turn. The
-  // presses may arrive separately or in one terminal read; expired/interrupted
-  // sequences re-arm.
   {
     Arena ae = ArenaCreate();
     TuiOpts oe;
@@ -2001,28 +1891,23 @@ void TestTui() {
     ArenaRelease(&ae);
   }
 
-  // Shift+Enter inserts a newline instead of submitting. It only arrives via
-  // the enhanced keyboard protocols requested on terminal entry, which also
-  // re-encode Escape, which the cancel path depends on.
   {
     Arena an = ArenaCreate();
     Tui tn;
     InitHeadlessTui(&tn, &an, false);
 
     Feed(&tn, "one");
-    Feed(&tn, "\x1b[13;2u");  // kitty Shift+Enter
+    Feed(&tn, "\x1b[13;2u");
     Feed(&tn, "two");
-    Feed(&tn, "\x1b[27;2;13~");  // modifyOtherKeys Shift+Enter
+    Feed(&tn, "\x1b[27;2;13~");
     Feed(&tn, "three");
     CHECK_ALL(StrView_Eq(LineEdit_Text(&tn.Edit), SVL("one\ntwo\nthree")),
               tn.QCount == 0);
 
-    // Ctrl+J and Alt+Enter keep working through the new encoding too.
     Feed(&tn, "\x1b[106;5u\x1b[13;3u");
     CHECK_ALL(StrView_Eq(LineEdit_Text(&tn.Edit), SVL("one\ntwo\nthree\n\n")),
               tn.QCount == 0);
 
-    // An unmodified Enter still submits.
     Feed(&tn, "\x1b[13u");
     CHECK_ALL(tn.QCount == 1, LineEdit_Empty(&tn.Edit));
     TuiSubmission submitted = {};
@@ -2030,12 +1915,9 @@ void TestTui() {
     Feed(&tn, "again\r");
     CHECK_ALL(tn.QCount == 1, LineEdit_Empty(&tn.Edit));
 
-    // Ctrl+Alt+D must stay inert rather than aliasing onto Ctrl+D and quitting.
     Feed(&tn, "\x1b[100;7u");
     CHECK_ALL(!tn.Stop, !tn.Quit);
 
-    // Escape arrives as CSI 27 u once the kitty protocol is active, so the
-    // double-Escape composer clear must still fire.
     Feed(&tn, "draft");
     Feed(&tn, "\x1b[27u");
     CHECK_ALL(StrView_Eq(LineEdit_Text(&tn.Edit), SVL("draft")), tn.EscapeArmed);
@@ -2046,9 +1928,6 @@ void TestTui() {
     ArenaRelease(&an);
   }
 
-  // Slash input opens a case-insensitive substring-filtered command palette.
-  // Tab completes the selected command without submitting. Enter commits it,
-  // and Escape dismisses the flyout without modifying the composer.
   {
     Arena ap = ArenaCreate();
     TuiCommandSpec commands[] = {
@@ -2203,7 +2082,6 @@ void TestTui() {
     ArenaRelease(&ap);
   }
 
-  // A durable snapshot hydrates a completed script-provider turn.
   {
     Arena a3 = ArenaCreate();
     ScriptStep step = {};
@@ -2249,8 +2127,6 @@ void TestTui() {
     ArenaRelease(&a3);
   }
 
-  // The agent may complete tools and start another assistant turn before the
-  // display catches up. Deferred events retain their data and visual order.
   {
     Arena aq = ArenaCreate();
     TuiOpts oq;
@@ -2330,8 +2206,6 @@ void TestTui() {
     ArenaRelease(&aq);
   }
 
-  // A tool card queued behind a long reveal is applied within the reveal
-  // deadline instead of waiting for the whole reply to animate out.
   {
     Arena ab = ArenaCreate();
     TuiOpts ob;
@@ -2353,7 +2227,6 @@ void TestTui() {
     CHECK(Tui_AdvanceStream(&tb, 1000));
     CHECK(tb.Model.Entries.Data[0].Text.Content.Length < bodyView.Length);
 
-    // The turn's completion and the tool call queue up behind the reveal.
     Message pacedMessage = {};
     pacedMessage.Kind = Role::Assistant;
     pacedMessage.Stop = StopReason::ToolUse;
@@ -2368,8 +2241,6 @@ void TestTui() {
     start.Tool.ArgumentsJson = SVL("{\"command\":\"ls\"}");
     TuiBridge_HarnessEvent(&tb, &start);
 
-    // Step frames only as far as the deadline: the tool entry must have landed
-    // by then, with the assistant text complete rather than truncated.
     u64 armed = 1016;
     for (u64 now = armed; now <= armed + kRevealDeadlineMs; now += 16)
       Tui_AdvanceStream(&tb, now);
@@ -2383,7 +2254,6 @@ void TestTui() {
     ArenaRelease(&ab);
   }
 
-  // Tool output entering the TUI remains sanitized and capped at 1,500 bytes.
   {
     Arena a4 = ArenaCreate();
     TuiOpts o4;
@@ -2421,8 +2291,6 @@ void TestTui() {
     ArenaRelease(&a4);
   }
 
-  // Only the first visual row of a turn is a button. Continuation content does
-  // not hover or click, and dragging off the first row cancels activation.
   {
     Arena a5 = ArenaCreate();
     TuiOpts o5;
@@ -2452,8 +2320,6 @@ void TestTui() {
     ArenaRelease(&a5);
   }
 
-  // Streaming updates preserve transcript selection coordinates and stationary
-  // click activation while the assistant response is still growing.
   {
     Arena ac = ArenaCreate();
     TuiOpts oc;
@@ -2489,8 +2355,6 @@ void TestTui() {
     ArenaRelease(&ac);
   }
 
-  // A stable same-row stream append preserves text selections, but invalidates
-  // a selection if newly rendered text replaces cells selected as whitespace.
   {
     Arena aw = ArenaCreate();
     TuiOpts ow;
@@ -2512,8 +2376,6 @@ void TestTui() {
     ArenaRelease(&aw);
   }
 
-  // Tool completion can insert an expanded preview above a detached viewport;
-  // the logical top entry remains anchored.
   {
     Arena a6 = ArenaCreate();
     TuiOpts o6;
@@ -2550,8 +2412,6 @@ void TestTui() {
     ArenaRelease(&a6);
   }
 
-  // Partial tool updates replace the pending preview without completing it;
-  // finalization is idempotent for live and durable completion delivery.
   {
     Arena au = ArenaCreate();
     TuiOpts ou;
@@ -2619,8 +2479,6 @@ void TestTui() {
     ArenaRelease(&au);
   }
 
-  // Composer mouse placement/dragging uses the last rendered wrapped layout,
-  // and keyboard motion extends or collapses the editor selection.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2645,28 +2503,28 @@ void TestTui() {
 
     LineEdit_Clear(&ts.Edit);
     Feed(&ts, "one two");
-    Feed(&ts, "\x1b[1;6D");  // Shift+Ctrl+Left
+    Feed(&ts, "\x1b[1;6D");
     CHECK(StrView_Eq(LineEdit_SelectedText(&ts.Edit), SVL("two")));
-    Feed(&ts, "\x1b[D");  // unshifted Left collapses to the selection start
+    Feed(&ts, "\x1b[D");
     CHECK_ALL(!LineEdit_HasSelection(&ts.Edit), LineEdit_Cursor(&ts.Edit) == 4);
-    Feed(&ts, "\x1b[1;2C");  // Shift+Right
+    Feed(&ts, "\x1b[1;2C");
     CHECK(StrView_Eq(LineEdit_SelectedText(&ts.Edit), SVL("t")));
 
     LineEdit_Clear(&ts.Edit);
     Feed(&ts, "ab\ncde");
-    Feed(&ts, "\x1b[1;2A");  // Shift+Up
+    Feed(&ts, "\x1b[1;2A");
     CHECK(StrView_Eq(LineEdit_SelectedText(&ts.Edit), SVL("\ncde")));
     Tui_ComposeFrame(&ts, 20, 12);
     CHECK(Screen_BackAt(&ts.Scr, 4, ComposerTop(&ts)).St.Bg == 238);
-    Feed(&ts, "\x1b[1;2B");  // Shift+Down
+    Feed(&ts, "\x1b[1;2B");
     CHECK(!LineEdit_HasSelection(&ts.Edit));
-    Feed(&ts, "\x1b[1;2H");  // Shift+Home
+    Feed(&ts, "\x1b[1;2H");
     CHECK(StrView_Eq(LineEdit_SelectedText(&ts.Edit), SVL("cde")));
-    Feed(&ts, "\x1b[1;2D");  // Shift+Left
+    Feed(&ts, "\x1b[1;2D");
     CHECK(StrView_Eq(LineEdit_SelectedText(&ts.Edit), SVL("\ncde")));
     Feed(&ts, "\x1b[1;2C");
     CHECK(StrView_Eq(LineEdit_SelectedText(&ts.Edit), SVL("cde")));
-    Feed(&ts, "\x1b[1;2F");  // Shift+End
+    Feed(&ts, "\x1b[1;2F");
     CHECK(!LineEdit_HasSelection(&ts.Edit));
 
     LineEdit_Clear(&ts.Edit);
@@ -2678,8 +2536,6 @@ void TestTui() {
     Feed(&ts, "\x1b[200~paste\ntext\x1b[201~");
     CHECK(StrView_Eq(LineEdit_Text(&ts.Edit), SVL("paste\ntext")));
 
-    // Copying a composer selection wins over the interrupt path and preserves
-    // both the selection and editor state.
     Feed(&ts, "\x1b[1;6D");
     ts.AgentRunning = true;
     ts.AbortFlag = 0;
@@ -2689,8 +2545,6 @@ void TestTui() {
               StrView_Eq(LineEdit_SelectedText(&ts.Edit), SVL("text")),
               StrView_Eq(LineEdit_Text(&ts.Edit), SVL("paste\ntext")));
 
-    // Moving the cursor on mouse-down must not change the viewport origin used
-    // to map later drag rows in a scrolled composer.
     LineEdit_Clear(&ts.Edit);
     Feed(&ts, "0\n1\n2\n3\n4\n5\n6\n7\n8\n9");
     Tui_ComposeFrame(&ts, 20, 12);
@@ -2703,8 +2557,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Composer highlighting uses the same minimum-one-cell scalar widths as
-  // layout and rendering, including combining marks.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2734,8 +2586,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Transcript selections serialize the visual rows (including indentation),
-  // work in either direction, and highlight every selected row range.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2767,15 +2617,12 @@ void TestTui() {
     Feed(&ts, "\x03");
     CHECK(StrView_Eq(StrBuf_View(&ts.ClipboardRaw), SVL("alpha\n    bravo\n    cha")));
 
-    // Moving away and back still cancels activation, but leaves no non-empty
-    // range, so Ctrl+C falls back to interrupt.
     Feed(&ts, "\x1b[<0;5;1M\x1b[<32;6;1M\x1b[<32;5;1M\x1b[<0;5;1m");
     CHECK(ts.TranscriptSelectionRevision == 0);
     ts.AbortFlag = 0;
     Feed(&ts, "\x03");
     CHECK(ts.AbortFlag == 1);
 
-    // Typing moves focus to the composer and clears transcript selection.
     ts.AbortFlag = 0;
     Feed(&ts, "x");
     CHECK_ALL(ts.TranscriptSelectionRevision == 0,
@@ -2794,7 +2641,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // A transcript drag can begin in blank pane space below the rendered rows.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2813,8 +2659,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // The pointed transcript cell is included at both drag endpoints, including
-  // the terminal's rightmost cell in forward and reverse selections.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2832,7 +2676,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Cell ranges snap outwards around width-two glyphs.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2848,8 +2691,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Full visual-row copy includes right metadata and excludes sticky/status
-  // chrome because only LineModel display rows are serialized.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2871,8 +2712,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Hidden collapsed content is copied from the same visual-layout iterator as
-  // rendering, including the ellipsis run.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2892,8 +2731,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // A successful copy confirms on the status row, counting characters rather
-  // than bytes, and retires on the compose clock.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2907,7 +2744,6 @@ void TestTui() {
     CHECK_ALL(ts.CopyNoticeActive, ts.CopyNoticeChars == 4,
               ts.CopyNoticeExpiryMs == 0);
 
-    // The first frame stamps the deadline and takes over the left status text.
     Tui_ComposeFrame(&ts, 20, 12, 100000);
     u16 statusY = (u16)(ts.Scr.Rows - 1);
     CHECK_ALL(ts.CopyNoticeExpiryMs == 101500,
@@ -2916,7 +2752,6 @@ void TestTui() {
               Screen_BackAt(&ts.Scr, 1, statusY).Ch == 'c',
               Screen_BackAt(&ts.Scr, 1, statusY).St.Fg == 114);
 
-    // It survives right up to the deadline, then restores the agent state.
     Tui_ComposeFrame(&ts, 20, 12, 101499);
     CHECK_ALL(ts.CopyNoticeActive,
               ScreenRowContains(&ts, statusY, "copied 4 chars"));
@@ -2926,7 +2761,6 @@ void TestTui() {
               ScreenRowContains(&ts, statusY, "ready"),
               !ScreenRowContains(&ts, statusY, "copied"));
 
-    // A running state leads with a spinner in the accent; its label stays grey.
     ts.State = TuiState::Streaming;
     Tui_ComposeFrame(&ts, 20, 12, 101600);
     CHECK_ALL(ScreenRowContains(&ts, statusY, "responding"),
@@ -2937,8 +2771,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Pointer motion keeps the confirmation, the next keystroke retires it, and a
-  // Ctrl+C that copies nothing never arms one.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2970,7 +2802,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Multi-byte selections report characters, not bytes, and singular units.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -2988,8 +2819,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Edge dragging auto-scrolls at a controlled cadence and extends the
-  // absolute transcript focus across pages while remaining detached.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -3023,8 +2852,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Display structure changes and terminal resizes invalidate absolute-row
-  // transcript selections before they can be rendered or copied.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -3049,7 +2876,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // With no selection, Ctrl+C keeps the exact interrupt/clear/quit fallback.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -3074,8 +2900,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Clipboard output queued immediately before shutdown is emitted once by the
-  // render shutdown path before terminal restoration.
   {
     Arena as = ArenaCreate();
     TuiOpts os;
@@ -3111,8 +2935,6 @@ void TestTui() {
     ArenaRelease(&as);
   }
 
-  // Modal selectors route navigation/confirmation away from the composer and
-  // preserve a cancellable manual text-entry path.
   {
     Arena am = ArenaCreate();
     TuiOpts om;
@@ -3211,8 +3033,6 @@ void TestTui() {
     result = Tui_GetModalResult(&tm, nullptr, &entered, &am);
     CHECK_ALL(result == TuiModalResult::Confirmed, entered.Length == 0);
 
-    // The breadcrumb defaults to "Commands" so command-invoked modals render
-    // unchanged, and callers that are not commands can say what they are.
     CHECK(Tui_BeginSelection(&tm, SVL("Choose"), options, 3));
     CHECK(StrView_Eq(tm.Sess.ModalCategory, SVL("Commands")));
     Feed(&tm, "\x1b");
@@ -3224,7 +3044,6 @@ void TestTui() {
                              StrView{}, SVL("Question")));
     CHECK(StrView_Eq(tm.Sess.ModalCategory, SVL("Question")));
     Feed(&tm, "\x1b");
-    // Empty is preserved rather than defaulted: it hides the breadcrumb.
     CHECK(Tui_BeginTextEntry(&tm, SVL("Bare"), SVL("Value"), StrView{},
                              StrView{}));
     CHECK(tm.Sess.ModalCategory.Length == 0);
@@ -3238,8 +3057,6 @@ void TestTui() {
               ScreenContains(&tm, "Run git push"));
     Feed(&tm, "\x1b");
 
-    // The answer field is a composer-style bordered box, not a reversed bar:
-    // the caret sits inside a border on an unfilled row.
     CHECK(Tui_BeginTextEntry(&tm, SVL("How many?"), SVL("Your answer"),
                              StrView{}, SVL("Question")));
     Tui_ComposeFrame(&tm, 76, 18);
@@ -3256,12 +3073,10 @@ void TestTui() {
     Feed(&tm, "\x1b");
     Tui_ComposeFrame(&tm, 20, 12);
 
-    // The panel stands in for the composer instead of floating over it: no
-    // composer node, every column, bottom border on the composer's old row.
     CHECK(Tui_BeginSelection(&tm, SVL("Choose"), options, 3));
     Tui_ComposeFrame(&tm, 40, 20);
     u16 panelBottom = (u16)(tm.Scr.Rows - 2);
-    u16 panelTop = (u16)(panelBottom - 5);  // two borders, title, three options
+    u16 panelTop = (u16)(panelBottom - 5);
     CHECK_ALL(ComposerNode(&tm) == nullptr,
               Screen_BackAt(&tm.Scr, 0, panelTop).Ch == 0x256d,
               Screen_BackAt(&tm.Scr, 39, panelTop).Ch == 0x256e,
@@ -3271,8 +3086,6 @@ void TestTui() {
               ScreenRowContains(&tm, (u16)(panelTop + 2), "first"));
     Feed(&tm, "\x1b");
 
-    // Content decides the height, but never past half the screen: fourteen
-    // options want seventeen rows and get ten.
     StrView crowded[14] = {};
     for (u32 i = 0; i < 14; i++) crowded[i] = SVL("opt");
     CHECK(Tui_BeginSelection(&tm, SVL("Crowded"), crowded, 14));
@@ -3281,7 +3094,6 @@ void TestTui() {
               Screen_BackAt(&tm.Scr, 0, panelBottom).Ch == 0x2570);
     Feed(&tm, "\x1b");
 
-    // Dismissing it hands the rows back to the composer.
     Tui_ComposeFrame(&tm, 40, 20);
     CHECK_ALL(ComposerNode(&tm) != nullptr,
               Screen_BackAt(&tm.Scr, 0, panelBottom).Ch == 0x2570);
@@ -3310,8 +3122,6 @@ void TestTui() {
     ArenaRelease(&am);
   }
 
-  // Command notices/errors, model status, and operation cancellation are
-  // thread-safe state updates. Ctrl+C cancels an operation without exiting.
   {
     Arena ac = ArenaCreate();
     TuiOpts oc;
@@ -3369,8 +3179,6 @@ void TestTui() {
     ArenaRelease(&ac);
   }
 
-  // The context bar fills in half-cell steps, escalates its color past 70% and
-  // 90% of the window, and narrow rows shed effort and usage before it.
   {
     Arena ab = ArenaCreate();
     TuiOpts ob;
@@ -3391,7 +3199,6 @@ void TestTui() {
     ContextBarCells bar = barAt(80);
     CHECK_ALL(strcmp(bar.Shape, "--------") == 0, bar.TrackFg == 238);
 
-    // Any occupancy shows, so an empty bar only ever means unknown.
     Tui_SetContextTokens(&tb, 1);
     bar = barAt(80);
     CHECK_ALL(strcmp(bar.Shape, ">-------") == 0, bar.FillFg == 250,
@@ -3431,7 +3238,6 @@ void TestTui() {
               !ScreenRowContains(&tb, statusY, "KiB"),
               ScreenRowContains(&tb, statusY, "auto"));
 
-    // A model without a published window has nothing to measure against.
     Tui_SetModelProfile(&tb, SVL("m"), ModelRequestProfile{ModelEffort::High, 0});
     Tui_ComposeFrame(&tb, 80, 12);
     CHECK(!ReadContextBar(&tb, statusY, &bar));
@@ -3440,8 +3246,6 @@ void TestTui() {
     ArenaRelease(&ab);
   }
 
-  // Reported usage replaces the running total, since it measured the whole
-  // prompt; a response without usage is estimated on top of it instead.
   {
     Arena au = ArenaCreate();
     TuiOpts ou;
@@ -3472,8 +3276,6 @@ void TestTui() {
     ArenaRelease(&au);
   }
 
-  // Session clear reclaims the resettable arena and returns all conversation/UI
-  // state to idle while preserving terminal context, harness binding, and model.
   {
     Arena ar = ArenaCreate();
     TuiOpts orr;
@@ -3547,14 +3349,12 @@ void TestTui() {
     Tui_EndOperation(&resetTui);
     Tui_Stop(&resetTui);
     CHECK_ALL(!resetTui.SessionUp, !resetTui.SyncUp);
-    Tui_Stop(&resetTui);  // final cleanup is idempotent
+    Tui_Stop(&resetTui);
     CHECK(SessionResult_IsOk(AgentHarness_Close(&harness)));
     MemoryRepository_Destroy(&memory);
     ArenaRelease(&ar);
   }
 
-  // Startup context is copied into controller-owned storage, and input wakes
-  // are distinguished so the renderer may bypass its stream-frame throttle.
   {
     Arena as = ArenaCreate();
     Tui startup;

@@ -4,11 +4,8 @@
 
 constexpr u32 SESSION_DISPLAY_TITLE_MAX_BYTES = 96;
 
-// A project key doubles as the storage directory name, so two keys that name
-// the same directory have to compare equal. Windows filesystems are
-// case-insensitive, and the key generator folds case there for exactly that
-// reason; a session recorded before that folding existed still has to match the
-// folded key it is now looked up by.
+// Keys name directories, so Windows compares case-insensitively; older
+// sessions predate key folding and must still match.
 inline bool SessionProjectKey_Eq(StrView a, StrView b) {
 #if defined(_WIN32)
   if (a.Length != b.Length) return false;
@@ -25,16 +22,8 @@ inline bool SessionProjectKey_Eq(StrView a, StrView b) {
 #endif
 }
 
-// A readable, filesystem-safe key for `directory`: its base name plus a hash
-// of the whole path, folded on Windows so every spelling of one directory
-// yields one key. Names the session storage directory of a working directory
-// and the memory wiki of a repository.
 StrView SessionProjectKey(Arena* arena, StrView directory);
 
-// Derived, read-only view of a session for listing/display purposes. Every
-// field here is recomputed from the record log (or supplied by the caller
-// for the transient Busy/NowMs signal); v2 has no durable operation/recovery
-// state, so there is nothing to reconcile against.
 struct SessionInfo {
   DurableId SessionId;
   StrView ProjectKey;
@@ -66,14 +55,12 @@ struct SessionInfo {
   u32 ToolCallCount;
   u32 CompactionCount;
 
-  // Transient: whether the harness currently has an in-memory turn running
-  // for this session. Never derived from (or persisted to) the record log.
   bool Busy;
 };
 
 struct SessionMetadataBuildOptions {
   bool Busy;
-  u64 NowMs;  // when Busy, extends WallSpanMs up to "now"
+  u64 NowMs;
 };
 
 StrView SessionMetadata_FlattenDisplayText(

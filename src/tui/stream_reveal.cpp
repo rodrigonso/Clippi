@@ -6,24 +6,18 @@ namespace {
 
 const u32 COMPACT_AFTER_BYTES = 64 * 1024;
 
-// Reveal rate in scalars/second: a floor when nothing is waiting, plus a gain
-// per backlogged byte. The gain is what bounds the queue -- text arriving at R
-// scalars/second settles (R - BASE) / GAIN bytes behind, whatever its length.
 const u32 BASE_SCALARS_PER_SECOND = 180;
 const u32 BACKLOG_GAIN_PER_BYTE = 3;
 const u32 MAX_SCALARS_PER_SECOND = 960;
 
-// Elapsed time credited to one frame. Clamping time rather than scalars is
-// deliberate: a per-frame scalar cap silently becomes a hard ceiling of
-// cap x frame rate that no amount of backlog can overcome, which is how the
-// previous pacing attempt throttled long replies.
+// Clamp time, not scalars: a per-frame scalar cap becomes a hard ceiling of
+// cap x frame rate that no backlog can overcome.
 const u64 MAX_STEP_MS = 50;
 
-const u32 ONE_SCALAR = 1000;  // milli-scalar fixed point; no floating point here
+const u32 ONE_SCALAR = 1000;
 
-// Return one complete UTF-8 scalar's byte length. A zero result means the
-// buffer ends with a potentially valid but incomplete scalar. Invalid input
-// consumes one byte so arbitrary provider output always makes progress.
+// 0 means an incomplete trailing scalar. Invalid input consumes one byte so arbitrary
+// provider output always makes progress.
 u32 Utf8ScalarBytes(const char* data, u32 length) {
   if (length == 0) return 0;
   u8 lead = (u8)data[0];
@@ -44,7 +38,6 @@ u32 Utf8ScalarBytes(const char* data, u32 length) {
     if (((u8)data[i] & 0xC0) != 0x80) return 1;
   }
 
-  // Reject overlong encodings, UTF-16 surrogates and values above U+10FFFF.
   if (need == 3 && lead == 0xE0 && (u8)data[1] < 0xA0) return 1;
   if (need == 3 && lead == 0xED && (u8)data[1] >= 0xA0) return 1;
   if (need == 4 && lead == 0xF0 && (u8)data[1] < 0x90) return 1;
@@ -72,12 +65,10 @@ u32 Backlog(const StreamReveal* r) { return r->Pending.Length - r->Offset; }
 void ResetPacing(StreamReveal* r) {
   r->LastTickMs = 0;
   r->DeadlineMs = 0;
-  // Seeded with one scalar so the first frame after text arrives is never
-  // empty, however small the interval that frame is credited with.
   r->CreditMilliScalars = ONE_SCALAR;
 }
 
-}  // namespace
+}
 
 void StreamReveal_Init(StreamReveal* r, Arena* arena) {
   *r = {};
@@ -93,8 +84,8 @@ void StreamReveal_Push(StreamReveal* r, StrView text) {
   bool wasEmpty = !StreamReveal_HasPending(r);
   ReclaimConsumed(r);
   StrBuf_Append(&r->Pending, text);
-  // Only a transition out of empty reseeds the clock. Text arriving behind an
-  // armed deadline joins the existing tail instead of starting a new one.
+  // Only a transition out of empty reseeds the clock; text arriving behind an armed
+  // deadline joins the existing tail.
   if (wasEmpty) ResetPacing(r);
 }
 
@@ -112,7 +103,7 @@ StrView StreamReveal_NextFrame(StreamReveal* r, u64 nowMs, bool blocked) {
   }
   if (blocked && r->DeadlineMs == 0) {
     r->DeadlineMs = nowMs + kRevealDeadlineMs;
-    FFI(r->DeadlineMs == 0);  // 0 is the unarmed sentinel
+    FFI(r->DeadlineMs == 0);
   }
 
   if (r->LastTickMs == 0) r->LastTickMs = nowMs;
@@ -126,21 +117,15 @@ StrView StreamReveal_NextFrame(StreamReveal* r, u64 nowMs, bool blocked) {
   if (r->DeadlineMs != 0 && nowMs >= r->DeadlineMs) {
     budget = backlog;
   } else {
-    // The backlog term counts bytes, not decoded scalars, to keep it O(1).
-    // Multibyte text therefore overstates how far behind the display is, which
-    // only reveals faster -- the safe direction.
+    // Counts bytes, not scalars, to stay O(1); multibyte text only reveals faster.
     u64 rate = (u64)BASE_SCALARS_PER_SECOND + (u64)backlog * BACKLOG_GAIN_PER_BYTE;
     if (rate > MAX_SCALARS_PER_SECOND) rate = MAX_SCALARS_PER_SECOND;
-    // Capping the balance at one full step keeps idle time from banking credit
-    // that would later burst; it also bounds a frame at MAX_STEP_MS x rate.
+    // Capping at one full step keeps idle time from banking credit that later bursts.
     u64 credit = (u64)r->CreditMilliScalars + elapsed * rate;
     r->CreditMilliScalars = (u32)ClippiMin(credit, MAX_STEP_MS * rate);
     budget = r->CreditMilliScalars / ONE_SCALAR;
 
     if (r->DeadlineMs != 0) {
-      // This frame's share of the remaining backlog. Revealing backlog*e/T each
-      // frame leaves the ratio backlog/remaining unchanged, so the deadline is
-      // met by construction rather than by the drain above.
       u64 remaining = r->DeadlineMs - nowMs;
       u64 share = ((u64)backlog * elapsed + remaining - 1) / remaining;
       if (share > backlog) share = backlog;

@@ -46,7 +46,7 @@ void Mutex_Lock(Mutex* m) { EnterCriticalSection((CRITICAL_SECTION*)m->Storage);
 void Mutex_Unlock(Mutex* m) { LeaveCriticalSection((CRITICAL_SECTION*)m->Storage); }
 
 void Cond_Init(CondVar* c) { InitializeConditionVariable((CONDITION_VARIABLE*)c->Storage); }
-void Cond_Destroy(CondVar*) {}  // CONDITION_VARIABLE needs no teardown
+void Cond_Destroy(CondVar*) {}
 void Cond_Wait(CondVar* c, Mutex* m) {
   SleepConditionVariableCS((CONDITION_VARIABLE*)c->Storage, (CRITICAL_SECTION*)m->Storage, INFINITE);
 }

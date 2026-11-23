@@ -52,7 +52,7 @@ StrView RandomToken(Arena* arena, u32 bytes) {
   return Base64UrlEncode(arena, buf, bytes);
 }
 
-}  // namespace
+}
 
 StrView OAuthPkce_Challenge(Arena* arena, StrView verifier) {
   byte digest[SHA256_DIGEST_SIZE];
@@ -127,8 +127,7 @@ OAuthCallback OAuthCallback_Parse(Arena* arena, StrView target, StrView path,
   OAuthQuery_Find(arena, query, "error", &error);
   OAuthQuery_Find(arena, query, "error_description", &errorDescription);
 
-  // A denial carries no state, so it cannot be tied to this request; it ends
-  // the attempt but grants nothing.
+  // A denial carries no state to verify; it ends the attempt but grants nothing.
   if (error.Length) {
     result.Status = OAuthCallbackStatus::Denied;
     result.Error = errorDescription.Length ? errorDescription : error;

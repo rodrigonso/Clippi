@@ -16,10 +16,7 @@ ProcessFileLockStatus ProcessFileLock_TryAcquire(Arena* scratch, StrView path,
   *out = ProcessFileLock{};
   wchar_t native[4096];
   if (!Win32_Path(path, native, 4096)) return ProcessFileLockStatus::IoError;
-  // DELETE access plus FILE_FLAG_DELETE_ON_CLOSE ties the sentinel file's
-  // lifetime to the handle, so the kernel removes it even if this process is
-  // killed. A leftover file from an older build is opened and then cleaned up
-  // the same way.
+  // DELETE_ON_CLOSE ties the sentinel to the handle, so the kernel removes it even if this process is killed.
   HANDLE handle = CreateFileW(native,
                               GENERIC_READ | GENERIC_WRITE | DELETE, 0, nullptr,
                               OPEN_ALWAYS,
@@ -27,9 +24,7 @@ ProcessFileLockStatus ProcessFileLock_TryAcquire(Arena* scratch, StrView path,
                               nullptr);
   if (handle == INVALID_HANDLE_VALUE) {
     DWORD error = GetLastError();
-    // While a holder's delete is still pending the name cannot be reopened.
-    // That is the same answer as a sharing violation -- someone else owns the
-    // lock right now -- so it must not surface as an I/O failure.
+    // A holder's pending delete blocks reopening; that means held, not an I/O failure.
     if (error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION ||
         error == ERROR_ACCESS_DENIED || error == ERROR_DELETE_PENDING)
       return ProcessFileLockStatus::Busy;
@@ -53,17 +48,7 @@ bool ProcessFileLock_IsHeld(Arena* scratch, StrView path) {
   if (!scratch || path.Length == 0) return false;
   wchar_t native[4096];
   if (!Win32_Path(path, native, 4096)) return false;
-  // GENERIC_READ is required: an access-free or FILE_READ_ATTRIBUTES open
-  // bypasses the sharing check entirely and reports a held lock as free.
-  // Requesting read access means this open is refused while a holder -- which
-  // opened the sentinel with no sharing at all -- still owns it.
-  //
-  // The permissive share flags do not make the probe invisible, because
-  // Windows checks sharing in both directions: for as long as this handle is
-  // open it denies an acquirer's dwShareMode of 0. That only matters for a
-  // sentinel left behind by a power loss (a crash is cleaned up by
-  // FILE_FLAG_DELETE_ON_CLOSE), where an acquirer racing this handful of
-  // instructions can see a spurious Busy and retry.
+  // GENERIC_READ is required: an access-free open bypasses the sharing check and reports a held lock as free.
   HANDLE handle =
       CreateFileW(native, GENERIC_READ,
                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -88,9 +73,6 @@ static_assert(sizeof(int) <= sizeof(((ProcessFileLock*)nullptr)->Storage),
 
 namespace {
 
-// Copies `path` into a null-terminated stack buffer for the POSIX calls that
-// need one. Returns false when the path does not fit, in which case callers
-// skip the operation rather than truncate and act on the wrong file.
 bool NativePath(StrView path, char* buffer, u32 capacity) {
   if (path.Length == 0 || path.Length + 1 > capacity) return false;
   memcpy(buffer, path.Data, path.Length);
@@ -98,7 +80,7 @@ bool NativePath(StrView path, char* buffer, u32 capacity) {
   return true;
 }
 
-}  // namespace
+}
 
 ProcessFileLockStatus ProcessFileLock_TryAcquire(Arena* scratch, StrView path,
                                                  ProcessFileLock* out) {
@@ -106,11 +88,8 @@ ProcessFileLockStatus ProcessFileLock_TryAcquire(Arena* scratch, StrView path,
   *out = ProcessFileLock{};
   const char* target = StrView_DupCStr(scratch, path);
 
-  // A releasing holder unlinks the sentinel while it still holds the lock, so
-  // an open() that raced with it can land on an inode that is no longer the
-  // one published at `path`. Locking that dead inode would let a third process
-  // create a fresh file and hold the same logical lock concurrently, so the
-  // inode is rechecked after locking and a losing attempt is retried.
+  // open() can race an unlinking holder and land on a dead inode, letting two processes hold
+  // the lock; the inode is rechecked after locking and a losing attempt is retried.
   for (u32 attempt = 0; attempt < 8; attempt++) {
     int fd = open(target, O_CREAT | O_RDWR, 0600);
     if (fd < 0) return ProcessFileLockStatus::IoError;
@@ -145,8 +124,7 @@ ProcessFileLockStatus ProcessFileLock_TryAcquire(Arena* scratch, StrView path,
     }
     close(fd);
   }
-  // Persistently losing the race means another process is actively cycling the
-  // lock, which is the same practical answer as finding it held.
+  // Persistently losing the race means another process is cycling the lock.
   return ProcessFileLockStatus::Busy;
 }
 
@@ -154,9 +132,7 @@ void ProcessFileLock_Release(ProcessFileLock* lock, StrView path) {
   if (!lock || !lock->Held) return;
   int fd = -1;
   memcpy(&fd, lock->Storage, sizeof(fd));
-  // Unlink before dropping the lock. A racing acquirer then either fails
-  // F_SETLK (this process still holds it) or notices the inode it locked is no
-  // longer published at `path` and retries.
+  // Unlink before dropping the lock, so a racing acquirer fails F_SETLK or sees the inode change.
   char native[4096];
   if (NativePath(path, native, (u32)sizeof(native))) unlink(native);
   close(fd);
@@ -164,11 +140,10 @@ void ProcessFileLock_Release(ProcessFileLock* lock, StrView path) {
 }
 
 bool ProcessFileLock_IsHeld(Arena* scratch, StrView path) {
-  (void)scratch;  // The POSIX probe needs no arena-backed copy.
+  (void)scratch;
   char native[4096];
   if (!NativePath(path, native, (u32)sizeof(native))) return false;
-  // O_RDONLY without O_CREAT: a missing sentinel means nobody holds the lock,
-  // and probing must never author one.
+  // No O_CREAT: probing must never author a sentinel.
   int fd = open(native, O_RDONLY);
   if (fd < 0) return false;
   struct flock probe = {};
@@ -176,8 +151,6 @@ bool ProcessFileLock_IsHeld(Arena* scratch, StrView path) {
   probe.l_whence = SEEK_SET;
   probe.l_start = 0;
   probe.l_len = 0;
-  // F_GETLK only reports a conflicting owner, so a sentinel left behind by a
-  // holder that died without unlinking correctly reads as free.
   bool held = fcntl(fd, F_GETLK, &probe) == 0 && probe.l_type != F_UNLCK;
   close(fd);
   return held;

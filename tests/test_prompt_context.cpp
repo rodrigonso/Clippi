@@ -41,9 +41,7 @@ void RemoveDir(const char* path) {
 #endif
 }
 
-// Discovery walks every ancestor of cwd, so context files outside the test tree
-// (the repository's own AGENTS.md, or one in the user's home) legitimately load
-// too. Assertions count only what the test itself created.
+// Discovery walks every ancestor of cwd, so assertions count only files the test created.
 u32 CountContextFilesUnder(const PromptContext* context, const char* marker) {
   u32 count = 0;
   for (u32 i = 0; i < context->ContextFiles.Count; i++)
@@ -80,7 +78,6 @@ void TestPromptAssembly(Arena* scratch, StrView root, StrView cwd,
       MakeTool("read", SVL("Read file contents"), kReadGuidelines, 2),
       MakeTool("shell", SVL("Execute shell commands (ls, grep, find, etc.)"),
                kShellGuidelines, 1),
-      // No snippet: must stay out of the "Available tools" list.
       MakeTool("silent_tool", {}, nullptr, 0)};
 
   PromptContextOptions options = {};
@@ -94,10 +91,6 @@ void TestPromptAssembly(Arena* scratch, StrView root, StrView cwd,
   PromptContext context = {};
   StrBuf error = StrBuf_Make(scratch, 128);
   CHECK(PromptContext_Build(&options, &context, &error));
-  // The whole default prompt, byte for byte, up to the varying cwd. Tool lines
-  // follow tool order and use snippets; guidelines are the conditional shell
-  // bullet, then tool contributions in tool order with duplicates collapsed,
-  // then the two always-on bullets.
   CHECK_ALL(
       FindText(context.SystemPrompt,
                "You are an expert coding assistant operating inside Clippi, a "
@@ -119,7 +112,6 @@ void TestPromptAssembly(Arena* scratch, StrView root, StrView cwd,
       !StrView_Contains(context.SystemPrompt, "2026"));
   PromptContext_Release(&context);
 
-  // A dedicated search tool suppresses the shell fallback bullet.
   Tool searchTools[2] = {
       tools[1],
       MakeTool("grep", SVL("Search file contents for patterns"), nullptr, 0)};
@@ -215,7 +207,6 @@ void TestDiscoveryAndTrust(Arena* scratch, StrView root, StrView cwd,
             !StrView_Contains(context.SystemPrompt, "global append"));
   PromptContext_Release(&context);
 
-  // AGENTS.override.md wins over other candidates in the same directory.
   StrView cwdOverride = Fs_Join(scratch, cwd, SVL("AGENTS.override.md"));
   CHECK(ConfigFile_WriteAtomic(scratch, cwdOverride, SVL("cwd override")));
   StrBuf_Clear(&error);
@@ -288,7 +279,7 @@ void TestSkillsBlock(Arena* scratch, StrView cwd, StrView agentDirectory) {
             CountSkillsUnder(&context, "clippi_prompt_context_test") == 0);
   PromptContext_Release(&context);
 }
-}  // namespace
+}
 
 void TestPromptContext() {
   Arena scratch = ArenaCreate((usize)64 << 20);

@@ -1,9 +1,5 @@
-"""macOS process-tree inspection: RSS accounting and ownership.
-
-RSS includes shared pages in every process, so a tree total can double-count
-shared libraries. It must not be compared directly with proportional memory
-figures from other operating systems.
-"""
+"""macOS process-tree RSS. RSS counts shared pages per process, so totals are not
+comparable with proportional-memory figures from other OSes."""
 
 from __future__ import annotations
 
@@ -66,7 +62,6 @@ def group_members(pgids: list[int], table: ProcessTable) -> set[int]:
 
 
 def tree_rss_mb(roots: list[int], pgids: list[int]) -> tuple[float, int]:
-    """Include descendants and helpers reparented within the process group."""
     table = proc_table()
     pids = descendants(roots, table) | group_members(pgids, table)
     total = 0
@@ -117,11 +112,7 @@ def wait_for_socket(path: str, timeout_s: float) -> bool:
 
 
 def scan(tools: list["Tool"], exclude_pid: int | None = None) -> dict[str, tuple[float, int]]:
-    """Attribute matching executable images to tools; return name -> (MiB, count).
-
-    Live views use one entry per binary. Configuration variants are measured
-    separately by their explicitly owned process trees in measure.
-    """
+    """Return name -> (MiB, count); live views use one entry per binary."""
     me = exclude_pid if exclude_pid is not None else os.getpid()
     totals = {t.name: 0 for t in tools}
     counts = {t.name: 0 for t in tools}

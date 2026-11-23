@@ -1,13 +1,11 @@
 #pragma once
 #include "base/basics.h"
 
-// Decoded key events from the raw terminal byte stream (VT/ANSI on every
-// platform; on Windows the input handle is put in virtual-terminal-input mode).
 enum class KeyKind : u8 {
-  None,  // recognised but ignored (e.g. unknown escape)
-  Char,  // a printable codepoint (Codepoint)
-  Enter,    // submit
-  Newline,  // Shift+Enter / Ctrl+J / Alt+Enter / newline inside a paste
+  None,
+  Char,
+  Enter,
+  Newline,
   Backspace,
   Delete,
   Tab,
@@ -17,8 +15,8 @@ enum class KeyKind : u8 {
   Down,
   Home,
   End,
-  ScrollUp,    // mouse wheel up
-  ScrollDown,  // mouse wheel down
+  ScrollUp,
+  ScrollDown,
   MouseMove,
   MouseLeftDown,
   MouseLeftUp,
@@ -38,7 +36,7 @@ enum class KeyKind : u8 {
 
 struct Key {
   KeyKind Kind;
-  u32 Codepoint;  // Char
+  u32 Codepoint;
   bool Ctrl;
   bool Alt;
   bool Shift;
@@ -46,8 +44,6 @@ struct Key {
   u16 MouseY;
 };
 
-// Stateful byte-stream decoder. Push raw bytes, then pull complete keys.
-// Incomplete trailing sequences are retained until more bytes arrive.
 struct KeyDecoder {
   char Buf[4096];
   u32 Len;
@@ -57,6 +53,4 @@ struct KeyDecoder {
 
 void KeyDecoder_Init(KeyDecoder* d);
 void KeyDecoder_Push(KeyDecoder* d, const char* data, u32 n);
-// Returns true and fills *out if a complete key is available; false if more
-// bytes are needed.
 bool KeyDecoder_Next(KeyDecoder* d, Key* out);

@@ -2,10 +2,6 @@
 
 #include <string.h>
 
-// Transcript hydration and the SessionMem lifecycle. Split out because this
-// is where the arena can be released and rebuilt underneath live UI state,
-// which is the part of the controller most worth reading on its own.
-
 namespace TuiInternal {
 
 static StrView HydrationText(Arena* scratch, const Message* message) {
@@ -51,9 +47,8 @@ static void HydrateMessages(Tui* t, const Message* messages, u32 count) {
     const Message* message = &messages[i];
     if (message->Kind == Role::User) {
       if (t->Model.HasAssistant) LineModel_EndAssistant(&t->Model);
-      // A steer is stamped when it was typed but logged after whatever the
-      // agent was doing at the time, so it is the one message older than the
-      // message before it.
+      // A steer is logged after what the agent was doing when it was typed, so it is the
+      // one message older than the message before it.
       bool steered = run->Open && message->Timestamp < run->LastMs;
       if (!steered) {
         CloseHydratedRun(t, run);
@@ -111,13 +106,8 @@ static void HydrateMessages(Tui* t, const Message* messages, u32 count) {
   ArenaRelease(&scratch);
 }
 
-// Every Tui field that can hold a string owned by SessionMem and is not rebuilt
-// by RebuildTranscriptLocked below. Missing one here is a use-after-free, not a
-// leak, so the list is kept next to the swap that depends on it.
+// Missing a SessionMem-owned field here is a use-after-free, not a leak.
 void ClearSessionScopedStringsLocked(Tui* t) {
-  // Every member is SessionMem-owned by construction, so this is exhaustive
-  // without a hand-maintained list -- which is the point of the struct. It used
-  // to be nine assignments that a new field could silently escape.
   t->Sess = TuiSessionStrings{};
   SetTransientText(&t->StateTool, {});
   SetTransientText(&t->RetryStatus, {});
@@ -125,23 +115,14 @@ void ClearSessionScopedStringsLocked(Tui* t) {
   SetTransientText(&t->OperationStatus, {});
 }
 
-// A modal or a running operation is displaying strings owned by SessionMem and
-// is waiting on a caller that will read them again, so the arena cannot move
-// out from under it.
+// A modal or running operation shows SessionMem strings a waiting caller will read again.
 bool SessionArenaSwapSafeLocked(const Tui* t) {
   return t->ModalKind == TuiModalKind::None &&
          t->ModalResult != TuiModalResult::Pending && !t->OperationActive;
 }
 
-// Rebuilds the transcript from `messages`. `allowSwap` moves it onto a fresh
-// SessionMem and releases the old one, which is the only way to reclaim entries
-// the scrollback cap has already dropped -- SessionMem is a bump allocator.
-//
-// Only the compaction path passes true. Lag recovery must not: it runs on the
-// event pump thread, concurrently with a main thread that is holding StrViews
-// into SessionMem (the submitted prompt from LineEdit_Submit) and has no lock
-// over them. Rebuilding without reclaiming there is
-// exactly the pre-existing behaviour, and compaction reclaims it later anyway.
+// Only compaction may pass `allowSwap`: lag recovery runs on the event pump thread
+// while the main thread holds unlocked StrViews into SessionMem (the submitted prompt).
 void RebuildTranscriptLocked(Tui* t, const Message* messages, u32 count,
                                     bool allowSwap) {
   u16 width = t->Model.Width;
@@ -202,11 +183,10 @@ void RebuildTranscriptLocked(Tui* t, const Message* messages, u32 count,
   }
   t->Hydrated = {};
   LineModel_Layout(&t->Model);
-  // The live set, for deciding when the next compaction is worth its copy.
   if (swap) t->SessionMemBaseline = t->SessionMem.Used;
 }
 
-}  // namespace TuiInternal
+}
 
 using namespace TuiInternal;
 
@@ -222,7 +202,6 @@ void Tui_ReplaceTranscript(Tui* t, const Message* messages, u32 count, bool foll
 void Tui_AppendTranscript(Tui* t, const Message* messages, u32 count) {
   if (!t || !messages || !count) return;
   Mutex_Lock(&t->Lock);
-  // Appended history arrives in pieces, so its last run is never known to end.
   HydrateMessages(t, messages, count);
   LineModel_Layout(&t->Model);
   Wake(t);

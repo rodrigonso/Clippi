@@ -8,9 +8,7 @@
 
 namespace {
 
-// A command entry is `{"type":"command","command":"...","timeout":N}`. Entries
-// of any other type belong to a tool this build does not implement, so they are
-// skipped rather than treated as a malformed file.
+// Other entry types are skipped, not treated as a malformed file.
 bool ReadCommandEntry(const JsonValue* entry, StrView matcher, HookCommand* out) {
   if (!Json_IsObject(entry)) return false;
 
@@ -25,8 +23,8 @@ bool ReadCommandEntry(const JsonValue* entry, StrView matcher, HookCommand* out)
   if (timeout && timeout->Kind == JsonKind::Number && timeout->Number > 0.0 &&
       timeout->Number < 3600.0) {
     timeoutMs = (u32)(timeout->Number * 1000.0);
-    // A sub-millisecond timeout truncates to zero, which the exec layer reads
-    // as "wait forever" -- the exact opposite of what was asked for.
+    // Sub-millisecond rounds to zero, which the exec layer reads as "wait
+    // forever".
     if (timeoutMs == 0) timeoutMs = 1;
   }
 
@@ -36,8 +34,6 @@ bool ReadCommandEntry(const JsonValue* entry, StrView matcher, HookCommand* out)
   return true;
 }
 
-// One group is `{"matcher":"..","hooks":[...]}`. A bare command entry is also
-// accepted so a hand-written file need not nest a single hook.
 void ReadGroup(const JsonValue* group, Array<HookCommand>* out) {
   if (!Json_IsObject(group)) return;
 
@@ -58,7 +54,7 @@ void ReadGroup(const JsonValue* group, Array<HookCommand>* out) {
   }
 }
 
-}  // namespace
+}
 
 StrView HookConfig_DefaultPath(Arena* arena) {
   return ClippiDataPath(arena, "hooks.json");
@@ -71,8 +67,6 @@ HookConfigLoadResult HookConfig_Parse(Arena* arena, StrView text, HookConfig* ou
   JsonValue* root = Json_Parse(arena, text);
   if (!Json_IsObject(root)) return HookConfigLoadResult::Malformed;
 
-  // The table may sit under "hooks" or be the document itself, so a file
-  // written by an editor and one written by hand both load.
   JsonValue* table = Json_Get(root, "hooks");
   if (!table) table = root;
   if (!Json_IsObject(table)) return HookConfigLoadResult::Malformed;
@@ -107,12 +101,9 @@ HookConfigLoadResult HookConfig_Load(Arena* arena, StrView path, HookConfig* out
 
 bool HookMatcher_Accepts(StrView matcher, StrView subject) {
   if (matcher.Length == 0) return true;
-  // "*" is how the wider hook ecosystem spells "every tool", and a config
-  // copied from there must not silently register commands that never fire.
+  // "*" means every tool in the wider hook ecosystem.
   if (StrView_Eq(matcher, SVL("*"))) return true;
-  // Events with no subject are not tool events, so there is nothing for a
-  // matcher to narrow. Testing it would only ever reject, which would turn a
-  // stray matcher on SessionStart into a hook that is registered yet dead.
+  // No subject means a non-tool event, which a matcher cannot narrow.
   if (subject.Length == 0) return true;
 
   u32 start = 0;

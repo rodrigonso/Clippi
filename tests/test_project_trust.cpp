@@ -21,7 +21,7 @@ void RemoveDir(const char* path) {
 #endif
 }
 
-}  // namespace
+}
 
 void TestProjectTrust() {
   Arena scratch = ArenaCreate((usize)64 << 20);

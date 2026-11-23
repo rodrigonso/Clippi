@@ -32,7 +32,6 @@ inline void Memory_Zero(void* memory, usize size) {
 #define CLIPPI_TRAP() __builtin_trap()
 #endif
 
-// Fastfail when the (invalid) condition holds. Mirrors the caboose FFI macro:
 // FFI(x) traps if x is true, i.e. x describes the disallowed state.
 #define FFI(cond)             \
   do {                        \
@@ -44,10 +43,7 @@ inline T ClippiMin(T a, T b) {
   return a < b ? a : b;
 }
 
-// Unsigned addition that clamps at the accumulator's maximum instead of
-// wrapping. Used for token and byte totals, where wrapping would silently
-// turn a huge total into a tiny one. The addend is converted to the
-// accumulator type first, so it must not be the wider of the two.
+// The addend is converted to the accumulator type first, so it must not be the wider of the two.
 template <typename T, typename U>
 inline T AddSaturated(T a, U b) {
   T limit = (T)~(T)0;
@@ -55,10 +51,5 @@ inline T AddSaturated(T a, U b) {
   return limit - a < addend ? limit : (T)(a + addend);
 }
 
-// Wall clock in milliseconds since the Unix epoch. Backs message timestamps,
-// session CreatedAt, and credential expiry, so the unit has to mean what it
-// says: this was `time(nullptr) * 1000` and only ever moved in 1000 ms steps.
-//
-// Wall clock, not monotonic -- it can jump when the system clock is adjusted.
-// Use MonotonicMillis() from base/thread.h to measure a duration.
+// Wall clock, not monotonic -- use MonotonicMillis() from base/thread.h for durations.
 u64 NowMillis();

@@ -49,7 +49,7 @@ struct AgentRetryPolicy {
   u32 MaxDelayMs;
 };
 
-// pi enables these agent-level retries; transport retries remain disabled.
+// Matches pi: agent-level retries on, transport retries off.
 constexpr u32 AGENT_RETRY_DEFAULT_MAX_RETRIES = 3;
 constexpr u32 AGENT_RETRY_DEFAULT_BASE_DELAY_MS = 2000;
 constexpr u32 AGENT_RETRY_DEFAULT_MAX_DELAY_MS = 8000;
@@ -68,13 +68,8 @@ struct AgentRetryDecision {
   u32 DelayMs;
 };
 
-// Bounds how many *consecutive autonomous* turns one run may take. pi has no
-// such cap; this is a deliberate divergence, and a safety valve rather than a
-// task-shaping knob -- the default is far above what any real task reaches.
-//
-// User-supplied steering and follow-up reset the count, so the budget only ever
-// limits turns the model drove on its own. A zero MaxTurns means unlimited,
-// which is the escape hatch for a caller that wants pi's exact behaviour back.
+// Deliberate divergence: pi has no turn cap. Steering and follow-up reset the
+// count; zero MaxTurns restores pi's behaviour.
 struct AgentTurnLimitPolicy {
   bool Enabled;
   u32 MaxTurns;
@@ -89,12 +84,9 @@ inline AgentTurnLimitPolicy AgentTurnLimitPolicy_Default() {
   return policy;
 }
 
-// A policy only bounds anything when it is enabled and names a positive cap.
 bool AgentTurnLimitPolicy_IsValid(const AgentTurnLimitPolicy* policy);
 
-// True once `turnsUsed` consecutive autonomous turns have already run, meaning
-// the next one would exceed the budget. Kept separate from the
-// AgentCheckpoint_* rules below so pi's continuation logic stays untouched.
+// Separate from AgentCheckpoint_* so pi's continuation logic stays untouched.
 bool AgentTurnLimit_Reached(const AgentTurnLimitPolicy* policy, u32 turnsUsed);
 
 AgentRetryDecision AgentProvider_RetryDecision(const AgentRetryPolicy* policy,
@@ -152,15 +144,8 @@ struct AgentToolBatchResult {
   bool AllTerminate;
 };
 
-// Preparation resolves tools, normalizes and validates arguments, and runs the
-// hooks' before-tool gate. Run is the external-effect boundary; it finalizes
-// each call, including the after-tool hook, on the coordinator thread as soon
-// as that call completes.
-//
-// A parallel call's result stays in the worker arena it was produced in, so
-// `out` borrows from `plan` until AgentToolBatch_ReleaseWorkers. Commit the
-// results first (AgentHarness_Append takes its own copy): copying each one
-// into the batch arena on the way would double the cost of a large result.
+// Run's `out` borrows worker arenas from `plan`: commit results before
+// AgentToolBatch_ReleaseWorkers.
 void AgentToolBatch_Prepare(Arena* arena, const ToolRuntime* tools, u32 toolCount,
                             const Message* assistant, ToolExecution execution,
                             volatile i32* abort, const AgentHarnessHooks* hooks,

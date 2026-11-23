@@ -1,5 +1,3 @@
-"""`demo` -- agents side by side in tmux with a live memory readout."""
-
 from __future__ import annotations
 
 import os
@@ -17,17 +15,11 @@ def _tmux(*args: str, check: bool = False) -> subprocess.CompletedProcess:
 
 
 def _hold(command: str, name: str) -> str:
-    """Keep a pane open after its program exits, so a crash is visible instead
-    of collapsing the layout."""
     return f"{command}; printf '\\n[{name} exited - press Enter]'; read -r"
 
 
 def _launch_command(tool) -> str:
-    """Build the shell command for a pane, carrying the tool's full env.
-
-    pi is a `#!/usr/bin/env node` script and silently fails to start if PATH
-    does not reach the node install.
-    """
+    """Carry the tool's full env: pi is a node script and silently fails if PATH misses node."""
     prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(tool.env.items()))
     parts = [prefix, shlex.join(tool.argv)]
     return " ".join(p for p in parts if p)
@@ -48,9 +40,7 @@ def main(args) -> int:
     _tmux("kill-session", "-t", SESSION)
     workdir = tempfile.mkdtemp(prefix="agentbench-demo-")
 
-    # The demo runs against the real HOME so each tool uses whatever credential
-    # it already has. Deliberately no placeholder API key: a fake one is picked
-    # up by every tool and makes each request fail.
+    # Real HOME for real credentials; a placeholder API key would fail every request.
     env = os.environ.copy()
 
     size = shutil.get_terminal_size(fallback=(200, 50))
@@ -66,8 +56,7 @@ def main(args) -> int:
 
     _tmux("select-layout", "-t", SESSION, "even-horizontal")
 
-    # Anchor to pane 0 rather than "the active pane", which may already have
-    # exited and taken the layout with it.
+    # Anchor to pane 0: the active pane may already have exited.
     package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     monitor = (f"cd {shlex.quote(package_root)} && {shlex.quote(sys.executable)} "
                f"-m agentbench watch "

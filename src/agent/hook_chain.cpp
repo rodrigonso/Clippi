@@ -9,9 +9,6 @@ bool AnyLink(const AgentHookChain* chain, Fn AgentHarnessHooks::*slot) {
   return false;
 }
 
-// Runs one SessionResult hook across the chain, stopping at the first failure.
-// Arguments are forwarded unchanged, so a pointer argument carries each link's
-// rewrite into the next.
 template <typename... Args>
 SessionResult Pipeline(void* user,
                        SessionResult (*AgentHarnessHooks::*slot)(void*, Args...),
@@ -156,7 +153,7 @@ SessionResult AfterTurn(void* user, Arena* arena, AgentTurnKind turn,
   return first;
 }
 
-}  // namespace
+}
 
 bool AgentHookChain_Add(AgentHookChain* chain, const AgentHarnessHooks* hooks) {
   if (!chain || !hooks || chain->Count >= AGENT_HOOK_CHAIN_CAPACITY) return false;

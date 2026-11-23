@@ -37,12 +37,7 @@ static u32 Trunc_TailLineStart(StrView content, u32 totalLines, u32 maxLines) {
 
 static bool Trunc_IsUtf8Continuation(char c) { return ((u8)c & 0xC0) == 0x80; }
 
-// A byte cut that did not land on a newline can fall inside a multi-byte
-// character and leave invalid UTF-8 that the provider rejects outright. These
-// move the cut to the nearest character boundary: back to the lead byte when
-// trimming a head, forward past the orphaned tail when trimming a tail. A
-// character is at most 4 bytes, so walking more than 3 means the input was
-// already invalid -- leave it for the serializer to replace.
+// Providers reject invalid UTF-8; past 3 bytes the input was already invalid.
 static u32 Trunc_SnapBack(StrView content, u32 offset) {
   if (offset >= content.Length) return offset;
   u32 limit = offset > 3 ? offset - 3 : 0;

@@ -342,8 +342,6 @@ StrView TruncateTail(StrView s, u32 maxBytes) {
 }
 
 
-// Number of Unicode scalars in a UTF-8 string, so the copy confirmation counts
-// characters rather than bytes.
 u32 Utf8Count(StrView s) {
   u32 offset = 0;
   u32 count = 0;
@@ -360,16 +358,13 @@ void ClearCopyNotice(Tui* t) {
   t->CopyNoticeExpiryMs = 0;
 }
 
-// Show a copy confirmation on the status row. The deadline stays unset until a
-// frame stamps it, so expiry is driven by the compose clock.
+// The deadline stays unset until a frame stamps it, so expiry runs on the compose clock.
 void ArmCopyNotice(Tui* t, StrView text) {
   t->CopyNoticeActive = true;
   t->CopyNoticeChars = Utf8Count(text);
   t->CopyNoticeExpiryMs = 0;
 }
 
-// Stamp a freshly armed notice with its deadline, then retire it once the
-// compose clock passes that deadline.
 void AdvanceCopyNotice(Tui* t, u64 nowMs) {
   if (!t->CopyNoticeActive) return;
   if (t->CopyNoticeExpiryMs == 0) {
@@ -520,8 +515,7 @@ void ApplyDisplayEvent(Tui* t, const TuiDisplayEvent& ev) {
       if (ev.Kind == TuiDisplayEventKind::AgentStart) {
         ResetRunStats(t, ev.Timestamp);
       } else {
-        // Overflowing watchers may drop transient tool ends; nothing still runs
-        // once the agent has stopped.
+        // Overflowing watchers may drop tool ends; nothing still runs once the agent stopped.
         LineModel_SettleTools(&t->Model);
         if (t->RunResponses) {
           if (t->Model.HasAssistant) LineModel_EndAssistant(&t->Model);
@@ -551,9 +545,8 @@ bool PumpDisplay(Tui* t, u64 nowMs) {
         LineModel_BeginAssistant(&t->Model);
         t->State = TuiState::Streaming;
       }
-      // Anything queued behind the reveal (a tool card, message end, the next
-      // user turn) cannot be applied until the text drains, so bound that wait
-      // instead of letting it scale with the length of the reply.
+      // Events queued behind the reveal wait for it to drain, so bound that wait
+      // instead of letting it scale with the reply length.
       StrView next =
           StreamReveal_NextFrame(&t->Reveal, nowMs, HasQueuedDisplayEvents(t));
       if (next.Length) {
@@ -839,11 +832,8 @@ UiLayoutStyle Positioned(u16 x, u16 y, u16 width, u16 height) {
   return layout;
 }
 
-// The gaps between a tool finishing and the next reply are usually brief, so
-// the row waits this long before it appears rather than flickering.
 constexpr u64 kThinkingDelayMs = 150;
 
-// While the agent works without visible output, the transcript says so.
 void UpdateThinkingRow(Tui* t, u64 nowMs) {
   bool due = t->AgentRunning && t->State == TuiState::Thinking && !t->Model.HasAssistant &&
              !t->Model.LiveTools && !t->OperationActive &&
@@ -925,7 +915,6 @@ void ComposeAtSize(Tui* t, u16 cols, u16 rows, u64 nowMs) {
     t->SpinnerStartMs = 0;
   }
 
-  // Input box layout: left/right border column + one padding column each side.
   u16 textW = (u16)(cols > 4 ? cols - 4 : 1);
   LineEditLayout inputLayout;
   LineEdit_Layout(&t->Edit, textW, &inputLayout);
@@ -936,9 +925,6 @@ void ComposeAtSize(Tui* t, u16 cols, u16 rows, u64 nowMs) {
       (u16)(inputLayout.Count < maxInputH ? inputLayout.Count : maxInputH);
   if (inputH < 1) inputH = 1;
 
-  // Reserve the bottom row for the status bar, a top/bottom border row for the
-  // composer box, and the row just above the box for the sticky cwd/branch
-  // line; keep at least one transcript row (rows >= 6 is guaranteed above).
   u16 statusY = (u16)(rows - 1);
   u16 maxInput = (u16)(rows - 5);
   if (inputH > maxInput) inputH = maxInput;
@@ -947,8 +933,6 @@ void ComposeAtSize(Tui* t, u16 cols, u16 rows, u64 nowMs) {
   u16 inputTop = (u16)(bottomBorderY - inputH);
   u16 topBorderY = (u16)(inputTop - 1);
 
-  // A modal replaces the composer rather than floating above it: keys are going
-  // to the modal, so a visible composer would only advertise the wrong target.
   u16 modalH = ModalPanelHeight(t, rows);
 
   StrView commandQuery = {};
@@ -961,17 +945,12 @@ void ComposeAtSize(Tui* t, u16 cols, u16 rows, u64 nowMs) {
     u16 desired = (u16)(visible + 3);
     if (topBorderY >= 4) paletteH = desired < topBorderY ? desired : topBorderY;
   }
-  // The bottom block is either the composer box or the modal panel standing in
-  // for it; the sticky context line sits above whichever it is.
   u16 blockTopY = modalH ? (u16)(statusY - modalH) : topBorderY;
   u16 cwdY = (u16)(blockTopY - 1);
-  // Leave a blank row between the transcript and the sticky context line when
-  // the terminal is tall enough to retain at least one transcript row.
-  u16 paneH = cwdY > 1 ? (u16)(cwdY - 1) : cwdY;  // rows [0, paneH)
+  u16 paneH = cwdY > 1 ? (u16)(cwdY - 1) : cwdY;
   TranscriptLayout transcript =
       LayoutTranscript(t, cols, paneH, sizeChanged || paneH != t->LastPaneH);
 
-  // Transcript.
   if (t->HasMouse && t->MouseY < paneH &&
       (!t->ScrollbarVisible || t->MouseX != ScrollbarX(t))) {
     const SpanLine* hoverLine = LineModel_At(&t->Model, transcript.Top + t->MouseY);
@@ -1094,7 +1073,6 @@ void Compose(Tui* t) {
   ComposeAtSize(t, cols, rows, MonotonicMillis());
 }
 
-// ---- key handling (lock held) ----
 TuiDisplayEvent* QueueUserDisplayLocked(Tui* t, StrView line) {
   TuiDisplayEvent* display = QueueDisplayEvent(t, TuiDisplayEventKind::User);
   SetDisplayPayload(display, line);
@@ -1136,9 +1114,8 @@ static const TuiCommandSpec* FindCommand(const Tui* t, StrView name) {
   return nullptr;
 }
 
-// Resolves what may run on this thread. Argument forms the dispatcher would
-// reject resolve to None, so the main loop still reports the usage error and
-// the inline path never owns a second copy of that policy.
+// Argument forms the dispatcher would reject resolve to None, so the main loop
+// still reports the usage error.
 static TuiInlineCommand InlineCommandFor(const Tui* t, StrView line) {
   TuiInlineCommand result = {TuiCommandInline::None, false};
   StrView arguments = {};
@@ -1170,7 +1147,6 @@ static TuiInlineCommand InlineCommandFor(const Tui* t, StrView line) {
   return result;
 }
 
-// Mirrors the double-escape path, including the AbortFlag fallback.
 static void RequestCancelLocked(Tui* t) {
   if (!t->Agent.RequestCancel || !t->Agent.RequestCancel(t->Agent.User))
     Atomic_StoreI32(&t->AbortFlag, 1);
@@ -1184,8 +1160,7 @@ static bool UserSubmissionPending(const Tui* t) {
   return false;
 }
 
-// Nothing waits behind a running turn or a busy main loop: what cannot act now
-// is refused before the composer is consumed, so it is still there to resend.
+// Refused before the composer is consumed, so the text is still there to resend.
 static bool RefuseSubmission(Tui* t, StrView input) {
   if (!input.Length) return false;
   StrView refusal = {};
@@ -1257,16 +1232,13 @@ void DoSubmit(Tui* t) {
       return;
     }
     if (immediate.Action == TuiCommandInline::Stop) {
-      // Quitting has to cancel first: the loop that would observe Quit is
-      // parked inside the agent run until the turn it is driving finishes.
+      // Cancel first: the loop that would observe Quit is parked inside the agent run.
       if (t->AgentRunning) RequestCancelLocked(t);
       RequestStopLocked(t);
       return;
     }
-    // Only the cancellation happens here; the command itself still runs on the
-    // main loop. `/clear` swaps the session log, which cannot happen under a
-    // turn appending to it, so this just unblocks the loop that will reset once
-    // the turn unwinds.
+    // Only the cancellation happens here: `/clear` swaps the session log, which cannot
+    // happen under a running turn, so the main loop runs it once the turn unwinds.
     bool cancelling =
         immediate.Action == TuiCommandInline::CancelTurn && t->AgentRunning;
     if (cancelling) RequestCancelLocked(t);
@@ -1292,7 +1264,6 @@ void DoSubmit(Tui* t) {
   }
 
   if (t->AgentRunning && t->Agent.Steer) {
-    // The transcript only shows a steer the agent accepted.
     StrView error = {};
     if (t->Agent.Steer(t->Agent.User, line, &error)) {
       QueueUserDisplayLocked(t, line)->Steer = true;
@@ -1330,7 +1301,7 @@ bool CompletePaletteCommand(Tui* t, StrView query) {
   return true;
 }
 
-const i32 kWheelStep = 3;  // transcript rows per mouse-wheel notch
+const i32 kWheelStep = 3;
 
 u64 HitTestEntry(const Tui* t, u16 x, u16 y) {
   if (y >= t->LastPaneH) return 0;
@@ -1582,9 +1553,8 @@ bool DispatchPointerKey(Tui* t, const Key& key) {
 
 void HandleKey(Tui* t, const Key& k) {
   ValidateTranscriptSelection(t);
-  // Any deliberate keystroke retires the copy confirmation early. Idle pointer
-  // motion does not, so a drag-select followed by Ctrl+C keeps it visible. A
-  // copying Ctrl+C re-arms below, after this clear.
+  // Idle pointer motion does not retire the notice, so drag-select then Ctrl+C keeps it
+  // visible; a copying Ctrl+C re-arms below, after this clear.
   if (k.Kind != KeyKind::None && k.Kind != KeyKind::MouseMove)
     ClearCopyNotice(t);
   if (k.Kind == KeyKind::Escape) {
@@ -1814,7 +1784,6 @@ void HandleKey(Tui* t, const Key& k) {
   }
 }
 
-// ---- threads ----
 void InputLoop(void* arg) {
   Tui* t = (Tui*)arg;
   char buf[1024];
@@ -1849,7 +1818,6 @@ void InputLoop(void* arg) {
   Memory_Zero(buf, sizeof(buf));
 }
 
-// Coalesce bursty stream deltas into frames at up to ~60fps.
 const u32 kMinFrameMs = 16;
 
 void RenderLoop(void* arg) {
@@ -1894,7 +1862,7 @@ void RenderLoop(void* arg) {
   }
 }
 
-}  // namespace TuiInternal
+}
 
 using namespace TuiInternal;
 
@@ -2087,8 +2055,7 @@ bool Tui_ClearSession(Tui* t) {
   t->EscapeArmed = false;
   ClearCopyNotice(t);
   t->State = TuiState::Idle;
-  // This path releases SessionMem too, so it clears the scoped strings the same
-  // exhaustive way the rebuild does.
+  // This path releases SessionMem too, so clear the scoped strings as the rebuild does.
   ClearSessionScopedStringsLocked(t);
   t->Use = {};
   t->ContextTokens = 0;
@@ -2363,10 +2330,6 @@ void Tui_FeedInput(Tui* t, const char* data, u32 n) {
   Mutex_Unlock(&t->Lock);
 }
 
-// ---- progress reporting -------------------------------------------------
-// One call per thing the driver observed. Each takes the lock, records display
-// state, and wakes the render thread; none of them knows what produced it.
-
 void Tui_TurnStarted(Tui* t) {
   Mutex_Lock(&t->Lock);
   t->AgentRunning = true;
@@ -2427,8 +2390,7 @@ void Tui_ToolProgress(Tui* t, StrView callId, StrView preview) {
   if (slot) {
     StrBuf_Clear(&slot->Payload);
     Sanitize_Display(&slot->Payload, TruncateTail(preview, 1500));
-    // Only queue once per slot: a fast tool would otherwise fill the display
-    // queue with updates that all render the same latest preview.
+    // Queue once per slot, or a fast tool floods the display queue with identical previews.
     if (!slot->Queued) {
       TuiDisplayEvent* display =
           QueueDisplayEvent(t, TuiDisplayEventKind::ToolUpdate);

@@ -3,8 +3,7 @@
 
 struct SearchRegexState;
 
-// All engine storage belongs to the supplied arena. Reuse one instance serially
-// across lines; releasing the arena is the only cleanup required.
+// Storage belongs to the supplied arena; reuse serially only.
 struct SearchRegex {
   SearchRegexState* State;
 };

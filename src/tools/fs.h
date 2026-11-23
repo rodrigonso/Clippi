@@ -8,7 +8,6 @@ struct FsStat {
   bool IsDir;
   u64 Size;
   bool IsRegular;
-  // Last write time in Unix milliseconds; 0 when unknown.
   u64 ModifiedMs;
 };
 
@@ -17,15 +16,10 @@ bool Fs_Exists(StrView path);
 bool Fs_IsDir(StrView path);
 bool Fs_MkdirP(Arena* arena, StrView path);
 StrView Fs_RealPath(Arena* arena, StrView path);
-// Deletes a file or an empty directory.
 bool Fs_Remove(Arena* arena, StrView path);
-// Deletes `path` and everything below it. A symlink or junction inside it is
-// removed itself, never followed, so the tree cannot reach outside `path`.
-// A missing path succeeds.
+// Links and junctions inside are removed, never followed.
 bool Fs_RemoveTree(Arena* arena, StrView path);
 
-// The most a file tool (read, edit) buffers from one file. They hold the whole
-// file plus working copies, so larger files are left to tools that stream.
 constexpr u64 FS_TOOL_MAX_FILE_BYTES = (u64)64 << 20;
 
 struct FsPermissionTarget {
@@ -38,17 +32,8 @@ struct ToolArgs;
 struct ToolPermissionInfo;
 struct ToolPermissionScope;
 
-// Canonicalizes existing path components, retaining missing trailing
-// components so callers can classify a future write without treating it as an
-// existing path. A relative target resolves against the scope's working
-// directory; it is contained when it lies inside that directory or one of the
-// scope's writable roots. Ambiguous paths, and roots that do not exist, are
-// never classified as contained.
-//
-// `Protected` marks a contained path with a `.git`, `.clippi` or `.agents`
-// component below every root that contains it (ASCII case-insensitive). Writes
-// there change what runs later -- git hooks and config, project hooks, skills
-// -- so they are not auto-allowed even inside the workspace.
+// Security: ambiguous paths and missing roots are never contained. `Protected`
+// (.git/.clippi/.agents below every containing root) is never auto-allowed.
 FsPermissionTarget Fs_ResolvePermissionTarget(Arena* arena,
                                               const ToolPermissionScope* scope,
                                               StrView target);
@@ -58,25 +43,14 @@ bool Fs_DescribeMutationPermission(Arena* arena, const ToolArgs* args,
                                    StrView grantPrefix,
                                    ToolPermissionInfo* out, StrBuf* err);
 
-// `path` canonicalized exactly as permission checks see a tool target, so a
-// containment test between the two agrees with what the engine allowed.
 StrView Fs_PermissionPath(Arena* arena, StrView workingDirectory, StrView path);
 
-// The canonical target of a `write` or `edit` call; empty for any other tool
-// or a call without a path.
 StrView Fs_MutationTarget(Arena* arena, StrView toolName, const ToolArgs* args,
                           StrView workingDirectory);
 
-// Inclusive, separator-aware containment check for already canonicalized
-// paths. On Windows this comparison is case-insensitive.
+// Inputs must already be canonical.
 bool Fs_PathContained(StrView root, StrView path);
 
-// Path utilities are pure string operations. Fs_Ext returns a raw slice of the
-// original path and does not lowercase.
-//
-// Fs_PathFold normalizes one character for path comparison: separators become
-// '/', and on Windows upper case folds to lower. Fs_PathEquals compares two
-// paths under that folding.
 bool Fs_IsSep(char c);
 char Fs_PathFold(char c);
 bool Fs_PathEquals(StrView a, StrView b);
@@ -97,24 +71,11 @@ struct FsEntry {
 
 Array<FsEntry> Fs_ListDir(Arena* arena, StrView dir, bool* ok);
 
-// Calls `visit` for each entry of `dir` other than "." and "..", in directory
-// order, without collecting them: memory does not grow with the directory.
-// The entry's name is borrowed until `visit` returns. `visit` returning false
-// stops early and still succeeds. False means cancellation or an I/O error,
-// described in `err` when it is non-null. One directory handle stays open for
-// the call, including while `visit` runs. A few KiB of enumeration buffers are
-// taken from `scratch` before the first visit and left there, since `visit`
-// may allocate retained output from the same arena.
+// Names borrowed until `visit` returns; buffers taken from `scratch` stay there.
 typedef bool (*FsEntryVisitor)(void* user, const FsEntry& entry);
 bool Fs_ForEachEntry(Arena* scratch, StrView dir, volatile i32* abort, StrBuf* err,
                      FsEntryVisitor visit, void* user);
 
-// One parsed ignore-file rule. `BaseRel` is the ignore file's directory
-// relative to the scan root, so a nested rule only applies below its own
-// directory. Patterns are gitignore-flavored: a leading '/' anchors to
-// `BaseRel`, as does any interior '/'; a trailing '/' restricts the rule to
-// directories. Last matching rule wins; Negated re-includes an entry, but
-// cannot re-open an ignored ancestor directory.
 struct FsIgnorePattern {
   StrView BaseRel;
   StrView Pattern;
@@ -123,13 +84,10 @@ struct FsIgnorePattern {
   bool Negated;
 };
 
-// Appends the rules from `<dirAbs>/<fileName>` to `patterns`, tagged with
-// `dirRel`. A missing file is not an error.
 void Fs_LoadIgnoreFile(Arena* arena, Array<FsIgnorePattern>* patterns,
                        StrView dirAbs, StrView dirRel, StrView fileName);
 bool Fs_IsIgnored(const Array<FsIgnorePattern>* patterns, StrView relPath, bool isDir);
 
-// Excluded directories are not descended into. False reports an error in err.
 typedef bool (*FsWalkFilter)(void* user, StrView relPath, const FsEntry& entry,
                              bool* include, StrBuf* err);
 
@@ -144,17 +102,8 @@ struct FsWalkOptions {
   void* FilterUser;
 };
 
-// Visitor paths and entry names are borrowed until the callback returns.
-// Copy retained results into the caller's arena. Directory links are never
-// descended into, even when SkipLinks is false.
+// Paths and names are borrowed until the callback returns. Directory links are
+// never descended into, even when SkipLinks is false.
 typedef bool (*FsWalkVisitor)(void* user, StrView absPath, StrView relPath, const FsEntry& e);
-// False means I/O failure, cancellation, or a traversal/glob resource limit.
-// A visitor returning false requests a successful early stop.
-// Entries are visited as each directory streams them, descending inline, so
-// memory grows with depth rather than with directory size; one directory
-// handle stays open per level being walked.
-// Parent ignores stop at the nearest .git marker or filesystem root. .ignore
-// outranks .gitignore, including across scopes. Limits: 128 directory levels,
-// 4095-byte paths, 64 MiB scratch budget, 1 MiB/4096 rules per ignore file.
 bool Fs_WalkChecked(Arena* arena, StrView root, const FsWalkOptions& opts,
                     FsWalkVisitor visit, void* user, StrBuf* err);

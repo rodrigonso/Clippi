@@ -35,8 +35,7 @@
 
 namespace {
 
-// Makes `path` unreadable to this process until RestoreReads. False when the
-// platform cannot (POSIX as root reads through any mode).
+// False when the platform cannot (POSIX as root reads through any mode).
 bool DenyReads(Arena* arena, StrView path, int* handle) {
 #if defined(_WIN32)
   (void)arena;
@@ -60,8 +59,7 @@ void RestoreReads(Arena* arena, StrView path, int handle) {
 #endif
 }
 
-// Fixtures live under the OS temp directory: the test binary runs inside the
-// Clippi checkout, where every relative path would resolve to its repository.
+// Fixtures live under the OS temp dir: relative paths would resolve into the Clippi checkout.
 StrView TempRoot(Arena* arena) {
   const char* base = getenv("TEMP");
   if (!base || !*base) base = getenv("TMPDIR");
@@ -121,8 +119,6 @@ void TestRepositoryIdentity(Arena* a, StrView root) {
             StrView_EqCStr(Git_CommonDirFromFile(SVL("  /repo/.git/ \r\n")), "/repo/.git"),
             Git_CommonDirFromFile(SVL("")).Length == 0);
 
-  // A main checkout, one linked worktree by absolute gitdir, one by relative
-  // gitdir, a submodule, and a folder outside git.
   StrView main = Fs_Join(a, root, SVL("main"));
   StrView gitDir = Fs_Join(a, main, SVL(".git"));
   CHECK(Write(a, Fs_Join(a, gitDir, SVL("HEAD")), SVL("ref: refs/heads/main\n")));
@@ -171,10 +167,7 @@ void TestRepositoryIdentity(Arena* a, StrView root) {
             !StrView_Eq(fromMain.Root, fromSub.Root),
             !StrView_Eq(fromMain.Root, fromPlain.Root),
             StrView_Eq(fromMain.Pages, Fs_Join(a, fromMain.Root, SVL("pages"))),
-            // A submodule's files are read from its own work tree.
             Fs_PathEquals(fromSub.Repository, Fs_RealPath(a, sub)));
-  // Outside git the folder is its own repository, unless some ancestor of the
-  // temp directory happens to be one.
   if (!Sys_GitCommonDir(a, plain).Length)
     CHECK(Fs_PathEquals(fromPlain.Repository, Fs_RealPath(a, plain)));
 }
@@ -237,7 +230,6 @@ void TestLintAndCatalog(Arena* a, StrView root) {
             HasIssue(&issues, WikiIssueKind::Orphan, "Bad_Name"));
   CHECK(Wiki_ErrorCount(&issues) == 5);
 
-  // Pinned pages lead the catalog, and their bodies are included in full.
   StrBuf block = StrBuf_Make(a, 2048);
   WikiCatalogStats stats = {};
   Wiki_AppendPromptBlock(a, &block, &wiki, SVL("C:/store/pages"), true, &stats);
@@ -252,7 +244,6 @@ void TestLintAndCatalog(Arena* a, StrView root) {
   Wiki_AppendPromptBlock(a, &readOnly, &wiki, SVL("p"), false, nullptr);
   CHECK(!StrView_Contains(StrBuf_View(&readOnly), "When you learn something"));
 
-  // A catalog past its line budget ends with a count of what it left out.
   Wiki big = {};
   big.Pages = Array_Make<WikiPage>(a, 260);
   for (u32 i = 0; i < 250; i++) {
@@ -305,7 +296,6 @@ void TestPromptBlock(Arena* a, StrView root) {
   StrView needle = SVL("\n\n<memory_wiki path=\"");
   for (u32 i = 0; i + needle.Length <= on.SystemPrompt.Length && blockAt < 0; i++)
     if (memcmp(on.SystemPrompt.Data + i, needle.Data, needle.Length) == 0) blockAt = (i32)i;
-  // The block is spliced in before the cwd line and changes nothing else.
   CHECK(blockAt > 0);
   if (blockAt > 0) {
     StrView before = {on.SystemPrompt.Data, (u32)blockAt};
@@ -361,7 +351,6 @@ void TestMemoryExtension(Arena* a, StrView root) {
   CHECK_ALL(Fs_IsDir(memory.Location.Pages), memory.Pages.Length > 0,
             memory.WritableRoots[0].Length > 0);
 
-  // Only pages are the model's to write.
   AgentToolGateDecision decision = {};
   ToolArgs journalArgs = Args(a, memory.Location.Journal);
   extension.Hooks.BeforeTool(&memory, a, SVL("write"), SVL("c1"), &journalArgs, &decision);
@@ -375,7 +364,6 @@ void TestMemoryExtension(Arena* a, StrView root) {
   extension.Hooks.BeforeTool(&memory, a, SVL("edit"), SVL("c3"), &workArgs, &decision);
   CHECK(!decision.Block);
 
-  // A page with problems is saved, and the model is told what to fix.
   CHECK(Write(a, pagePath, Page(a, "Build", "project", "", "See [[missing]]\n")));
   ToolOutcome outcome = Ok(a);
   extension.Hooks.AfterTool(&memory, a, SVL("write"), SVL("c2"), &pageArgs, &outcome);
@@ -398,7 +386,6 @@ void TestMemoryExtension(Arena* a, StrView root) {
   CHECK(failed.Content.Count == 1);
   CHECK(CountJournal(a, memory.Location.Journal, WikiJournalKind::Page) == 2);
 
-  // The session is journaled once, at its first prompt.
   Message prompt = {};
   CHECK(SessionResult_IsOk(extension.Hooks.BeforeRun(&memory, a, &prompt)));
   CHECK(SessionResult_IsOk(extension.Hooks.BeforeRun(&memory, a, &prompt)));
@@ -499,8 +486,6 @@ void TestDreamExecute(Arena* a, StrView root) {
   WikiLocation location = {};
   CHECK(Wiki_Locate(a, Fs_Join(a, root, SVL("dream-store")), work, &location));
 
-  // A source session for dreaming to replay, journaled the way the memory
-  // extension does it.
   MemoryRepository memory = {};
   MemoryRepository_Init(&memory);
   SessionRepository sessions = MemoryRepository_AsRepository(&memory);
@@ -525,15 +510,12 @@ void TestDreamExecute(Arena* a, StrView root) {
   CHECK(SessionResult_IsOk(AgentHarness_Close(&source)));
   WikiJournalEntry journaled = {};
   journaled.Kind = WikiJournalKind::Session;
-  // First prompted long before this first pass; it must still be dreamed.
   journaled.TimeMs = NowMillis() - DREAM_RECHECK_MS - 24ull * 60 * 60 * 1000;
   journaled.SessionId = StrView_Dup(a, DurableId_View(&info.SessionId));
   journaled.ProjectKey = create.ProjectKey;
   journaled.WorkingDirectory = work;
   CHECK(WikiJournal_Append(a, location.Journal, &journaled));
 
-  // The dream writes a page with a broken link and an escape attempt; the
-  // escape is blocked and lint earns one follow-up that fixes the link.
   ScriptToolCall firstCalls[] = {
       {SVL("write"), SVL("d1"),
        SVL("{\"path\":\"pages/build.md\",\"content\":\"---\\ntitle: Build\\ntype: "
@@ -579,13 +561,10 @@ void TestDreamExecute(Arena* a, StrView root) {
                              "The user asked for build.bat."),
             journal.Length > journalBefore,
             CountJournal(a, location.Journal, WikiJournalKind::Dream) == 1,
-            // The sandbox refused the dream's write to the journal.
             CountJournal(a, location.Journal, WikiJournalKind::Session) == 1,
             !Fs_Exists(Fs_Join(a, location.DreamDir, SVL("inbox"))),
             Fs_Exists(Fs_Join(a, location.DreamDir, SVL("state.json"))));
 
-  // The progress a watcher reads names the pass's session, whose log replays
-  // the dream from its first prompt to its report.
   bool running = true;
   DreamProgress progress = {};
   CHECK(Dream_ReadProgress(a, &location, &running, &progress));
@@ -606,7 +585,6 @@ void TestDreamExecute(Arena* a, StrView root) {
                 StrView_EqCStr(last.Content.Data[0].Text, "Fixed the broken link."));
   }
 
-  // Nothing new since: no agent run, no new snapshot, and no session to watch.
   DreamResult idle = {};
   Dream_Execute(a, &run, &idle);
   CHECK_ALL(idle.Outcome == DreamOutcome::NothingToDo, script.Index == 4);
@@ -623,8 +601,7 @@ void TestDreamExecute(Arena* a, StrView root) {
   u32 restored = 99;
   StrView snapshot = {};
 #if defined(_WIN32)
-  // A second pass is turned away while the lock is held. POSIX record locks
-  // belong to the process, so only Windows can show this from one process.
+  // POSIX record locks belong to the process, so only Windows can show this from one process.
   StrView lockPath = Fs_Join(a, location.DreamDir, SVL("lock"));
   ProcessFileLock lock = {};
   CHECK(ProcessFileLock_TryAcquire(a, lockPath, &lock) == ProcessFileLockStatus::Acquired);
@@ -636,14 +613,11 @@ void TestDreamExecute(Arena* a, StrView root) {
   ProcessFileLock_Release(&lock, lockPath);
 #endif
 
-  // The snapshot taken before the pass holds the wiki as it was: empty.
   CHECK(Dream_RestoreLatestSnapshot(a, &location, &restored, &snapshot) ==
         DreamRestoreResult::Restored);
   CHECK_ALL(restored == 0, snapshot.Length > 0,
             !Fs_Exists(Fs_Join(a, location.Pages, SVL("build.md"))));
 
-  // A snapshot that fails partway must not become the newest one: restoring
-  // would then replace the wiki with whatever was copied before the failure.
   StrView keep = Fs_Join(a, location.Pages, SVL("keep.md"));
   StrView locked = Fs_Join(a, location.Pages, SVL("locked.md"));
   CHECK(Write(a, keep, Page(a, "Keep", "topic", "Kept", "See [[missing]]\n")));
@@ -663,8 +637,6 @@ void TestDreamExecute(Arena* a, StrView root) {
   MemoryRepository_Destroy(&memory);
 }
 
-// A watcher reads the dream's log through its own repository while the pass
-// still holds it open for writing, as `/dream watch` does from another process.
 void TestDreamMessagesFromLiveLog(Arena* a, StrView root) {
   StrView data = Fs_Join(a, root, SVL("live-sessions"));
   JsonlRepository writerStore = {};
@@ -697,7 +669,6 @@ void TestDreamMessagesFromLiveLog(Arena* a, StrView root) {
   progress.SessionId = StrView_Dup(a, DurableId_View(&info.SessionId));
   progress.ProjectKey = create.ProjectKey;
   Array<Message> messages = {};
-  // The log is not written until the first prompt.
   CHECK(!SessionResult_IsOk(Dream_ReadMessages(a, &reader, &progress, &messages)));
   CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("Dream over the inbox."))));
   CHECK(SessionResult_IsOk(Dream_ReadMessages(a, &reader, &progress, &messages)));
@@ -724,7 +695,6 @@ void TestDreamWatchState() {
   finished.Phase = DreamPhase::Finished;
   const u64 late = since + DREAM_WATCH_START_TIMEOUT_MS;
   CHECK_ALL(
-      // The lock is held before the pass writes its own progress.
       Dream_WatchState(true, nullptr, since, since) == DreamWatchState::Starting,
       Dream_WatchState(true, &earlier, since, since) == DreamWatchState::Starting,
       Dream_WatchState(true, &preparing, since, since) == DreamWatchState::Preparing,
@@ -732,14 +702,12 @@ void TestDreamWatchState() {
       Dream_WatchState(true, &finished, since, since) == DreamWatchState::Starting,
       Dream_WatchState(false, &finished, since, since) == DreamWatchState::Finished,
       Dream_WatchState(false, &dreaming, since, since) == DreamWatchState::Stopped,
-      // A pass that never reports is given up on.
       Dream_WatchState(false, &earlier, since, late - 1) == DreamWatchState::Starting,
       Dream_WatchState(false, &earlier, since, late) == DreamWatchState::NotStarted,
-      // Following whichever pass held the lock accepts any progress.
       Dream_WatchState(false, &earlier, 0, late) == DreamWatchState::Finished);
 }
 
-}  // namespace
+}
 
 void TestMemory() {
   Arena arena = ArenaCreate((usize)256 << 20);

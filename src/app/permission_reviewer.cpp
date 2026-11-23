@@ -224,7 +224,7 @@ bool Review(void* user, Arena* arena, const AgentPermissionReviewRequest* reques
   return ok;
 }
 
-}  // namespace
+}
 
 bool TypeSafePermissionReviewer_ModelSupported(StrView model) {
   if (model.Length <= 4 || model.Length > 128 ||
