@@ -439,6 +439,16 @@ static void TestFilesystemTraversal(Arena* a) {
   Infra_RemoveTree(a, StrBuf_View(&root));
 }
 
+struct FileLockContender {
+  volatile i32 Acquired;
+};
+
+static void FileLock_AcquireOtherCase(void* user) {
+  FileLockToken token = FileLock_Acquire(SVL("LockPath\\Case/FOO.cpp"));
+  Atomic_StoreI32(&((FileLockContender*)user)->Acquired, 1);
+  FileLock_Release(token);
+}
+
 static void TestFileLock() {
   FileLock_Init();
   FileLockToken t1 = FileLock_Acquire(SVL("lockpath/one"));
@@ -447,7 +457,17 @@ static void TestFileLock() {
   FileLock_Release(t2);
   FileLockToken t3 = FileLock_Acquire(SVL("lockpath/two"));
   FileLock_Release(t3);
-  CHECK(true);  // reached here without deadlock
+
+  // One file named with another case or separator waits for the same lock.
+  FileLockToken held = FileLock_Acquire(SVL("lockpath/case/foo.cpp"));
+  FileLockContender contender = {0};
+  Thread thread = {};
+  CHECK(Thread_Start(&thread, FileLock_AcquireOtherCase, &contender));
+  Sleep_Ms(100);
+  CHECK(!Atomic_LoadI32(&contender.Acquired));
+  FileLock_Release(held);
+  Thread_Join(&thread);
+  CHECK(Atomic_LoadI32(&contender.Acquired));
 }
 
 static void TestProcessFileLockProbe(Arena* a) {

@@ -46,7 +46,13 @@ static u32 FileLock_CopyPath(char* dst, StrView path) {
   // Paths at or beyond the fixed buffer size are compared by their truncated
   // first 1024 bytes; this preserves safety but may over-serialize long paths.
   u32 n = path.Length < FILE_LOCK_MAX_PATH ? path.Length : FILE_LOCK_MAX_PATH;
-  if (n) memcpy(dst, path.Data, n);
+  // NTFS and APFS are case-insensitive by default, so `Foo.cpp` and `foo.cpp`
+  // are one file and must share a lock, or two parallel edits of it lose one.
+  // Folding on a case-sensitive volume only over-serializes distinct files.
+  for (u32 i = 0; i < n; i++) {
+    char c = path.Data[i];
+    dst[i] = c == '\\' ? '/' : Ascii_ToLower(c);
+  }
   return n;
 }
 
