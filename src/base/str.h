@@ -169,14 +169,18 @@ inline StrBuf StrBuf_Make(Arena* arena, u32 capacity = 64) {
 }
 
 inline void StrBuf_Ensure(StrBuf* b, u32 additional) {
-  u32 need = b->Length + additional + 1;  // +1 for null terminator
+  u64 need = (u64)b->Length + additional + 1;  // +1 for null terminator
   if (need <= b->Capacity) return;
-  u32 newCap = b->Capacity ? b->Capacity * 2 : 8;
+  // Sized in u64: in u32 the sum and the doubling wrap, so a wrapped `need`
+  // would pass the check above and the append would write past the buffer.
+  FFI(need > 0xFFFFFFFFu);
+  u64 newCap = b->Capacity ? (u64)b->Capacity * 2 : 8;
   while (newCap < need) newCap *= 2;
-  char* nd = (char*)ArenaAlloc(b->Backing, newCap, 1);
+  if (newCap > 0xFFFFFFFFu) newCap = 0xFFFFFFFFu;
+  char* nd = (char*)ArenaAlloc(b->Backing, (usize)newCap, 1);
   memcpy(nd, b->Data, b->Length);
   b->Data = nd;
-  b->Capacity = newCap;
+  b->Capacity = (u32)newCap;
 }
 
 inline void StrBuf_Append(StrBuf* b, StrView s) {

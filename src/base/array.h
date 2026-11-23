@@ -18,12 +18,14 @@ struct Array {
 namespace ArrayInternal {
 template <typename T>
 inline void Grow(Array<T>* a, u32 minCapacity) {
-  u32 newCap = a->Capacity ? a->Capacity * 2 : 8;
+  // A u32 capacity doubled past 2^31 wraps to zero and never grows again.
+  u64 newCap = a->Capacity ? (u64)a->Capacity * 2 : 8;
   while (newCap < minCapacity) newCap *= 2;
+  if (newCap > 0xFFFFFFFFu) newCap = 0xFFFFFFFFu;
   T* nd = (T*)ArenaAlloc(a->Backing, sizeof(T) * (usize)newCap, alignof(T));
   if (a->Count) memcpy(nd, a->Data, sizeof(T) * (usize)a->Count);
   a->Data = nd;
-  a->Capacity = newCap;
+  a->Capacity = (u32)newCap;
 }
 }  // namespace ArrayInternal
 
@@ -40,6 +42,7 @@ inline Array<T> Array_Make(Arena* arena, u32 initialCapacity = 8) {
 
 template <typename T>
 inline T* Array_Push(Array<T>* a, const T& value) {
+  FFI(a->Count == 0xFFFFFFFFu);  // Count + 1 would wrap
   if (a->Count >= a->Capacity) ArrayInternal::Grow(a, a->Count + 1);
   a->Data[a->Count] = value;
   return &a->Data[a->Count++];

@@ -46,8 +46,10 @@ Arena ArenaCreate(usize reserveBytes) {
 void* ArenaAlloc(Arena* a, usize size, usize align) {
   usize mask = align - 1;
   usize pos = (a->Used + mask) & ~mask;
+  // Checked as a remainder: `pos + size` wraps for a huge size and would then
+  // compare below Reserved.
+  FFI(pos > a->Reserved || size > a->Reserved - pos);
   usize newUsed = pos + size;
-  FFI(newUsed > a->Reserved);
   if (newUsed > a->Committed) ArenaCommitTo(a, newUsed);
   a->Used = newUsed;
   return a->Base + pos;
