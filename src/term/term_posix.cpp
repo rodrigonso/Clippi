@@ -65,6 +65,9 @@ bool Term_Enter(Term* t) {
   t->WakeWriteFd = wake[1];
   fcntl(t->WakeReadFd, F_SETFL, fcntl(t->WakeReadFd, F_GETFL, 0) | O_NONBLOCK);
   fcntl(t->WakeWriteFd, F_SETFL, fcntl(t->WakeWriteFd, F_GETFL, 0) | O_NONBLOCK);
+  // Every shell the agent starts would otherwise hold the UI's wake pipe.
+  fcntl(t->WakeReadFd, F_SETFD, FD_CLOEXEC);
+  fcntl(t->WakeWriteFd, F_SETFD, FD_CLOEXEC);
 
   struct termios* saved = (struct termios*)t->SavedTermios;
   if (tcgetattr(t->InFd, saved) != 0) {

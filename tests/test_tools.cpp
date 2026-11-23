@@ -1402,6 +1402,41 @@ static void TestShell(Arena* a) {
   CHECK(spawnRemoved);
 }
 
+#if !defined(_WIN32)
+static void RunSleeper(void* user) {
+  Arena arena = ArenaCreate();
+  Exec_RunStreaming(&arena, SVL("sleep 1"), 10000, nullptr, nullptr, nullptr);
+  ArenaRelease(&arena);
+  Atomic_StoreI32((volatile i32*)user, 1);
+}
+
+static u32 ChildDescriptorCount(Arena* a) {
+  StrBuf out = StrBuf_Make(a, 32);
+  Exec_RunStreaming(a, SVL("ls /dev/fd | wc -l"), 10000, nullptr, CaptureChunk, &out);
+  return (u32)atoi(StrView_DupCStr(a, StrView_Trim(StrBuf_View(&out))));
+}
+#endif
+
+// Tool calls spawn in parallel. A child must not inherit another call's pipe:
+// holding a write end would keep that call from ever seeing EOF, so a shell
+// call could wait on an unrelated dev server. A running call's descriptors
+// therefore never show up in a child started meanwhile.
+static void TestSpawnIsolation(Arena* a) {
+#if defined(_WIN32)
+  (void)a;
+#else
+  u32 alone = ChildDescriptorCount(a);
+  volatile i32 done = 0;
+  Thread sleeper = {};
+  CHECK(Thread_Start(&sleeper, RunSleeper, (void*)&done));
+  Sleep_Ms(200);
+  u32 alongside = ChildDescriptorCount(a);
+  CHECK(!Atomic_LoadI32(&done));
+  Thread_Join(&sleeper);
+  CHECK_ALL(alone > 0, alongside == alone);
+#endif
+}
+
 // ---- write ---------------------------------------------------------------
 
 static void TestWrite(Arena* a) {
@@ -2066,6 +2101,7 @@ void TestTools() {
   TestRead(&a);
   TestReadTruncation(&a);
   TestShell(&a);
+  TestSpawnIsolation(&a);
   TestShellOverflow(&a);
   TestWrite(&a);
   TestEdit(&a);

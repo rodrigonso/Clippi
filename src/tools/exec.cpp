@@ -7,6 +7,25 @@
 #include <wchar.h>
 #include <windows.h>
 
+// Tools run in parallel, and every spawn creates inheritable handles for its
+// child. From the first CreatePipe until the child's ends are closed, a spawn
+// holds this lock, so a concurrent spawn cannot inherit another call's pipe
+// ends (a hook would then miss EOF on its stdin until that unrelated process
+// exited).
+static SRWLOCK g_execSpawnLock = SRWLOCK_INIT;
+
+struct ExecSpawnGuard {
+  bool Held;
+  ExecSpawnGuard() : Held(true) { AcquireSRWLockExclusive(&g_execSpawnLock); }
+  ~ExecSpawnGuard() { Release(); }
+  void Release() {
+    if (Held) ReleaseSRWLockExclusive(&g_execSpawnLock);
+    Held = false;
+  }
+  ExecSpawnGuard(const ExecSpawnGuard&) = delete;
+  ExecSpawnGuard& operator=(const ExecSpawnGuard&) = delete;
+};
+
 // UTF-8 to a NUL-terminated UTF-16 copy in `arena`. Null when the text is not
 // valid UTF-8 or exceeds CreateProcess's 32767-character command-line limit.
 static wchar_t* Exec_Wide(Arena* arena, StrView text) {
@@ -214,6 +233,7 @@ ExecArgvResult Exec_RunArgv(Arena* arena, StrView program, const StrView* args, 
   sa.bInheritHandle = TRUE;
   HANDLE outRead = nullptr, outWrite = nullptr;
   HANDLE errRead = nullptr, errWrite = nullptr;
+  ExecSpawnGuard spawning;
   if (!CreatePipe(&outRead, &outWrite, &sa, 0) || !CreatePipe(&errRead, &errWrite, &sa, 0)) {
     if (outRead) CloseHandle(outRead);
     if (outWrite) CloseHandle(outWrite);
@@ -251,6 +271,7 @@ ExecArgvResult Exec_RunArgv(Arena* arena, StrView program, const StrView* args, 
   bool ok = Exec_StartProcess(program, StrBuf_View(&commandLine), &si, &process);
   CloseHandle(outWrite);
   CloseHandle(errWrite);
+  spawning.Release();
   if (!ok) {
     CloseHandle(job);
     CloseHandle(outRead);
@@ -318,6 +339,7 @@ ExecResult Exec_RunStreaming(Arena* arena, StrView command, u32 timeoutMs,
   sa.nLength = sizeof(sa);
   sa.bInheritHandle = TRUE;
   HANDLE rd = nullptr, wr = nullptr;
+  ExecSpawnGuard spawning;
   if (!CreatePipe(&rd, &wr, &sa, 0)) {
     res.Output = SV("failed to create pipe");
     return res;
@@ -347,6 +369,7 @@ ExecResult Exec_RunStreaming(Arena* arena, StrView command, u32 timeoutMs,
   PROCESS_INFORMATION pinfo = {};
   bool ok = Exec_StartProcess(StrView{}, StrBuf_View(&cmd), &si, &pinfo);
   CloseHandle(wr);
+  spawning.Release();
   if (!ok) {
     CloseHandle(job);
     CloseHandle(rd);
@@ -452,6 +475,7 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   sa.bInheritHandle = TRUE;
 
   HANDLE inRead = nullptr, inWrite = nullptr;
+  ExecSpawnGuard spawning;
   if (!CreatePipe(&inRead, &inWrite, &sa, EXEC_INPUT_PIPE_BYTES)) {
     res.Output = SV("failed to create stdin pipe");
     return res;
@@ -514,6 +538,7 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   // Dropped as soon as the child owns it, so the read end sees EOF when the
   // child exits rather than waiting on a handle this process still holds.
   if (outWrite) CloseHandle(outWrite);
+  spawning.Release();
   if (!ok) {
     CloseHandle(job);
     CloseHandle(inWrite);
@@ -590,6 +615,7 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
   SECURITY_ATTRIBUTES sa = {};
   sa.nLength = sizeof(sa);
   sa.bInheritHandle = TRUE;
+  ExecSpawnGuard spawning;
   HANDLE nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
                            FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
                            0, nullptr);
@@ -619,6 +645,7 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
     ok = CreateProcessW(nullptr, command, nullptr, nullptr, TRUE, flags, nullptr, cwd, &si,
                         &pinfo);
   CloseHandle(nul);
+  spawning.Release();
   if (!ok) return false;
   CloseHandle(pinfo.hProcess);
   CloseHandle(pinfo.hThread);
@@ -634,6 +661,34 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+// Tools run in parallel. A fork from one worker between another's pipe() and
+// its parent-side close would hand that child the other's write end, and a
+// reader waiting for EOF -- a shell call -- would then wait for an unrelated
+// process (a dev server) to exit. So every spawn creates its pipes, forks, and
+// closes the child's ends under this lock, and every pipe end is close-on-exec
+// so a later child never keeps one either. dup2 onto 0-2 clears the flag on
+// the copies a child is meant to keep.
+static pthread_mutex_t g_execSpawnLock = PTHREAD_MUTEX_INITIALIZER;
+
+struct ExecSpawnGuard {
+  bool Held;
+  ExecSpawnGuard() : Held(true) { pthread_mutex_lock(&g_execSpawnLock); }
+  ~ExecSpawnGuard() { Release(); }
+  void Release() {
+    if (Held) pthread_mutex_unlock(&g_execSpawnLock);
+    Held = false;
+  }
+  ExecSpawnGuard(const ExecSpawnGuard&) = delete;
+  ExecSpawnGuard& operator=(const ExecSpawnGuard&) = delete;
+};
+
+static int Exec_Pipe(int fds[2]) {
+  if (pipe(fds) != 0) return -1;
+  fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+  fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+  return 0;
+}
 
 // SIGPIPE's disposition is process-wide, so it is set once and never restored.
 // Saving it and putting the default back around each write would leave a window
@@ -719,20 +774,20 @@ ExecArgvResult Exec_RunArgv(Arena* arena, StrView program, const StrView* args, 
   int outPipe[2];
   int errPipe[2];
   int execPipe[2];
-  if (pipe(outPipe) != 0) return res;
-  if (pipe(errPipe) != 0) {
+  ExecSpawnGuard spawning;
+  if (Exec_Pipe(outPipe) != 0) return res;
+  if (Exec_Pipe(errPipe) != 0) {
     close(outPipe[0]);
     close(outPipe[1]);
     return res;
   }
-  if (pipe(execPipe) != 0) {
+  if (Exec_Pipe(execPipe) != 0) {
     close(outPipe[0]);
     close(outPipe[1]);
     close(errPipe[0]);
     close(errPipe[1]);
     return res;
   }
-  fcntl(execPipe[1], F_SETFD, FD_CLOEXEC);
 
   char** argv = ArenaPushArray(arena, char*, argCount + 2u);
   argv[0] = Exec_DupPosixArg(arena, program);
@@ -773,6 +828,7 @@ ExecArgvResult Exec_RunArgv(Arena* arena, StrView program, const StrView* args, 
   close(outPipe[1]);
   close(errPipe[1]);
   close(execPipe[1]);
+  spawning.Release();
   setpgid(pid, pid);
 
   int execErr = 0;
@@ -856,7 +912,8 @@ ExecResult Exec_RunStreaming(Arena* arena, StrView command, u32 timeoutMs,
   res.ExitCode = -1;
 
   int fds[2];
-  if (pipe(fds) != 0) {
+  ExecSpawnGuard spawning;
+  if (Exec_Pipe(fds) != 0) {
     res.Output = SV("pipe failed");
     return res;
   }
@@ -880,6 +937,7 @@ ExecResult Exec_RunStreaming(Arena* arena, StrView command, u32 timeoutMs,
     _exit(127);
   }
   close(fds[1]);
+  spawning.Release();
   setpgid(pid, pid);
   res.Spawned = true;
 
@@ -955,7 +1013,8 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   }
 
   int fds[2];
-  if (pipe(fds) != 0) {
+  ExecSpawnGuard spawning;
+  if (Exec_Pipe(fds) != 0) {
     res.Output = SV("pipe failed");
     return res;
   }
@@ -963,7 +1022,7 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   // Only created when the caller wants stdout; otherwise the child writes to
   // /dev/null and there is nothing to drain.
   int outFds[2] = {-1, -1};
-  if (output && pipe(outFds) != 0) {
+  if (output && Exec_Pipe(outFds) != 0) {
     close(fds[0]);
     close(fds[1]);
     res.Output = SV("pipe failed");
@@ -1011,6 +1070,7 @@ ExecResult Exec_RunShellInput(Arena* arena, StrView command, StrView input,
   // Dropped as soon as the child owns it, so the read end sees EOF when the
   // child exits rather than waiting on a descriptor this process still holds.
   if (outFds[1] >= 0) close(outFds[1]);
+  spawning.Release();
   setpgid(pid, pid);
   res.Spawned = true;
 
@@ -1077,7 +1137,11 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
   const char* cwd = workingDirectory.Length
                         ? StrView_DupCStr(arena, workingDirectory)
                         : nullptr;
+  ExecSpawnGuard spawning;
   pid_t pid = fork();
+  // The child must not touch the lock: only async-signal-safe calls are
+  // allowed in it before exec, and it never returns from this function.
+  if (pid != 0) spawning.Release();
   if (pid < 0) return false;
   if (pid == 0) {
     // Double fork: the grandchild is reparented to init, so nothing has to
