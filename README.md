@@ -357,6 +357,8 @@ Core-only builds default to `out/core`; use a separate `--build-dir`/`-BuildDir`
 when sharing a checkout between operating systems. Both modes use the same
 `clippi_tests` runner; a core-only build registers just its 14 core suites.
 `--examples`/`-Examples` also runs the offline provider-injection example.
+`clippi_tests --benchmark` measures agent-loop latency and peak RSS on a
+scripted workload.
 
 Installation supplies `include/clippi` and a single static core archive under
 `lib`: `clippi_core.lib` on Windows, `libclippi_core.a` on macOS. Debug archives
@@ -1554,5 +1556,5 @@ Deliberately out of scope for now (the structure leaves seams for them):
 
 [MIT](LICENSE), matching the license already declared for this project.
 Upstream material retains its own license and copyright; see
-[third-party notices](THIRD_PARTY_NOTICES.md), including pi and the adapted
-jcode benchmark harness. CLI archives and installed SDKs include these notices.
+[third-party notices](THIRD_PARTY_NOTICES.md), including pi. CLI archives and
+installed SDKs include these notices.

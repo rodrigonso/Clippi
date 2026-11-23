@@ -26,7 +26,7 @@ function fixture(callback) {
     delete process.env.GITHUB_REF;
     try {
       write('source/VERSION', `${version}\n`);
-      for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/pi/LICENSE', 'licenses/jcode/LICENSE']) {
+      for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/pi/LICENSE']) {
         write(path.join('source', file), fixtureNotice);
       }
       await callback();
@@ -289,7 +289,7 @@ test('missing LICENSE and corrupt downloaded assets block all release writes', f
 }));
 
 test('local native archive smoke', { skip: !process.env.CLIPPI_CI_PACKAGE_DIR }, fixture(async () => {
-  for (const file of ['VERSION', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/pi/LICENSE', 'licenses/jcode/LICENSE',
+  for (const file of ['VERSION', 'LICENSE', 'THIRD_PARTY_NOTICES.md',   'licenses/pi/LICENSE',
     'tools/install/install.ps1', 'tools/install/install.sh']) {
     write(path.join('source', file), fs.readFileSync(path.join(originalRoot, file)));
   }

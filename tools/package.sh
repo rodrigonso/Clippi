@@ -21,9 +21,7 @@ install_runtime() {
   copy_notice "$prefix" curl "$curl_source/COPYING"
   copy_notice "$prefix" pcre2 "$pcre2_source/LICENCE.md"
   copy_notice "$prefix" clippi "$root/LICENSE"
-  for dependency in pi jcode; do
-    copy_notice "$prefix" "$dependency" "$root/licenses/$dependency/LICENSE"
-  done
+  copy_notice "$prefix" pi "$root/licenses/pi/LICENSE"
   [[ -s "$root/THIRD_PARTY_NOTICES.md" ]] || fail "required third-party notices missing or empty"
   cp "$root/THIRD_PARTY_NOTICES.md" "$prefix/share/clippi/"
   version="$(tr -d '\r\n' < "$root/VERSION")"

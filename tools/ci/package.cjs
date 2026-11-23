@@ -12,7 +12,6 @@ const notices = [
   'share/clippi/THIRD_PARTY_NOTICES.md',
   'share/clippi/licenses/clippi/LICENSE',
   'share/clippi/licenses/pi/LICENSE',
-  'share/clippi/licenses/jcode/LICENSE',
   'share/clippi/licenses/curl/COPYING',
   'share/clippi/licenses/pcre2/LICENCE.md',
 ];
@@ -110,7 +109,6 @@ function verifyExtracted(prefix, source, version, platform) {
   for (const [packaged, original] of [
     ['share/clippi/licenses/clippi/LICENSE', 'LICENSE'],
     ['share/clippi/licenses/pi/LICENSE', 'licenses/pi/LICENSE'],
-    ['share/clippi/licenses/jcode/LICENSE', 'licenses/jcode/LICENSE'],
     ['share/clippi/THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md'],
   ]) {
     assert.deepEqual(readNonempty(path.join(prefix, packaged)), readNonempty(path.join(source, original)),

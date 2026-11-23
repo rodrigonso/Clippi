@@ -9,14 +9,11 @@ claim ownership of upstream projects or their contributors' work.
 | Project | Material and scope | License notice |
 |---|---|---|
 | [pi](https://github.com/earendil-works/pi) | Behavioral reference for the independent C++ implementation, including reused prompt-visible strings and tool guidance. No JavaScript runtime or pi package is embedded. | [MIT, copyright 2025 Mario Zechner](licenses/pi/LICENSE) |
-| [jcode](https://github.com/1jehuang/jcode) | `benchmarks/agentbench` originated from `scripts/bench_memory_cli.py`; Clippi also references jcode's terminal behavior. The benchmark harness is source tooling, not part of the executable or SDK. | [MIT, copyright 2025 Jeremy Huang](licenses/jcode/LICENSE) |
 
-The retained notices were checked against pi's
-[`LICENSE` at a74c5da](https://github.com/earendil-works/pi/blob/a74c5da112c29466f182a03108337a488c785d76/LICENSE)
-and jcode's
-[`LICENSE` at 9004466](https://github.com/1jehuang/jcode/blob/9004466b1151a404291dfec7e49fc73bd0ede59e/LICENSE).
-These identify the license texts, not a claim that all compatibility work
-targets those old source revisions.
+The retained notice was checked against pi's
+[`LICENSE` at a74c5da](https://github.com/earendil-works/pi/blob/a74c5da112c29466f182a03108337a488c785d76/LICENSE).
+This identifies the license text, not a claim that all compatibility work
+targets that old source revision.
 
 ## Statically linked CLI dependencies
 
@@ -37,11 +34,6 @@ that runtime remains subject to the applicable Microsoft toolchain license.
 ## Distribution
 
 CLI archives and installed SDKs carry this file under `share/clippi`, the
-project license under `share/clippi/licenses/clippi`, and the retained pi and
-jcode notices under `share/clippi/licenses`. The jcode notice is included
-conservatively even though the benchmark scripts are not shipped in either.
-Only CLI distributions contain libcurl and PCRE2; the core SDK has neither.
-
-External benchmark datasets, reference results, and harnesses remain separate
-projects. Links and comparisons do not imply endorsement or redistribute their
-software, datasets, or trademarks under Clippi's license.
+project license under `share/clippi/licenses/clippi`, and the retained pi
+notice under `share/clippi/licenses`. Only CLI distributions contain libcurl
+and PCRE2; the core SDK has neither.

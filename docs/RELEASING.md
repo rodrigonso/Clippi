@@ -46,8 +46,8 @@ the expected three platform archives and their three checksum files.
 
 Source attribution and the MIT project license are mandatory. The project
 license was already declared in the README; the root `LICENSE` formalizes it.
-`THIRD_PARTY_NOTICES.md` describes the retained pi and jcode notices, the
-embedded CLI dependencies, and the boundary around external benchmark tools.
+`THIRD_PARTY_NOTICES.md` describes the retained pi notice and the embedded CLI
+dependencies.
 When adding or updating a dependency, review its license and update the
 notices in the same change.
 

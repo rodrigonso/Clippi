@@ -31,9 +31,7 @@ function Install-Runtime([string]$Prefix) {
     Copy-Notice $Prefix 'curl' (Join-Path $curlSource 'COPYING')
     Copy-Notice $Prefix 'pcre2' (Join-Path $pcre2Source 'LICENCE.md')
     Copy-Notice $Prefix 'clippi' (Join-Path $root 'LICENSE')
-    foreach ($dependency in @('pi', 'jcode')) {
-        Copy-Notice $Prefix $dependency (Join-Path $root "licenses\$dependency\LICENSE")
-    }
+    Copy-Notice $Prefix 'pi' (Join-Path $root 'licenses\pi\LICENSE')
     $notices = Join-Path $root 'THIRD_PARTY_NOTICES.md'
     Require-File $notices
     Copy-Item -LiteralPath $notices -Destination (Join-Path $Prefix 'share\clippi') -Force

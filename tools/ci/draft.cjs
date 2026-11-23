@@ -11,7 +11,7 @@ module.exports = async function prepareDraft({ github, context, core }) {
   const source = path.resolve('source');
   const directory = path.resolve('out', 'release-assets');
   const version = versionFrom(source, context.ref);
-  for (const notice of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/pi/LICENSE', 'licenses/jcode/LICENSE']) {
+  for (const notice of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/pi/LICENSE']) {
     readNonempty(path.join(source, notice));
   }
   const files = validateAssets(directory, version);

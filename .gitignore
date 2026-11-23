@@ -8,6 +8,3 @@ out/
 *.ilk
 .cache/
 compile_commands.json
-__pycache__/
-*.pyc
-benchmarks/qualitybench/jobs/
