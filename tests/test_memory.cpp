@@ -21,7 +21,44 @@
 #include "tools/fs.h"
 #include "tools/tools.h"
 
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#include <share.h>
+#include <sys/stat.h>
+
+#include "base/win32_utf8.h"
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 namespace {
+
+// Makes `path` unreadable to this process until RestoreReads. False when the
+// platform cannot (POSIX as root reads through any mode).
+bool DenyReads(Arena* arena, StrView path, int* handle) {
+#if defined(_WIN32)
+  (void)arena;
+  wchar_t native[4096];
+  return Win32_Path(path, native, 4096) &&
+         _wsopen_s(handle, native, _O_RDONLY, _SH_DENYRW, _S_IREAD) == 0;
+#else
+  *handle = -1;
+  return geteuid() != 0 && chmod(StrView_DupCStr(arena, path), 0000) == 0;
+#endif
+}
+
+void RestoreReads(Arena* arena, StrView path, int handle) {
+#if defined(_WIN32)
+  (void)arena;
+  (void)path;
+  _close(handle);
+#else
+  (void)handle;
+  chmod(StrView_DupCStr(arena, path), 0600);
+#endif
+}
 
 // Fixtures live under the OS temp directory: the test binary runs inside the
 // Clippi checkout, where every relative path would resolve to its repository.
@@ -604,6 +641,25 @@ void TestDreamExecute(Arena* a, StrView root) {
         DreamRestoreResult::Restored);
   CHECK_ALL(restored == 0, snapshot.Length > 0,
             !Fs_Exists(Fs_Join(a, location.Pages, SVL("build.md"))));
+
+  // A snapshot that fails partway must not become the newest one: restoring
+  // would then replace the wiki with whatever was copied before the failure.
+  StrView keep = Fs_Join(a, location.Pages, SVL("keep.md"));
+  StrView locked = Fs_Join(a, location.Pages, SVL("locked.md"));
+  CHECK(Write(a, keep, Page(a, "Keep", "topic", "Kept", "See [[missing]]\n")));
+  CHECK(Write(a, locked, Page(a, "Locked", "topic", "Locked", "Body\n")));
+  int handle = -1;
+  if (DenyReads(a, locked, &handle)) {
+    DreamResult failed = {};
+    run.NowMs += 1000;
+    Dream_Execute(a, &run, &failed);
+    RestoreReads(a, locked, handle);
+    Dream_ReadStatus(a, &location, &status);
+    CHECK_ALL(failed.Outcome == DreamOutcome::Failed, status.Snapshots == 1);
+    CHECK(Dream_RestoreLatestSnapshot(a, &location, &restored, &snapshot) ==
+          DreamRestoreResult::Restored);
+    CHECK_ALL(restored == 0, !Fs_Exists(keep), !Fs_Exists(locked));
+  }
   MemoryRepository_Destroy(&memory);
 }
 

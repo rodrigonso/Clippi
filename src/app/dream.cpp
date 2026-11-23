@@ -101,9 +101,12 @@ void AppendClipped(StrBuf* out, StrView text, u32 maxBytes) {
 }
 
 // Names of the entries of `dir` that satisfy the filter, sorted ascending.
-Array<StrView> SortedNames(Arena* arena, StrView dir, bool directories) {
+// Dot names are skipped, which is what keeps staged copies out of sight.
+Array<StrView> SortedNames(Arena* arena, StrView dir, bool directories,
+                           bool* listedOut = nullptr) {
   bool listed = false;
   Array<FsEntry> entries = Fs_ListDir(arena, dir, &listed);
+  if (listedOut) *listedOut = listed;
   Array<StrView> names = Array_Make<StrView>(arena, entries.Count ? entries.Count : 1);
   for (u32 i = 0; i < entries.Count; i++) {
     const FsEntry& entry = entries.Data[i];
@@ -119,7 +122,11 @@ Array<StrView> SortedNames(Arena* arena, StrView dir, bool directories) {
 bool CopyPages(Arena* arena, StrView from, StrView to, u32* copied) {
   if (copied) *copied = 0;
   if (!Fs_MkdirP(arena, to)) return false;
-  Array<StrView> names = SortedNames(arena, from, false);
+  bool listed = false;
+  Array<StrView> names = SortedNames(arena, from, false, &listed);
+  // A missing source is an empty wiki; one that exists but cannot be listed
+  // must not be mistaken for one.
+  if (!listed && Fs_Exists(from)) return false;
   for (u32 i = 0; i < names.Count; i++) {
     StrView content = {};
     if (File_ReadAll(arena, Fs_Join(arena, from, names.Data[i]), &content) !=
@@ -159,7 +166,9 @@ StrView Timestamp(Arena* arena, u64 nowMs) {
   return StrView_Dup(arena, SV(text));
 }
 
-// Copies `pages` into a new snapshot and keeps only the newest few.
+// Copies `pages` into a new snapshot and keeps only the newest few. The copy is
+// staged under a dot name and renamed into place only once complete; a partial
+// snapshot would otherwise be the newest one, and the one a restore reads.
 bool Snapshot(Arena* arena, StrView snapshots, StrView pages, u64 nowMs) {
   StrView base = Timestamp(arena, nowMs);
   StrView name = base;
@@ -170,7 +179,23 @@ bool Snapshot(Arena* arena, StrView snapshots, StrView pages, u64 nowMs) {
     StrBuf_AppendU64(&numbered, n);
     name = StrBuf_View(&numbered);
   }
-  if (!CopyPages(arena, pages, Fs_Join(arena, snapshots, name), nullptr)) return false;
+  // Staging left by a pass that died mid-copy. The dream lock is held, so no
+  // other snapshot is in progress.
+  bool listed = false;
+  Array<FsEntry> entries = Fs_ListDir(arena, snapshots, &listed);
+  for (u32 i = 0; i < entries.Count; i++)
+    if (entries.Data[i].IsDir && entries.Data[i].Name.Length &&
+        entries.Data[i].Name.Data[0] == '.')
+      Fs_RemoveTree(arena, Fs_Join(arena, snapshots, entries.Data[i].Name));
+  StrBuf hidden = StrBuf_Make(arena, name.Length + 2);
+  StrBuf_AppendChar(&hidden, '.');
+  StrBuf_Append(&hidden, name);
+  StrView staging = Fs_Join(arena, snapshots, StrBuf_View(&hidden));
+  if (!CopyPages(arena, pages, staging, nullptr) ||
+      !File_Rename(arena, staging, Fs_Join(arena, snapshots, name))) {
+    Fs_RemoveTree(arena, staging);
+    return false;
+  }
   Array<StrView> all = SortedNames(arena, snapshots, true);
   for (u32 i = 0; i + DREAM_SNAPSHOTS_KEPT < all.Count; i++)
     Fs_RemoveTree(arena, Fs_Join(arena, snapshots, all.Data[i]));
@@ -876,12 +901,27 @@ DreamRestoreResult Dream_RestoreLatestSnapshot(Arena* arena,
   if (locked == ProcessFileLockStatus::Busy) return DreamRestoreResult::Busy;
   if (locked != ProcessFileLockStatus::Acquired) return DreamRestoreResult::Failed;
   *snapshot = snapshots.Data[snapshots.Count - 1];
-  Array<StrView> current = SortedNames(arena, location->Pages, false);
-  bool ok = true;
-  for (u32 i = 0; ok && i < current.Count; i++)
-    ok = Fs_Remove(arena, Fs_Join(arena, location->Pages, current.Data[i]));
-  ok = ok && CopyPages(arena, Fs_Join(arena, paths.Snapshots, *snapshot),
-                       location->Pages, restored);
+  // Staged beside the pages first, so a copy that fails leaves the live wiki
+  // untouched. Past that point each page is replaced atomically, pages the
+  // snapshot lacks go last, and the snapshot remains to retry from.
+  StrView staging = Fs_Join(arena, location->DreamDir, SVL("restoring"));
+  Fs_RemoveTree(arena, staging);
+  u32 copied = 0;
+  bool ok = CopyPages(arena, Fs_Join(arena, paths.Snapshots, *snapshot), staging, &copied) &&
+            Fs_MkdirP(arena, location->Pages);
+  Array<StrView> staged = ok ? SortedNames(arena, staging, false) : Array<StrView>{};
+  for (u32 i = 0; ok && i < staged.Count; i++)
+    ok = File_Replace(arena, Fs_Join(arena, staging, staged.Data[i]),
+                      Fs_Join(arena, location->Pages, staged.Data[i]));
+  Array<StrView> current = ok ? SortedNames(arena, location->Pages, false) : Array<StrView>{};
+  for (u32 i = 0; ok && i < current.Count; i++) {
+    bool kept = false;
+    for (u32 k = 0; !kept && k < staged.Count; k++)
+      kept = StrView_Eq(current.Data[i], staged.Data[k]);
+    if (!kept) ok = Fs_Remove(arena, Fs_Join(arena, location->Pages, current.Data[i]));
+  }
+  Fs_RemoveTree(arena, staging);
+  if (ok) *restored = copied;
   ProcessFileLock_Release(&lock, paths.Lock);
   return ok ? DreamRestoreResult::Restored : DreamRestoreResult::Failed;
 }

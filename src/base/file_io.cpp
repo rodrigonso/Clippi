@@ -182,6 +182,21 @@ bool File_Replace(Arena* arena, StrView from, StrView to) {
 #endif
 }
 
+bool File_Rename(Arena* arena, StrView from, StrView to) {
+#if defined(_WIN32)
+  (void)arena;
+  wchar_t nativeFrom[4096];
+  wchar_t nativeTo[4096];
+  return Win32_Path(from, nativeFrom, 4096) && Win32_Path(to, nativeTo, 4096) &&
+         MoveFileExW(nativeFrom, nativeTo, 0) != 0;
+#else
+  usize mark = arena->Used;
+  bool ok = rename(StrView_DupCStr(arena, from), StrView_DupCStr(arena, to)) == 0;
+  ArenaRestore(arena, mark);
+  return ok;
+#endif
+}
+
 bool File_MakeDir(Arena* arena, StrView path) {
   errno = 0;
 #if defined(_WIN32)

@@ -46,6 +46,9 @@ bool File_Remove(Arena* arena, StrView path);
 // Atomically replaces `to` with `from` (rename(2); MoveFileEx with
 // REPLACE_EXISTING and WRITE_THROUGH on Windows).
 bool File_Replace(Arena* arena, StrView from, StrView to);
+// Moves a file or directory to a `to` that does not exist yet, on the same
+// volume. Unlike File_Replace this works for directories on Windows.
+bool File_Rename(Arena* arena, StrView from, StrView to);
 // True when the directory was created or already exists. POSIX mode is 0700.
 bool File_MakeDir(Arena* arena, StrView path);
 // Appends `content` with one write, creating the file when missing. Records
