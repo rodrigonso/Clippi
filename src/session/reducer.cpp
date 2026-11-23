@@ -241,9 +241,11 @@ SessionResult SessionReducer_ContextThrough(Arena* arena, const SessionReduction
   for (u32 i = 0; i < branch.Count; i++)
     if (branch.Data[i]->Kind == SessionRecordKind::Compaction) compactionCount++;
 
-  Array<Message> messages = Array_Make<Message>(arena, limit ? limit : 1);
-
   if (compactionCount == 0) {
+    u32 count = 0;
+    for (u32 i = 0; i < limit; i++)
+      if (branch.Data[i]->Kind == SessionRecordKind::Message) count++;
+    Array<Message> messages = Array_Make<Message>(arena, count ? count : 1);
     for (u32 i = 0; i < limit; i++) {
       if (branch.Data[i]->Kind == SessionRecordKind::Message)
         Array_Push(&messages, branch.Data[i]->MessageEntry.Value);
@@ -255,10 +257,29 @@ SessionResult SessionReducer_ContextThrough(Arena* arena, const SessionReduction
   // Each compaction folds the inclusive branch span [Base..Through] into a
   // single summary anchored at Base. Applying them in branch order means a
   // later compaction that spans an earlier anchor correctly supersedes it.
-  DurableIdIndex position = {};
-  DurableIdIndex_Init(&position, arena, branch.Count);
-  for (u32 i = 0; i < branch.Count; i++)
-    DurableIdIndex_Put(&position, branch.Data[i]->EntryId, i);
+  // Only span endpoints need branch positions, so they are indexed rather
+  // than every entry: a long, often-compacted branch has thousands of entries
+  // but only a handful of distinct endpoints.
+  DurableIdIndex endpoints = {};
+  DurableIdIndex_Init(&endpoints, arena, compactionCount * 2);
+  u32* endpointPosition = ArenaPushArray(arena, u32, compactionCount * 2);
+  u32 endpointCount = 0;
+  for (u32 i = 0; i < branch.Count; i++) {
+    const SessionRecord* record = branch.Data[i];
+    if (record->Kind != SessionRecordKind::Compaction) continue;
+    DurableId ends[2] = {record->CompactionEntry.BaseEntryId,
+                         record->CompactionEntry.ThroughEntryId};
+    for (DurableId id : ends) {
+      if (DurableIdIndex_Contains(&endpoints, id)) continue;
+      endpointPosition[endpointCount] = 0xffffffffu;
+      DurableIdIndex_Put(&endpoints, id, endpointCount++);
+    }
+  }
+  for (u32 i = 0; i < branch.Count; i++) {
+    u32 endpoint = 0;
+    if (DurableIdIndex_Find(&endpoints, branch.Data[i]->EntryId, &endpoint))
+      endpointPosition[endpoint] = i;
+  }
 
   ContextSlot* slot = ArenaPushArray(arena, ContextSlot, branch.Count);
   const Message** anchor = ArenaPushArray(arena, const Message*, branch.Count);
@@ -270,10 +291,13 @@ SessionResult SessionReducer_ContextThrough(Arena* arena, const SessionReduction
   for (u32 i = 0; i < branch.Count; i++) {
     const SessionRecord* record = branch.Data[i];
     if (record->Kind != SessionRecordKind::Compaction) continue;
-    u32 base = 0;
-    u32 through = 0;
-    if (!DurableIdIndex_Find(&position, record->CompactionEntry.BaseEntryId, &base) ||
-        !DurableIdIndex_Find(&position, record->CompactionEntry.ThroughEntryId, &through))
+    u32 baseEndpoint = 0;
+    u32 throughEndpoint = 0;
+    DurableIdIndex_Find(&endpoints, record->CompactionEntry.BaseEntryId, &baseEndpoint);
+    DurableIdIndex_Find(&endpoints, record->CompactionEntry.ThroughEntryId, &throughEndpoint);
+    u32 base = endpointPosition[baseEndpoint];
+    u32 through = endpointPosition[throughEndpoint];
+    if (base == 0xffffffffu || through == 0xffffffffu)
       return SessionResult_Corrupt("compaction span references an entry that is not on this branch");
     if (base > through) return SessionResult_Corrupt("compaction span ends before it begins");
     if (through >= i) return SessionResult_Corrupt("compaction span reaches its own entry or later");
@@ -285,6 +309,12 @@ SessionResult SessionReducer_ContextThrough(Arena* arena, const SessionReduction
     anchor[base] = &record->CompactionEntry.Summary;
   }
 
+  u32 count = 0;
+  for (u32 i = 0; i < limit; i++)
+    if (slot[i] == ContextSlot::Summary ||
+        (slot[i] == ContextSlot::Own && branch.Data[i]->Kind == SessionRecordKind::Message))
+      count++;
+  Array<Message> messages = Array_Make<Message>(arena, count ? count : 1);
   for (u32 i = 0; i < limit; i++) {
     if (slot[i] == ContextSlot::Summary) {
       Array_Push(&messages, *anchor[i]);
