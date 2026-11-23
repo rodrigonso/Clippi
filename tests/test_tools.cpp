@@ -1370,6 +1370,36 @@ static void TestShell(Arena* a) {
       Exec_RunArgv(a, testExecutable, directArgs, 2, 10000, nullptr, directSink);
   CHECK_ALL(direct.Spawned, direct.ExitCode == 0,
             StrView_EqCStr(StrBuf_View(&directOutput), "spaces \" & | stay literal"));
+
+  // A detached child (how /dream starts its background pass) starts in a
+  // working directory outside the ANSI code page.
+  StrView spawnDir = Fs_Join(a, SVL("out"), SVL("clippi-spawn-\xc3\xa9\xe4\xb8\xad"));
+  Fs_RemoveTree(a, spawnDir);
+  CHECK(Fs_MkdirP(a, spawnDir));
+  spawnDir = Fs_RealPath(a, spawnDir);
+#if defined(_WIN32)
+  const char* comspec = getenv("ComSpec");
+  StrView spawnProgram = SV(comspec && *comspec ? comspec : "C:\\Windows\\System32\\cmd.exe");
+  StrView spawnArgs[] = {SVL("/c"), SVL("echo spawned>marker.txt")};
+#else
+  StrView spawnProgram = SVL("/bin/sh");
+  StrView spawnArgs[] = {SVL("-c"), SVL("echo spawned > marker.txt")};
+#endif
+  CHECK(Exec_SpawnDetached(a, spawnProgram, spawnArgs, 2, spawnDir));
+  StrView marker = Fs_Join(a, spawnDir, SVL("marker.txt"));
+  StrView spawned = {};
+  for (u32 i = 0; i < 400 && !StrView_Contains(spawned, "spawned"); i++) {
+    Sleep_Ms(25);
+    File_ReadAll(a, marker, &spawned);
+  }
+  CHECK(StrView_Contains(spawned, "spawned"));
+  // The detached child may still hold the file it just wrote.
+  bool spawnRemoved = false;
+  for (u32 i = 0; i < 80 && !spawnRemoved; i++) {
+    spawnRemoved = Fs_RemoveTree(a, spawnDir);
+    if (!spawnRemoved) Sleep_Ms(25);
+  }
+  CHECK(spawnRemoved);
 }
 
 // ---- write ---------------------------------------------------------------

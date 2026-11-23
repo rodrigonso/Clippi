@@ -139,13 +139,11 @@ void TestFileIo() {
   CHECK(File_ReadAll(&arena, unicodePath, &bytes) == FileIoResult::Missing);
   CHECK(File_Remove(&arena, unicodeConfig));
   CHECK(!File_Remove(&arena, unicodeConfig));
-#if defined(_WIN32)
-  wchar_t native[4096];
-  CHECK(Win32_Path(unicodeDir, native, 4096));
-  CHECK(_wrmdir(native) == 0);
-#else
-  CHECK(rmdir(StrView_DupCStr(&arena, unicodeDir)) == 0);
-#endif
+  // Tree removal takes UTF-8 paths: files and directories alike.
+  CHECK(File_WriteAll(&arena, Fs_Join(&arena, unicodeDir, SVL("\xc3\xa9t\xc3\xa9.txt")),
+                      SVL("x")) == FileIoResult::Success);
+  CHECK(Fs_RemoveTree(&arena, unicodeDir));
+  CHECK(!Fs_Exists(unicodeDir));
 #if !defined(_WIN32)
   CHECK(File_OpenRead(&arena, StrBuf_View(&root), &reader) == FileIoResult::Success);
   count = 123;

@@ -158,40 +158,43 @@ bool Fs_IsDir(StrView path) {
 
 bool Fs_Remove(Arena* arena, StrView path) {
   if (!path.Length) return false;
+#if defined(_WIN32)
+  (void)arena;
+  wchar_t native[4096];
+  if (!Win32_Path(path, native, 4096)) return false;
+  DWORD attributes = GetFileAttributesW(native);
+  return attributes != INVALID_FILE_ATTRIBUTES &&
+         ((attributes & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryW(native)
+                                                  : DeleteFileW(native));
+#else
   usize mark = arena->Used;
   const char* native = StrView_DupCStr(arena, path);
-  bool removed;
-#if defined(_WIN32)
-  DWORD attributes = GetFileAttributesA(native);
-  removed = attributes != INVALID_FILE_ATTRIBUTES &&
-            ((attributes & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryA(native)
-                                                     : DeleteFileA(native));
-#else
   struct stat st;
-  removed = lstat(native, &st) == 0 &&
-            (S_ISDIR(st.st_mode) ? rmdir(native) == 0 : unlink(native) == 0);
-#endif
+  bool removed = lstat(native, &st) == 0 &&
+                 (S_ISDIR(st.st_mode) ? rmdir(native) == 0 : unlink(native) == 0);
   ArenaRestore(arena, mark);
   return removed;
+#endif
 }
 
 // Whether `path` is a real directory to descend into, as opposed to a file or
 // a link (symlink, junction) that must be removed without being followed.
 static bool Fs_IsPlainDir(Arena* arena, StrView path) {
-  usize mark = arena->Used;
-  const char* native = StrView_DupCStr(arena, path);
-  bool plain;
 #if defined(_WIN32)
-  DWORD attributes = GetFileAttributesA(native);
-  plain = attributes != INVALID_FILE_ATTRIBUTES &&
-          (attributes & FILE_ATTRIBUTE_DIRECTORY) &&
-          !(attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+  (void)arena;
+  wchar_t native[4096];
+  if (!Win32_Path(path, native, 4096)) return false;
+  DWORD attributes = GetFileAttributesW(native);
+  return attributes != INVALID_FILE_ATTRIBUTES &&
+         (attributes & FILE_ATTRIBUTE_DIRECTORY) &&
+         !(attributes & FILE_ATTRIBUTE_REPARSE_POINT);
 #else
+  usize mark = arena->Used;
   struct stat st;
-  plain = lstat(native, &st) == 0 && S_ISDIR(st.st_mode);
-#endif
+  bool plain = lstat(StrView_DupCStr(arena, path), &st) == 0 && S_ISDIR(st.st_mode);
   ArenaRestore(arena, mark);
   return plain;
+#endif
 }
 
 bool Fs_RemoveTree(Arena* arena, StrView path) {

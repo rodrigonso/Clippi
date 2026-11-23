@@ -590,30 +590,34 @@ bool Exec_SpawnDetached(Arena* arena, StrView program, const StrView* args,
   SECURITY_ATTRIBUTES sa = {};
   sa.nLength = sizeof(sa);
   sa.bInheritHandle = TRUE;
-  HANDLE nul = CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE,
+  HANDLE nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
                            FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
                            0, nullptr);
   if (nul == INVALID_HANDLE_VALUE) return false;
-  STARTUPINFOA si = {};
+  STARTUPINFOW si = {};
   si.cb = sizeof(si);
   si.dwFlags = STARTF_USESTDHANDLES;
   si.hStdInput = nul;
   si.hStdOutput = nul;
   si.hStdError = nul;
-  const char* cwd = workingDirectory.Length
-                        ? StrView_DupCStr(arena, workingDirectory)
-                        : nullptr;
+  // Not Win32_Path: CreateProcess does not take an extended-length (\\?\)
+  // current directory.
+  wchar_t* command = Exec_Wide(arena, StrBuf_View(&cmd));
+  wchar_t* cwd = workingDirectory.Length ? Exec_Wide(arena, workingDirectory) : nullptr;
+  if (!command || (workingDirectory.Length && !cwd)) {
+    CloseHandle(nul);
+    return false;
+  }
   PROCESS_INFORMATION pinfo = {};
   DWORD flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
   // Breaking away keeps the child alive when the caller runs inside a
   // kill-on-close job (a terminal or IDE). A job that forbids it refuses the
   // flag, and the child then simply shares the caller's job.
-  BOOL ok = CreateProcessA(nullptr, (LPSTR)StrBuf_CStr(&cmd), nullptr, nullptr,
-                           TRUE, flags | CREATE_BREAKAWAY_FROM_JOB, nullptr, cwd,
-                           &si, &pinfo);
+  BOOL ok = CreateProcessW(nullptr, command, nullptr, nullptr, TRUE,
+                           flags | CREATE_BREAKAWAY_FROM_JOB, nullptr, cwd, &si, &pinfo);
   if (!ok)
-    ok = CreateProcessA(nullptr, (LPSTR)StrBuf_CStr(&cmd), nullptr, nullptr, TRUE,
-                        flags, nullptr, cwd, &si, &pinfo);
+    ok = CreateProcessW(nullptr, command, nullptr, nullptr, TRUE, flags, nullptr, cwd, &si,
+                        &pinfo);
   CloseHandle(nul);
   if (!ok) return false;
   CloseHandle(pinfo.hProcess);
