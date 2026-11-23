@@ -9,7 +9,6 @@
 #include "auth/openai_codex_oauth.h"
 #include "auth/openrouter_oauth.h"
 #include "auth/store.h"
-#include "base/process_file_lock.h"
 #include "base/thread.h"
 #include "net/loopback.h"
 
@@ -45,10 +44,6 @@ static bool UseChatGptCredential(AppAuth* aa, Arena* arena, Arena* scratch,
   return ReturnAuth(arena, cred->AccessToken, accountId, out);
 }
 
-// Covers the token request's own timeout, so a waiter outlasts a holder that
-// is still refreshing rather than giving up while it works.
-static const u64 CHATGPT_REFRESH_LOCK_WAIT_MS = 65 * 1000;
-
 // Refresh tokens are single-use: two processes refreshing the same one would
 // race, and the loser's refusal can sign the account out. A refresh therefore
 // holds the store's lock and re-reads the store first, so a process that
@@ -56,20 +51,8 @@ static const u64 CHATGPT_REFRESH_LOCK_WAIT_MS = 65 * 1000;
 static bool RefreshChatGptCredential(AppAuth* aa, Arena* arena, Arena* scratch,
                                      StrView provider, const Credential* stale,
                                      volatile i32* abort, ProviderAuth* out) {
-  StrBuf lockPath = StrBuf_Make(scratch, aa->Path.Length + 8);
-  StrBuf_Append(&lockPath, aa->Path);
-  StrBuf_AppendCStr(&lockPath, ".lock");
-  ProcessFileLock lock = {};
-  ProcessFileLockStatus status = ProcessFileLockStatus::Busy;
-  u64 deadline = MonotonicMillis() + CHATGPT_REFRESH_LOCK_WAIT_MS;
-  for (;;) {
-    status = ProcessFileLock_TryAcquire(scratch, StrBuf_View(&lockPath), &lock);
-    if (status != ProcessFileLockStatus::Busy ||
-        (abort && Atomic_LoadI32(abort)) || MonotonicMillis() >= deadline)
-      break;
-    Sleep_Ms(50);
-  }
-  if (status != ProcessFileLockStatus::Acquired) {
+  AuthStoreLock lock = {};
+  if (!AuthStore_Lock(scratch, aa->Path, AUTH_STORE_LOCK_WAIT_MS, abort, &lock)) {
     // Inside the refresh margin the old token still works for a while.
     return NowMillis() < stale->ExpiresAtMs &&
            UseChatGptCredential(aa, arena, scratch, provider, stale, out);
@@ -93,14 +76,14 @@ static bool RefreshChatGptCredential(AppAuth* aa, Arena* arena, Arena* scratch,
         next.ExpiresAtMs = tokens.ExpiresAtMs;
         // A failed save still leaves this process a working token; the next
         // process will find the old refresh token refused and ask for /auth.
-        AuthStore_Write(scratch, aa->Path, provider, &next);
+        AuthStore_WriteLocked(scratch, &lock, aa->Path, provider, &next);
         ok = UseChatGptCredential(aa, arena, scratch, provider, &next, out);
       } else if (NowMillis() < current.ExpiresAtMs) {
         ok = UseChatGptCredential(aa, arena, scratch, provider, &current, out);
       }
     }
   }
-  ProcessFileLock_Release(&lock, StrBuf_View(&lockPath));
+  AuthStore_Unlock(&lock);
   return ok;
 }
 

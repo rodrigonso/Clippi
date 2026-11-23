@@ -594,10 +594,69 @@ static void TestLoopbackServer() {
   ArenaRelease(&a);
 }
 
+#if defined(_WIN32)
+struct StoreWriter {
+  StrView Path;
+  volatile i32 Done;
+  bool Saved;
+};
+
+static void WriteWhileLocked(void* user) {
+  StoreWriter* writer = (StoreWriter*)user;
+  Arena arena = ArenaCreate();
+  Credential key = {};
+  key.ApiKey = SVL("sk-login");
+  writer->Saved = AuthStore_Write(&arena, writer->Path, SVL("openrouter"), &key);
+  ArenaRelease(&arena);
+  Atomic_StoreI32(&writer->Done, 1);
+}
+#endif
+
+// A login's write waits for a refresh holding the store's lock, so it cannot
+// rewrite the file from a copy read before the refresh saved its new token.
+// Windows only: POSIX record locks belong to the process, so a second
+// acquisition from the same process is not refused there.
+static void TestStoreLock() {
+#if defined(_WIN32)
+  Arena a = ArenaCreate();
+  StrView path = SVL("clippi_auth_lock_test.json");
+  remove("clippi_auth_lock_test.json");
+
+  AuthStoreLock held = {};
+  CHECK(AuthStore_Lock(&a, path, 0, nullptr, &held));
+  StoreWriter writer = {path, 0, false};
+  Thread thread = {};
+  CHECK(Thread_Start(&thread, WriteWhileLocked, &writer));
+  Credential rotated = {};
+  rotated.Kind = CredentialKind::OAuth;
+  rotated.AccessToken = SVL("access-2");
+  rotated.RefreshToken = SVL("refresh-2");
+  rotated.ExpiresAtMs = 1700000000000;
+  Sleep_Ms(200);
+  CHECK(!Atomic_LoadI32(&writer.Done));
+  CHECK(AuthStore_WriteLocked(&a, &held, path, SVL("openai-codex"), &rotated));
+  AuthStore_Unlock(&held);
+  Thread_Join(&thread);
+
+  Credential read = {};
+  CHECK(writer.Saved);
+  CHECK(AuthStore_Read(&a, path, SVL("openai-codex"), &read));
+  CHECK(StrView_EqCStr(read.RefreshToken, "refresh-2"));
+  CHECK(AuthStore_Read(&a, path, SVL("openrouter"), &read));
+  CHECK(StrView_EqCStr(read.ApiKey, "sk-login"));
+  // Without the lock the caller cannot claim to hold it.
+  CHECK(!AuthStore_WriteLocked(&a, &held, path, SVL("openai-codex"), &rotated));
+
+  remove("clippi_auth_lock_test.json");
+  ArenaReleaseSecure(&a);
+#endif
+}
+
 void TestAuth() {
   TestStore();
   TestOAuthStore();
   TestStoreFailurePreservesContent();
+  TestStoreLock();
   TestResolve();
   TestTokenCache();
   TestOAuthUrls();

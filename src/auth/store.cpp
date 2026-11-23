@@ -3,6 +3,7 @@
 #include "base/array.h"
 #include "base/config_file.h"
 #include "base/sysinfo.h"
+#include "base/thread.h"
 #include "json/json.h"
 
 namespace {
@@ -178,7 +179,41 @@ bool AuthStore_Read(Arena* a, StrView path, StrView providerId, Credential* out)
   return ParseCred(credential, out);
 }
 
+bool AuthStore_Lock(Arena* scratch, StrView path, u64 waitMs, volatile i32* abort,
+                    AuthStoreLock* out) {
+  *out = {};
+  if (!ConfigFile_EnsureParentDir(scratch, path)) return false;
+  StrBuf lockPath = StrBuf_Make(scratch, path.Length + 8);
+  StrBuf_Append(&lockPath, path);
+  StrBuf_AppendCStr(&lockPath, ".lock");
+  out->Path = StrBuf_View(&lockPath);
+  u64 deadline = MonotonicMillis() + waitMs;
+  for (;;) {
+    ProcessFileLockStatus status = ProcessFileLock_TryAcquire(scratch, out->Path, &out->Lock);
+    if (status == ProcessFileLockStatus::Acquired) return true;
+    if (status != ProcessFileLockStatus::Busy || (abort && Atomic_LoadI32(abort)) ||
+        MonotonicMillis() >= deadline)
+      return false;
+    Sleep_Ms(50);
+  }
+}
+
+void AuthStore_Unlock(AuthStoreLock* lock) {
+  if (lock->Lock.Held) ProcessFileLock_Release(&lock->Lock, lock->Path);
+  *lock = {};
+}
+
 bool AuthStore_Write(Arena* a, StrView path, StrView providerId, const Credential* cred) {
+  AuthStoreLock lock = {};
+  if (!AuthStore_Lock(a, path, AUTH_STORE_LOCK_WAIT_MS, nullptr, &lock)) return false;
+  bool ok = AuthStore_WriteLocked(a, &lock, path, providerId, cred);
+  AuthStore_Unlock(&lock);
+  return ok;
+}
+
+bool AuthStore_WriteLocked(Arena* a, const AuthStoreLock* held, StrView path,
+                           StrView providerId, const Credential* cred) {
+  if (!held || !held->Lock.Held) return false;
   if (!cred || !CredIsWritable(cred)) return false;
   Array<Entry> entries = {};
   if (!LoadEntries(a, path, &entries)) return false;
@@ -200,11 +235,17 @@ bool AuthStore_Write(Arena* a, StrView path, StrView providerId, const Credentia
 }
 
 bool AuthStore_Delete(Arena* a, StrView path, StrView providerId) {
+  AuthStoreLock lock = {};
+  if (!AuthStore_Lock(a, path, AUTH_STORE_LOCK_WAIT_MS, nullptr, &lock)) return false;
   Array<Entry> entries = {};
-  if (!LoadEntries(a, path, &entries)) return false;
-  Array<Entry> kept = Array_Make<Entry>(a, entries.Count + 1);
-  for (u32 i = 0; i < entries.Count; i++) {
-    if (!StrView_Eq(entries.Data[i].Id, providerId)) Array_Push(&kept, entries.Data[i]);
+  bool ok = LoadEntries(a, path, &entries);
+  if (ok) {
+    Array<Entry> kept = Array_Make<Entry>(a, entries.Count + 1);
+    for (u32 i = 0; i < entries.Count; i++) {
+      if (!StrView_Eq(entries.Data[i].Id, providerId)) Array_Push(&kept, entries.Data[i]);
+    }
+    ok = WriteEntries(a, path, &kept);
   }
-  return WriteEntries(a, path, &kept);
+  AuthStore_Unlock(&lock);
+  return ok;
 }
