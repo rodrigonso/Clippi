@@ -194,8 +194,13 @@ void ToolWorker(void* argument) {
     if (index < pool->Count) pool->Next = index + 1;
     Mutex_Unlock(&pool->Lock);
     if (index >= pool->Count) break;
-    RunOne(pool->Jobs[index], &pool->Jobs[index]->Worker, pool->Dispatch,
-           pool->Events);
+    // Reserved when claimed rather than when the batch was planned, so the
+    // address space reserved tracks the workers running, not the batch size.
+    // Completion is published under the lock, which hands both fields over.
+    AgentPreparedTool* job = pool->Jobs[index];
+    job->Worker = ArenaCreate(WORKER_ARENA_RESERVE);
+    job->HasWorker = true;
+    RunOne(job, &job->Worker, pool->Dispatch, pool->Events);
     Mutex_Lock(&pool->Lock);
     pool->Completed[pool->CompletedCount++] = index;
     Cond_Signal(&pool->Changed);
@@ -395,8 +400,6 @@ void AgentToolBatch_Run(Arena* arena, AgentToolBatchPlan* plan,
     u32 index = 0;
     for (u32 i = 0; i < plan->Calls.Count; i++) {
       if (!plan->Calls.Data[i].Runnable) continue;
-      plan->Calls.Data[i].Worker = ArenaCreate(WORKER_ARENA_RESERVE);
-      plan->Calls.Data[i].HasWorker = true;
       runnable[index++] = &plan->Calls.Data[i];
     }
     u32 cap = maxParallelTools ? maxParallelTools : DEFAULT_MAX_PARALLEL;
@@ -418,6 +421,8 @@ void AgentToolBatch_Run(Arena* arena, AgentToolBatchPlan* plan,
     }
     if (started == 0) {
       for (u32 i = 0; i < plan->RunnableCount; i++) {
+        runnable[i]->Worker = ArenaCreate(WORKER_ARENA_RESERVE);
+        runnable[i]->HasWorker = true;
         RunOne(runnable[i], &runnable[i]->Worker, dispatch, events);
         FinalizeOne(arena, runnable[i], hooks, events,
                     &result.Calls.Data[runnable[i] - plan->Calls.Data]);
