@@ -353,13 +353,16 @@ bool EditExec(void* ctx, Arena* arena, StrView id, const ToolArgs* args,
   StrView realPath = Fs_RealPath(arena, path);
   FileLockToken lock = FileLock_Acquire(realPath);
   bool ok = false;
+  // The file and its working copies (normalized, edited, re-encoded, diffed)
+  // are several times its size; only the result text outlives the call.
+  Arena scratch = ArenaCreate();
 
   StrView fileBytes = {};
   bool hasBom = false;
   StrView body = {};
   bool crlf = false;
   StrView originalLF = {};
-  FileIoResult readResult = File_ReadAll(arena, path, &fileBytes, FS_TOOL_MAX_FILE_BYTES);
+  FileIoResult readResult = File_ReadAll(&scratch, path, &fileBytes, FS_TOOL_MAX_FILE_BYTES);
   if (readResult == FileIoResult::TooLarge) {
     StrBuf_AppendCStr(err, "Could not edit file: ");
     StrBuf_Append(err, path);
@@ -378,16 +381,16 @@ bool EditExec(void* ctx, Arena* arena, StrView id, const ToolArgs* args,
   body = fileBytes;
   if (hasBom) body = StrView{fileBytes.Data + 3, fileBytes.Length - 3};
   crlf = Edit_IsCrlf(body);
-  originalLF = StrView_NormalizeLf(arena, body);
+  originalLF = StrView_NormalizeLf(&scratch, body);
 
   for (u32 i = 0; i < edits.Count; i++) {
-    edits.Data[i].OldText = StrView_NormalizeLf(arena, edits.Data[i].OldText);
-    edits.Data[i].NewText = StrView_NormalizeLf(arena, edits.Data[i].NewText);
+    edits.Data[i].OldText = StrView_NormalizeLf(&scratch, edits.Data[i].OldText);
+    edits.Data[i].NewText = StrView_NormalizeLf(&scratch, edits.Data[i].NewText);
   }
 
   {
     bool multi = edits.Count > 1;
-    Array<EditMatch> matches = Array_Make<EditMatch>(arena, edits.Count);
+    Array<EditMatch> matches = Array_Make<EditMatch>(&scratch, edits.Count);
     for (u32 i = 0; i < edits.Count; i++) {
       if (edits.Data[i].OldText.Length == 0) {
         Edit_AppendIndexedOldTextEmpty(err, path, i, multi);
@@ -435,20 +438,20 @@ bool EditExec(void* ctx, Arena* arena, StrView id, const ToolArgs* args,
       }
     }
 
-    StrView newLF = Edit_Apply(arena, originalLF, &edits, &matches);
+    StrView newLF = Edit_Apply(&scratch, originalLF, &edits, &matches);
     if (StrView_Eq(originalLF, newLF)) {
       Edit_AppendPathErr(err, "No changes made to ", path, ". The replacement produced identical content...");
       goto done;
     }
 
-    StrView writeBytes = crlf ? Edit_RestoreCrlf(arena, newLF) : newLF;
-    if (hasBom) writeBytes = Edit_PrependBom(arena, writeBytes);
-    if (File_WriteAll(arena, path, writeBytes) != FileIoResult::Success) {
+    StrView writeBytes = crlf ? Edit_RestoreCrlf(&scratch, newLF) : newLF;
+    if (hasBom) writeBytes = Edit_PrependBom(&scratch, writeBytes);
+    if (File_WriteAll(&scratch, path, writeBytes) != FileIoResult::Success) {
       Edit_AppendPathErr(err, "Could not edit file: ", path, ".");
       goto done;
     }
 
-    DiffResult d = Diff_Make(arena, path, originalLF, newLF, 4);
+    DiffResult d = Diff_Make(&scratch, path, originalLF, newLF, 4);
     StrBuf result = StrBuf_Make(arena, d.Display.Length + path.Length + 96);
     StrBuf_AppendCStr(&result, "Successfully replaced ");
     StrBuf_AppendU64(&result, edits.Count);
@@ -463,6 +466,7 @@ bool EditExec(void* ctx, Arena* arena, StrView id, const ToolArgs* args,
   }
 
 done:
+  ArenaRelease(&scratch);
   FileLock_Release(lock);
   return ok;
 }
