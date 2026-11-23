@@ -62,31 +62,23 @@ u32 CharWidth(u32 cp) {
 
 u32 Utf8Decode(StrView s, u32* i) {
   if (*i >= s.Length) return 0;
-  unsigned char c = (unsigned char)s.Data[*i];
-  u32 need, cp;
-  if (c < 0x80) {
-    *i += 1;
-    return c;
-  } else if ((c >> 5) == 0x6) {
-    need = 2;
-    cp = c & 0x1f;
-  } else if ((c >> 4) == 0xe) {
-    need = 3;
-    cp = c & 0x0f;
-  } else if ((c >> 3) == 0x1e) {
-    need = 4;
-    cp = c & 0x07;
-  } else {
+  const u8* p = (const u8*)s.Data + *i;
+  u32 length = StrView_Utf8SequenceLength(s, *i);
+  // Only the offending byte is consumed: whatever follows a bad lead byte is
+  // decoded on its own, so an ESC can never hide inside a "continuation".
+  if (!length) {
     *i += 1;
     return 0xFFFD;
   }
-  if (*i + need > s.Length) {
-    *i = s.Length;
-    return 0xFFFD;
+  *i += length;
+  switch (length) {
+    case 1: return p[0];
+    case 2: return ((u32)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+    case 3: return ((u32)(p[0] & 0x0F) << 12) | ((u32)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    default:
+      return ((u32)(p[0] & 0x07) << 18) | ((u32)(p[1] & 0x3F) << 12) |
+             ((u32)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
   }
-  for (u32 k = 1; k < need; k++) cp = (cp << 6) | ((unsigned char)s.Data[*i + k] & 0x3f);
-  *i += need;
-  return cp;
 }
 
 u32 TextWidth(StrView s) {

@@ -72,12 +72,16 @@ void Sanitize_Display(StrBuf* out, StrView in) {
       i = j;
       continue;
     }
-    if (cp < 0x20 || cp == 0x7F) {  // carriage return + other C0 / DEL: drop
+    // Carriage return, other C0, DEL, and C1 (U+009B is a one-character CSI): drop.
+    if (Utf8IsControl(cp)) {
       i = j;
       continue;
     }
 
-    StrBuf_Append(out, StrView{in.Data + i, j - i});  // keep the scalar verbatim
+    if (cp == 0xFFFD)
+      StrBuf_AppendUtf8(out, cp);  // malformed bytes never reach the terminal raw
+    else
+      StrBuf_Append(out, StrView{in.Data + i, j - i});  // keep the scalar verbatim
     col += CharWidth(cp);
     i = j;
   }

@@ -70,6 +70,9 @@ void Screen_BeginFrame(Screen* s) { memset(s->Back, 0, (u32)s->Cols * s->Rows * 
 
 u32 Screen_PutChar(Screen* s, u16 x, u16 y, u32 cp, Style st) {
   if (x >= s->Cols || y >= s->Rows) return 1;
+  // Every glyph reaches the terminal through here, including model and user text
+  // that never went through Sanitize_Display; a control would be obeyed, not shown.
+  if (cp != 0 && Utf8IsControl(cp)) cp = 0xFFFD;
   u32 w = CharCellWidth(cp);
   u32 idx = (u32)y * s->Cols + x;
   s->Back[idx].Ch = cp;

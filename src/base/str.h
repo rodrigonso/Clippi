@@ -101,6 +101,42 @@ inline StrView StrView_ClampUtf8(StrView value, u32 maxBytes) {
   return StrView{value.Data, length};
 }
 
+// Length of the well-formed UTF-8 sequence at `s.Data[i]` (i < s.Length), or 0
+// when the bytes there are not well-formed. Rejects stray continuation bytes,
+// overlong forms, the surrogate range, and anything above U+10FFFF.
+inline u32 StrView_Utf8SequenceLength(StrView s, u32 i) {
+  u8 lead = (u8)s.Data[i];
+  if (lead < 0x80) return 1;
+  u8 minNext = 0x80;
+  u8 maxNext = 0xBF;
+  u32 length;
+  if (lead >= 0xC2 && lead <= 0xDF) {
+    length = 2;
+  } else if (lead >= 0xE0 && lead <= 0xEF) {
+    length = 3;
+    if (lead == 0xE0)
+      minNext = 0xA0;  // reject overlong 3-byte forms
+    else if (lead == 0xED)
+      maxNext = 0x9F;  // reject U+D800..U+DFFF encoded as CESU-8
+  } else if (lead >= 0xF0 && lead <= 0xF4) {
+    length = 4;
+    if (lead == 0xF0)
+      minNext = 0x90;  // reject overlong 4-byte forms
+    else if (lead == 0xF4)
+      maxNext = 0x8F;  // reject above U+10FFFF
+  } else {
+    return 0;  // stray continuation byte, C0/C1 overlong, or F5..FF
+  }
+  if (s.Length - i < length) return 0;
+  u8 next = (u8)s.Data[i + 1];
+  if (next < minNext || next > maxNext) return 0;
+  for (u32 k = 2; k < length; k++) {
+    u8 cont = (u8)s.Data[i + k];
+    if (cont < 0x80 || cont > 0xBF) return 0;
+  }
+  return length;
+}
+
 inline bool StrView_EndsWithInsensitiveAscii(StrView value, StrView suffix) {
   if (suffix.Length > value.Length) return false;
   u32 offset = value.Length - suffix.Length;

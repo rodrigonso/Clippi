@@ -58,8 +58,11 @@ inline u32 CharCellWidth(u32 cp) {
 inline bool Utf8IsContinuation(char c) { return ((u8)c & 0xC0) == 0x80; }
 
 // Decode one UTF-8 scalar from `s` at *i (advancing it). Returns 0 at end and
-// 0xFFFD on malformed input.
+// 0xFFFD for each byte that does not start a well-formed sequence.
 u32 Utf8Decode(StrView s, u32* i);
+
+// C0, DEL, and C1: scalars a terminal acts on rather than displays.
+inline bool Utf8IsControl(u32 cp) { return cp < 0x20 || (cp >= 0x7F && cp <= 0x9F); }
 
 // Total display width of a UTF-8 string (sum of CharWidth).
 u32 TextWidth(StrView s);

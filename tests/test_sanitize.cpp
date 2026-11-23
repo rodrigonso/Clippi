@@ -48,6 +48,14 @@ void TestSanitize() {
       {"a\001\002b", "ab"},
       {"a\177b", "ab"},
       {"h\303\251llo", "h\303\251llo"},
+      // A bad lead byte must not swallow the ESC after it as a continuation.
+      {"ok\xC2\033[31mred", "ok\xEF\xBF\xBDred"},
+      {"\xC2\033]0;title\xC2\033\\Z", "\xEF\xBF\xBDZ"},
+      {"a\xE4\xB8\033[2Jb", "a\xEF\xBF\xBD\xEF\xBF\xBD" "b"},
+      // C1 controls, UTF-8 encoded (U+009B is CSI) or as a bare 8-bit byte.
+      {"\xC2\x9B" "31mX", "31mX"},
+      {"\x9B" "31mX", "\xEF\xBF\xBD" "31mX"},
+      {"\xEF\xBF\xBD", "\xEF\xBF\xBD"},
   };
   bool sanitized = true;
   for (u32 i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {

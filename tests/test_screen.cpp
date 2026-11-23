@@ -94,6 +94,18 @@ void TestScreen() {
   CHECK_ALL(!s.ForceRepaint,
             Screen_BackAt(&s, 0, 1).Ch == 0x4F60);
 
+  // Unsanitized text cannot smuggle a control to the terminal: ESC, U+009B (CSI),
+  // and an ESC hidden behind a bad lead byte all land as visible U+FFFD.
+  Screen_BeginFrame(&s);
+  Screen_PutText(&s, 0, 0, SVL("\x1b" "a\xc2\x9b" "b\xc2\x1b"), StyleDefault(), 10);
+  CHECK_ALL(Screen_BackAt(&s, 0, 0).Ch == 0xFFFD, Screen_BackAt(&s, 1, 0).Ch == 'a',
+            Screen_BackAt(&s, 2, 0).Ch == 0xFFFD, Screen_BackAt(&s, 3, 0).Ch == 'b',
+            Screen_BackAt(&s, 4, 0).Ch == 0xFFFD, Screen_BackAt(&s, 5, 0).Ch == 0xFFFD);
+  StrBuf_Clear(&cap.B);
+  Screen_Flush(&s);
+  StrView controlled = StrBuf_View(&cap.B);
+  CHECK_ALL(!StrView_Contains(controlled, "\x1b" "a"), !StrView_Contains(controlled, "\xc2\x9b"));
+
   // A narrower resize forces a full repaint flag.
   Screen_Resize(&s, 6, 2);
   CHECK(s.ForceRepaint);

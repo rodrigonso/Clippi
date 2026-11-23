@@ -424,8 +424,9 @@ not jump as a trailing blank appears and disappears.
 
 Deliberate divergences from pi:
 
-- **No OSC 8 hyperlinks.** `Screen` stores one scalar per cell and re-emits it
-  verbatim, so an escape sequence cannot live in the grid. Links always use
+- **No OSC 8 hyperlinks.** `Screen` stores one scalar per cell and replaces
+  control scalars (C0, DEL, C1) and malformed UTF-8 with U+FFFD, so an escape
+  sequence cannot live in the grid. Links always use
   pi's non-hyperlink fallback, `text` styled plus ` (url)` dim.
 - **No syntax highlighting**, which is also pi's behaviour for an unknown
   language tag, and **no LaTeX**.
