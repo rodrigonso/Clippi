@@ -14,7 +14,7 @@ Build and test through the repo scripts. They are thin wrappers around CMake:
 .\tools\build.ps1 -Test -TestArgs session,tools    # build + run named suites
 .\tools\build.ps1 -Test                           # full offline sweep
 .\tools\build.ps1 -CoreOnly -Examples -Test        # no networking dependencies
-.\tools\run.ps1 -- -p "summarize README.md"        # build, then run; Clippi flags after --
+.\build\clippi.exe -p "summarize README.md"       # run the built CLI
 ```
 
 Only Windows and macOS are supported. On macOS use `bash tools/build.sh --test`, or

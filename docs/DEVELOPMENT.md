@@ -62,17 +62,12 @@ The corresponding targets are `clippi`, `clippi_core`, `clippi_tests`, and
 `clippi_core_example`. One private object target shares CLI code with its
 tests; there is no hierarchy of component libraries or CPack configuration.
 
-`tools\run.ps1` builds incrementally and then launches the executable in your
-current directory:
+To build only the CLI and run it from your current directory:
 
 ```powershell
-.\tools\run.ps1                       # build, then start the TUI
-.\tools\run.ps1 -- -c                 # forward Clippi's own flags after --
-.\tools\run.ps1 -NoBuild --help       # skip the build, run what's there
+.\tools\build.ps1 -Target clippi
+.\build\clippi.exe -c                 # Clippi's own flags pass straight through
 ```
-
-Put `--` before Clippi's short options: without it PowerShell binds `-c` to
-`run.ps1`'s own `-Config`.
 
 ### Visual Studio
 
