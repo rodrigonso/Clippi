@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "app/memory.h"
 #include "base/arena.h"
 #include "check.h"
 #include "tools/tools.h"
@@ -10,7 +11,8 @@ namespace {
 
 StrView BuiltinLabel(StrView name) {
   Tool builtins[] = {ReadTool(), WriteTool(), EditTool(),  LsTool(),
-                     FindTool(), GrepTool(),  ShellTool(), AskUserTool()};
+                     FindTool(), GrepTool(),  ShellTool(), AskUserTool(),
+                     RememberTool(nullptr)};
   for (const Tool& tool : builtins)
     if (StrView_Eq(tool.Name, name)) return tool.Label;
   return {};
@@ -1239,6 +1241,13 @@ void TestLineModel() {
                  TextEq(StrBuf_View(&tool.View.Outcome), SV(askCases[i].Outcome)) && askMatch;
     }
     CHECK(askMatch);
+
+    AddTool(&summaries, SVL("remember"), SVL("remember"),
+            SVL("{\"note\":\"Build with tools/build.ps1\"}"));
+    CHECK(Finish(&summaries, SVL("remember"),
+                 SVL("Noted. The next dream will file it into the memory wiki.")));
+    CHECK(AnyRowHas(&a, &summaries,
+                    " \xe2\x96\xb8  Remember \"Build with tools/build.ps1\"  noted"));
 
     LineModel_AddTool(&summaries, SVL("unlabeled"), SVL("shell"), SVL("{\"command\":\"pwd\"}"));
     LineModel_AddTool(&summaries, SVL("relabeled"), SVL("grep"), SVL("{\"pattern\":\"q\"}"), 0,

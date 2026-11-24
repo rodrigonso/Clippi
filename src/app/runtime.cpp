@@ -43,6 +43,7 @@ AppExtension ShellDirectoryExtension_Make(ShellDirectoryExtension* state,
 
 void RuntimeAnnounceSession(InteractiveRuntime* rt, StrView projectKey,
                             DurableId sessionId) {
+  if (rt) rt->SessionGeneration++;
   if (!rt || !rt->Extensions) return;
   Arena scratch = ArenaCreate((usize)1 << 20);
   AppSessionContext session = {};
@@ -302,6 +303,8 @@ bool RuntimePersistSettings(InteractiveRuntime* rt) {
   settings.Rounded = rt->Rounded;
   settings.Memory = rt->MemoryEnabled;
   settings.DreamModel = rt->DreamModel;
+  settings.HasCacheIdleMinutes = rt->HasCacheIdleMinutes;
+  settings.CacheIdleMinutes = rt->CacheIdleMinutes;
   if (rt->Prompt) {
     settings.Skills = rt->Prompt->SettingsSkillPaths;
     settings.PromptTemplates = rt->Prompt->SettingsPromptTemplatePaths;

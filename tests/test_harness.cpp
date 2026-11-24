@@ -5451,6 +5451,63 @@ static void TestHookChain() {
   ArenaRelease(&arena);
 }
 
+static void TestHarnessIdleCompaction() {
+  Arena arena = ArenaCreate((usize)32 << 20);
+  MemoryRepository memory = {};
+  MemoryRepository_Init(&memory);
+  SessionRepository repository = MemoryRepository_AsRepository(&memory);
+  SessionLog log = {};
+  CHECK(SessionResult_IsOk(CreateSession(&repository, &arena, &log)));
+  ScriptStep steps[3] = {};
+  steps[0].Text = SVL("fold this turn answer");
+  steps[0].Stop = StopReason::Stop;
+  steps[1].Text = SVL("keep this turn answer");
+  steps[1].Stop = StopReason::Stop;
+  steps[2].Text = SVL("idle summary");
+  steps[2].Stop = StopReason::Stop;
+  ScriptProvider script = {steps, 3, 0};
+  AgentHarnessConfig config = AutoCompactConfig(&script, nullptr, 0, true, 1000000);
+  AgentHarness harness = {};
+  CHECK(SessionResult_IsOk(AgentHarness_Init(&harness, log, &config)));
+  CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("fold this turn"))));
+  CHECK(SessionResult_IsOk(AgentHarness_Run(&harness, SVL("keep this turn"))));
+  AgentHarnessWatch* watch = ArenaPushStruct(&arena, AgentHarnessWatch);
+  *watch = AgentHarnessWatch{};
+  CHECK(SessionResult_IsOk(AgentHarness_Watch(&harness, 16, watch)));
+
+  bool compacted = true;
+  CHECK(SessionResult_IsOk(AgentHarness_CompactIdle(&harness, &compacted)));
+  CHECK_ALL(!compacted, script.Index == 2, !harness.Running);
+  harness.Config.Compaction.Enabled = false;
+  harness.Config.Compaction.KeepRecentTokens = 20;
+  CHECK(SessionResult_IsOk(AgentHarness_CompactIdle(&harness, &compacted)));
+  CHECK_ALL(!compacted, script.Index == 2, watch->Count == 0);
+
+  harness.Config.Compaction.Enabled = true;
+  CHECK(SessionResult_IsOk(AgentHarness_CompactIdle(&harness, &compacted)));
+  SessionReduction snapshot = {};
+  CHECK(SessionResult_IsOk(AgentHarness_Snapshot(&arena, &harness, &snapshot)));
+  Array<Message> context = {};
+  CHECK(SessionResult_IsOk(
+      SessionReducer_Context(&arena, &snapshot, snapshot.HeadId, &context)));
+  CHECK(compacted);
+  CHECK(script.Index == 3);
+  CHECK(context.Count == 3);
+  CHECK(context.Count && context.Data[0].Content.Count &&
+        StrView_Contains(context.Data[0].Content.Data[0].Text, "idle summary"));
+  CHECK(ContextTextEq(&context, 1, Role::User, "keep this turn"));
+  CHECK(!MessagesMention(&context, "fold this turn"));
+  CHECK(watch->Count > 0);
+  u32 recordsAfterFold = snapshot.RecordCount;
+  CHECK(SessionResult_IsOk(AgentHarness_CompactIdle(&harness, &compacted)));
+  CHECK(SessionResult_IsOk(AgentHarness_Snapshot(&arena, &harness, &snapshot)));
+  CHECK_ALL(!compacted, script.Index == 3, snapshot.RecordCount == recordsAfterFold);
+  CHECK(SessionResult_IsOk(AgentHarness_WatchClose(watch)));
+  CHECK(SessionResult_IsOk(AgentHarness_Close(&harness)));
+  repository.Close(repository.Ctx);
+  ArenaRelease(&arena);
+}
+
 void TestHarness() {
   TestHookChain();
   TestHarnessReplayAndIncremental();
@@ -5477,5 +5534,6 @@ void TestHarness() {
   TestHarnessPerTurnHooks();
   TestHarnessCancellationAndBranches();
   TestHarnessAutoCompaction();
+  TestHarnessIdleCompaction();
   TestHarnessTurnLimit();
 }

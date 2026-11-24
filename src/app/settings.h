@@ -9,6 +9,8 @@
 #include "app/project_trust.h"
 #include "llm/types.h"
 
+constexpr u32 APP_SETTINGS_MAX_CACHE_IDLE_MINUTES = 24 * 60;
+
 struct AppSettings {
   StrView Provider;
   StrView Model;
@@ -28,6 +30,10 @@ struct AppSettings {
   // `--no-memory` and CLIPPI_NO_MEMORY override this for one run only.
   bool Memory = true;
   StrView DreamModel;
+  // Absent defers to the provider's PromptCacheIdleMinutes; zero disables
+  // cold-cache compaction and dreaming.
+  bool HasCacheIdleMinutes = false;
+  u32 CacheIdleMinutes = 0;
   Array<StrView> Skills;
   Array<StrView> PromptTemplates;
 };

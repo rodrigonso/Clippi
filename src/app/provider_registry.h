@@ -29,6 +29,9 @@ struct ProviderSpec {
   ProviderFactoryFn CreateProvider;
   ProviderModelFactoryFn CreateModel;
   ProviderListModelsFn ListModels;
+  // Idle time after which the vendor has surely evicted the prompt cache; an
+  // upper bound, since cold-cache work is wasted if the cache is still warm.
+  u32 PromptCacheIdleMinutes;
 };
 
 u32 ProviderRegistry_Count();

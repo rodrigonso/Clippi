@@ -209,6 +209,37 @@ static void MaybeCompactTuiSession(InteractiveRuntime* rt, Tui* tui) {
   ArenaRelease(&snapshotMem);
 }
 
+// The provider has surely dropped its prompt cache, so the next request pays
+// for the whole prefix anyway: folding history now costs no cache hits, and the
+// dream gets the session while it is fresh.
+static void RunColdCacheWork(InteractiveRuntime* rt, Tui* tui, const AppCommandUx* ux) {
+  Arena scratch = ArenaCreate((usize)1 << 20);
+  u32 minutes = RuntimeCacheIdleMinutes(rt);
+  bool compacted = false;
+  *Tui_Abort(tui) = 0;
+  SessionResult result = AgentHarness_CompactIdle(rt->Harness, &compacted);
+  if (!SessionResult_IsOk(result) && result.Status != SessionStatus::Cancelled) {
+    StrBuf message = StrBuf_Make(&scratch, result.Message.Length + 48);
+    StrBuf_AppendCStr(&message, "Idle compaction failed: ");
+    StrBuf_Append(&message, result.Message);
+    EmitCommandError(ux, StrBuf_View(&message));
+  } else if (compacted) {
+    StrBuf message = StrBuf_Make(&scratch, 128);
+    StrBuf_AppendCStr(&message, "Compacted older context after ");
+    StrBuf_AppendU64(&message, minutes);
+    StrBuf_AppendCStr(&message, minutes == 1 ? " minute" : " minutes");
+    StrBuf_AppendCStr(&message, " idle; the prompt cache had expired.");
+    EmitCommandNotice(ux, StrBuf_View(&message));
+  }
+  if (rt->Memory && rt->MemoryEnabled) {
+    if (Dream_SpawnBackground(&scratch, rt->WorkingDirectory))
+      EmitCommandNotice(ux, SVL("Dreaming in the background; /dream watch follows it."));
+    else
+      EmitCommandError(ux, SVL("Idle dreaming could not be started."));
+  }
+  ArenaRelease(&scratch);
+}
+
 static void RunTuiRepl(InteractiveRuntime* rt) {
   TuiOpts opts;
   opts.ModelName = rt->CurrentModel.Id;
@@ -267,10 +298,18 @@ static void RunTuiRepl(InteractiveRuntime* rt) {
   EmitPromptDiagnostics(rt->Prompt, &commandUx);
   StartUpdateCheck(rt, &commandUx);
   AppCommandHandlers handlers = RuntimeCommandHandlers(rt);
+  u64 coldDeadline = 0;
+  u64 coldGeneration = 0;
   for (;;) {
     MaybeCompactTuiSession(rt, &tui);
     TuiSubmission submission = {};
-    if (!Tui_WaitForSubmit(&tui, &submission)) break;
+    TuiWaitResult waited = Tui_WaitForSubmitUntil(&tui, &submission, coldDeadline);
+    if (waited == TuiWaitResult::Stopped) break;
+    if (waited == TuiWaitResult::Deadline) {
+      coldDeadline = 0;
+      if (coldGeneration == rt->SessionGeneration) RunColdCacheWork(rt, &tui, &commandUx);
+      continue;
+    }
     if (submission.Kind == TuiSubmissionKind::PermissionMode) {
       AgentPermissionMode mode =
           TuiBridge_FromTuiPermissionMode(submission.Permission);
@@ -306,6 +345,9 @@ static void RunTuiRepl(InteractiveRuntime* rt) {
     *Tui_Abort(&tui) = 0;
     if (!Tui_AcceptPrompt(&tui, submission.Text)) continue;
     SessionResult run = RunHarnessPrompt(rt->Harness, submission.Text);
+    u32 idleMinutes = RuntimeCacheIdleMinutes(rt);
+    coldDeadline = idleMinutes ? MonotonicMillis() + (u64)idleMinutes * 60000 : 0;
+    coldGeneration = rt->SessionGeneration;
     if (!SessionResult_IsOk(run))
       Tui_CommandError(&tui, run.Message);
     else if (run.Message.Length)
@@ -714,10 +756,13 @@ int main(int argc, char** argv) {
   // Empty under `--no-session`: the tool falls back to the OS temp directory.
   ShellToolContext shellContext = {};
   AskUserToolContext askContext = {};
+  MemoryExtension memory = {};
   Tool allTools[] = {ReadTool(),  WriteTool(), EditTool(),
                      LsTool(),    FindTool(),  GrepTool(),
-                     ShellTool(&shellContext), AskUserTool(&askContext)};
-  constexpr u32 kAllToolCount = sizeof(allTools) / sizeof(allTools[0]);
+                     ShellTool(&shellContext), AskUserTool(&askContext),
+                     RememberTool(&memory)};
+  u32 allToolCount = sizeof(allTools) / sizeof(allTools[0]);
+  if (!memoryAvailable || !selected.Settings.Memory) allToolCount--;
 
   ToolSelection toolSelection = {};
   toolSelection.Allow = toolAllow.Data;
@@ -726,23 +771,23 @@ int main(int argc, char** argv) {
   toolSelection.ExcludeCount = toolExclude.Count;
   toolSelection.NoTools = noTools;
   Array<StrView> unknownTools = {};
-  ToolSelect_UnknownNames(&arena, allTools, kAllToolCount, &toolSelection,
+  ToolSelect_UnknownNames(&arena, allTools, allToolCount, &toolSelection,
                           &unknownTools);
   if (unknownTools.Count) {
     for (u32 i = 0; i < unknownTools.Count; i++)
       fprintf(stderr, "error: unknown tool '%.*s'\n",
               (int)unknownTools.Data[i].Length, unknownTools.Data[i].Data);
     fprintf(stderr, "available tools:");
-    for (u32 i = 0; i < kAllToolCount; i++)
+    for (u32 i = 0; i < allToolCount; i++)
       fprintf(stderr, " %.*s", (int)allTools[i].Name.Length,
               allTools[i].Name.Data);
     fprintf(stderr, "\n");
     ArenaRelease(&arena);
     return 1;
   }
-  Tool tools[kAllToolCount];
+  Tool tools[sizeof(allTools) / sizeof(allTools[0])];
   u32 toolCount =
-      ToolSelect_Apply(allTools, kAllToolCount, &toolSelection, tools);
+      ToolSelect_Apply(allTools, allToolCount, &toolSelection, tools);
 
   PromptContextOptions promptOptions = {};
   promptOptions.WorkingDirectory = workingDirectory;
@@ -989,7 +1034,6 @@ int main(int argc, char** argv) {
   AppExtensions_Add(&extensions, &extension);
   extension = HookExtension_Make(&hookExtension);
   AppExtensions_Add(&extensions, &extension);
-  MemoryExtension memory = {};
   if (memoryAvailable) {
     MemoryExtension_Init(&memory, &harness, memoryStore, selected.Settings.Memory);
     extension = MemoryExtension_Make(&memory);
@@ -998,6 +1042,8 @@ int main(int argc, char** argv) {
   }
   runtime.MemoryEnabled = selected.Settings.Memory;
   runtime.DreamModel = selected.Settings.DreamModel;
+  runtime.HasCacheIdleMinutes = selected.Settings.HasCacheIdleMinutes;
+  runtime.CacheIdleMinutes = selected.Settings.CacheIdleMinutes;
   harness.Config.Hooks = AppExtensions_Hooks(&extensions);
   runtime.Extensions = &extensions;
   RuntimeAnnounceSession(&runtime, sessionInfo.ProjectKey, sessionInfo.SessionId);

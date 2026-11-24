@@ -131,6 +131,84 @@ void Shutdown(void* user) {
   ArenaRelease(&memory->Mem);
 }
 
+bool RememberExec(void* ctx, Arena* arena, StrView toolCallId, const ToolArgs* args,
+                  volatile i32*, const ToolUpdateSink*, ToolResult* out, StrBuf* err) {
+  MemoryExtension* memory = (MemoryExtension*)ctx;
+  StrView note = StrView_Trim(ToolArgs_GetStr(args, "note"));
+  if (!note.Length) {
+    StrBuf_AppendCStr(err, "missing 'note' argument");
+    return false;
+  }
+  if (note.Length > WIKI_NOTE_MAX_BYTES) {
+    StrBuf_AppendCStr(err, "'note' is limited to ");
+    StrBuf_AppendU64(err, WIKI_NOTE_MAX_BYTES);
+    StrBuf_AppendCStr(err, " bytes; keep it to one fact");
+    return false;
+  }
+  if (!memory || !Active(memory)) {
+    StrBuf_AppendCStr(err, "the memory wiki is off, so nothing was saved");
+    return false;
+  }
+  WikiJournalEntry entry = {};
+  entry.Kind = WikiJournalKind::Note;
+  entry.TimeMs = NowMillis();
+  entry.SessionId = memory->Session.SessionId;
+  entry.ToolCallId = toolCallId;
+  entry.Text = note;
+  if (!WikiJournal_Append(arena, memory->Location.Journal, &entry)) {
+    StrBuf_AppendCStr(err, "the note could not be saved to the memory journal");
+    return false;
+  }
+  out->Content = Array_Make<Content>(arena, 1);
+  Array_Push(&out->Content,
+             Content_Text(SVL("Noted. The next dream will file it into the memory wiki.")));
+  return true;
+}
+
+bool RememberDescribePermission(void*, Arena* arena, const ToolArgs* args,
+                                const ToolPermissionScope*, ToolPermissionInfo* out,
+                                StrBuf* err) {
+  StrView note = StrView_Trim(ToolArgs_GetStr(args, "note"));
+  if (!note.Length) {
+    StrBuf_AppendCStr(err, "missing 'note' argument");
+    return false;
+  }
+  StrBuf action = StrBuf_Make(arena, note.Length + 32);
+  StrBuf_AppendCStr(&action, "Remember for the memory wiki: ");
+  StrBuf_Append(&action, note);
+  out->Action = StrBuf_View(&action);
+  out->GrantKey = SVL("remember");
+  // Same footing as a page write, which a note becomes once a dream files it.
+  out->AutoAllow = true;
+  return true;
+}
+
+constexpr StrView kRememberPromptGuidelines[] = {
+    SVL("Use remember to note a fact a future session would need -- a user "
+        "preference or correction, a decision, a non-obvious project fact -- "
+        "when writing a wiki page now would interrupt the task. Skip what the "
+        "code or docs already say.")};
+
+}
+
+Tool RememberTool(MemoryExtension* memory) {
+  Tool t = {};
+  t.Name = SVL("remember");
+  t.Label = SVL("Remember");
+  t.Description = SVL(
+      "Save one durable fact for the memory wiki; the next dream files it into "
+      "the right page.");
+  t.PromptSnippet = SVL("Note a durable fact for the memory wiki");
+  Tool_SetPromptGuidelines(&t, kRememberPromptGuidelines);
+  t.ParamsJsonSchema = SVL(
+      "{\"type\":\"object\",\"properties\":{\"note\":{\"type\":\"string\","
+      "\"description\":\"One self-contained fact in a sentence or two\"}},"
+      "\"required\":[\"note\"],\"additionalProperties\":false}");
+  t.PermissionEffect = ToolPermissionEffect::Sensitive;
+  t.DescribePermission = RememberDescribePermission;
+  t.Ctx = memory;
+  t.Execute = RememberExec;
+  return t;
 }
 
 void MemoryExtension_Init(MemoryExtension* memory, AgentHarness* harness,

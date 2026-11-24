@@ -316,6 +316,10 @@ bool Tui_CompactSessionMemory(Tui* t, const Message* messages, u32 count);
 void Tui_FeedInput(Tui* t, const char* data, u32 n);
 
 bool Tui_WaitForSubmit(Tui* t, TuiSubmission* out);
+enum class TuiWaitResult : u8 { Submitted, Deadline, Stopped };
+// `deadlineMs` is MonotonicMillis() time, zero for none. Past the deadline it
+// still waits while the user is composing or a dialog is open.
+TuiWaitResult Tui_WaitForSubmitUntil(Tui* t, TuiSubmission* out, u64 deadlineMs);
 
 bool Tui_SubmissionPending(Tui* t, u32 waitMs);
 

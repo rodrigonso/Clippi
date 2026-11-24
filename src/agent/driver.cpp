@@ -673,6 +673,32 @@ u32 ActiveContextWindow(const AgentHarness* harness, const AgentRunState* run) {
 }
 
 // The cut point always comes from the durable branch, which is what compaction folds.
+bool ContextTokensAt(AgentHarness* harness, DurableId head, const AgentRunState* run,
+                     const SessionReduction* reduction, u32* outTokens) {
+  if (run && run->HasContext) {
+    // A hook-supplied context breaks the reported-usage anchor's invariant; only the
+    // byte estimate is meaningful.
+    *outTokens = AgentCompaction_EstimateContextTokens(run->Context.Data, run->Context.Count);
+    return true;
+  }
+  Array<Message> messages = {};
+  if (!SessionResult_IsOk(
+          SessionReducer_Context(&harness->Work, reduction, head, &messages)))
+    return false;
+  *outTokens = AgentCompaction_ContextTokens(messages.Data, messages.Count);
+  return true;
+}
+
+bool SelectBranchCut(AgentHarness* harness, DurableId head, const SessionReduction* reduction,
+                     u32 keepRecentTokens, AgentCompactionCut* outCut) {
+  Array<const SessionRecord*> branch = {};
+  if (!SessionResult_IsOk(
+          SessionReducer_Ancestry(reduction, &harness->Work, head, &branch)))
+    return false;
+  return AgentCompaction_SelectCutPoint(branch.Data, branch.Count, keepRecentTokens,
+                                        outCut);
+}
+
 bool ShouldAutoCompact(AgentHarness* harness, DurableId head, const AgentRunState* run,
                        AgentCompactionCut* outCut) {
   const AgentCompactionPolicy* policy = &harness->Config.Compaction;
@@ -681,25 +707,10 @@ bool ShouldAutoCompact(AgentHarness* harness, DurableId head, const AgentRunStat
 
   SessionReduction reduction = AgentHarness_ReduceSnapshot(harness);
   u32 tokens = 0;
-  if (run && run->HasContext) {
-    // A hook-supplied context breaks the reported-usage anchor's invariant; only the
-    // byte estimate is meaningful.
-    tokens = AgentCompaction_EstimateContextTokens(run->Context.Data, run->Context.Count);
-  } else {
-    Array<Message> messages = {};
-    if (!SessionResult_IsOk(
-            SessionReducer_Context(&harness->Work, &reduction, head, &messages)))
-      return false;
-    tokens = AgentCompaction_ContextTokens(messages.Data, messages.Count);
-  }
-  if (!AgentCompaction_ShouldCompact(policy, window, tokens)) return false;
-
-  Array<const SessionRecord*> branch = {};
-  if (!SessionResult_IsOk(
-          SessionReducer_Ancestry(&reduction, &harness->Work, head, &branch)))
+  if (!ContextTokensAt(harness, head, run, &reduction, &tokens) ||
+      !AgentCompaction_ShouldCompact(policy, window, tokens))
     return false;
-  return AgentCompaction_SelectCutPoint(branch.Data, branch.Count,
-                                        policy->KeepRecentTokens, outCut);
+  return SelectBranchCut(harness, head, &reduction, policy->KeepRecentTokens, outCut);
 }
 
 SessionResult BuildTurnContext(AgentHarness* harness, DurableId head, const Message* assistant,
@@ -1005,11 +1016,9 @@ SessionResult AgentDriver_Run(AgentHarness* harness, StrView prompt) {
   return result;
 }
 
-SessionResult AgentDriver_Compact(AgentHarness* harness, StrView instructions) {
+static SessionResult CompactSpan(AgentHarness* harness, DurableId head, DurableId base,
+                                 DurableId through, StrView instructions) {
   AgentHarness_PublishAgentStart(harness, AgentTurnKind::Compaction);
-  SessionReduction initial = AgentHarness_ReduceSnapshot(harness);
-  DurableId head = initial.HeadId;
-
   SessionResult result = SessionResult_Ok();
   if (harness->Config.Hooks.BeforeCompaction) {
     result = AgentHook_Failure(
@@ -1022,9 +1031,7 @@ SessionResult AgentDriver_Compact(AgentHarness* harness, StrView instructions) {
 
   if (SessionResult_IsOk(result)) {
     CompactionTurnResult compaction = {};
-    result = PerformCompaction(
-        harness, head, initial.RecordCount ? initial.Records[0].EntryId : DurableId{},
-        head, instructions, &compaction);
+    result = PerformCompaction(harness, head, base, through, instructions, &compaction);
     outcome = compaction.Outcome;
     error = compaction.Error;
   } else {
@@ -1044,4 +1051,56 @@ SessionResult AgentDriver_Compact(AgentHarness* harness, StrView instructions) {
     }
   }
   return result;
+}
+
+SessionResult AgentDriver_Compact(AgentHarness* harness, StrView instructions) {
+  SessionReduction initial = AgentHarness_ReduceSnapshot(harness);
+  return CompactSpan(harness, initial.HeadId,
+                     initial.RecordCount ? initial.Records[0].EntryId : DurableId{},
+                     initial.HeadId, instructions);
+}
+
+// A cut ending at or before an earlier compaction's fold point would only
+// re-summarize that summary and shrink nothing.
+static bool CutAdvancesPastFold(const Array<const SessionRecord*>* branch, DurableId through) {
+  u32 cutAt = branch->Count;
+  u32 foldedThrough = 0;
+  bool folded = false;
+  for (u32 i = 0; i < branch->Count; i++) {
+    const SessionRecord* record = branch->Data[i];
+    if (!record) continue;
+    if (DurableId_Eq(record->EntryId, through)) cutAt = i;
+    if (record->Kind != SessionRecordKind::Compaction) continue;
+    for (u32 j = 0; j < i; j++) {
+      if (!branch->Data[j] ||
+          !DurableId_Eq(branch->Data[j]->EntryId, record->CompactionEntry.ThroughEntryId))
+        continue;
+      if (!folded || j > foldedThrough) foldedThrough = j;
+      folded = true;
+    }
+  }
+  return cutAt < branch->Count && (!folded || cutAt > foldedThrough);
+}
+
+// Unlike the threshold trigger, this ignores the window: it runs only when the
+// prompt cache is already cold, so rewriting the prefix costs nothing extra.
+SessionResult AgentDriver_CompactIdle(AgentHarness* harness, bool* outStarted) {
+  *outStarted = false;
+  const AgentCompactionPolicy* policy = &harness->Config.Compaction;
+  if (!AgentCompactionPolicy_IsValid(policy)) return SessionResult_Ok();
+  SessionReduction reduction = AgentHarness_ReduceSnapshot(harness);
+  u32 tokens = 0;
+  Array<const SessionRecord*> branch = {};
+  AgentCompactionCut cut = {};
+  if (!ContextTokensAt(harness, reduction.HeadId, nullptr, &reduction, &tokens) ||
+      tokens <= policy->KeepRecentTokens ||
+      !SessionResult_IsOk(
+          SessionReducer_Ancestry(&reduction, &harness->Work, reduction.HeadId, &branch)) ||
+      !AgentCompaction_SelectCutPoint(branch.Data, branch.Count, policy->KeepRecentTokens,
+                                      &cut) ||
+      !CutAdvancesPastFold(&branch, cut.ThroughEntryId))
+    return SessionResult_Ok();
+  *outStarted = true;
+  return CompactSpan(harness, reduction.HeadId, cut.BaseEntryId, cut.ThroughEntryId,
+                     StrView{});
 }

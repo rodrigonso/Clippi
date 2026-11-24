@@ -134,7 +134,7 @@ void TestSettings() {
           "\"permissionMode\":\"ask\",\"yoloAcknowledged\":true,"
           "\"defaultProjectTrust\":\"never\",\"effort\":\"high\","
           "\"contextWindow\":1000000,\"rounded\":false,"
-          "\"memory\":false,\"dreamModel\":\"cheap-model\","
+          "\"memory\":false,\"dreamModel\":\"cheap-model\",\"cacheIdleMinutes\":0,"
           "\"compaction\":{\"enabled\":false,\"reserveTokens\":4096,"
           "\"keepRecentTokens\":8192},\"retry\":{\"enabled\":false,"
           "\"maxRetries\":5,\"baseDelayMs\":250,\"maxDelayMs\":3000},"
@@ -151,6 +151,7 @@ void TestSettings() {
             loaded.PermissionMode == AgentPermissionMode::Ask,
             loaded.YoloAcknowledged, !loaded.Rounded, !loaded.Memory,
             StrView_EqCStr(loaded.DreamModel, "cheap-model"),
+            loaded.HasCacheIdleMinutes, loaded.CacheIdleMinutes == 0,
             loaded.DefaultTrust == DefaultProjectTrust::Never,
             loaded.Profile.Effort == ModelEffort::High,
             loaded.Profile.ContextWindow == 1000000);
@@ -179,7 +180,7 @@ void TestSettings() {
           "\"compaction\":{\"enabled\":false}}")));
   CHECK(AppSettings_Load(&a, SV(path), &loaded) ==
         AppSettingsLoadResult::Success);
-  CHECK_ALL(!loaded.Compaction.Enabled,
+  CHECK_ALL(!loaded.Compaction.Enabled, !loaded.HasCacheIdleMinutes,
             loaded.Compaction.ReserveTokens ==
                 AGENT_COMPACTION_DEFAULT_RESERVE_TOKENS,
             loaded.Compaction.KeepRecentTokens ==
@@ -190,6 +191,15 @@ void TestSettings() {
       SVL("{\"provider\":\"anthropic\",\"model\":\"bad\",\"compaction\":8}")));
   CHECK(AppSettings_Load(&a, SV(path), &loaded) ==
         AppSettingsLoadResult::Malformed);
+  const char* badIdle[] = {"-1", "1441", "2.5", "\"10\""};
+  for (const char* value : badIdle) {
+    StrBuf json = StrBuf_Make(&a, 96);
+    StrBuf_AppendCStr(&json, "{\"provider\":\"openrouter\",\"model\":\"m\",\"cacheIdleMinutes\":");
+    StrBuf_AppendCStr(&json, value);
+    StrBuf_AppendChar(&json, '}');
+    CHECK(ConfigFile_WriteAtomic(&a, SV(path), StrBuf_View(&json)));
+    CHECK(AppSettings_Load(&a, SV(path), &loaded) == AppSettingsLoadResult::Malformed);
+  }
   CHECK(ConfigFile_WriteAtomic(
       &a, SV(path),
       SVL("{\"provider\":\"anthropic\",\"model\":\"bad\","

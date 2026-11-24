@@ -27,3 +27,7 @@ void MemoryExtension_Init(MemoryExtension* memory, AgentHarness* harness,
                           StrView store, bool enabled);
 AppExtension MemoryExtension_Make(MemoryExtension* memory);
 void MemoryExtension_SetEnabled(MemoryExtension* memory, bool enabled);
+
+// Register only when memory is on at startup: with it off the tool list, like
+// the prompt, must match pi's. Refuses at call time if memory is off by then.
+Tool RememberTool(MemoryExtension* memory);

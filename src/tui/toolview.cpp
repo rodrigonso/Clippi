@@ -361,6 +361,13 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
     return;
   }
 
+  if (Eq(name, "remember")) {
+    view->Kind = ToolViewKind::Remember;
+    view->Marker = SVL("*");
+    AppendQuoted(scratch, &view->Detail, Json_GetStr(args, "note"));
+    return;
+  }
+
   InitUnknown(scratch, view, argsJson);
 }
 
@@ -484,6 +491,9 @@ void ToolView_Finish(ToolView* view, StrView result, bool isError) {
     } break;
     case ToolViewKind::Ask:
       AppendAskOutcome(&view->Outcome, result, view->CountHint != 0);
+      break;
+    case ToolViewKind::Remember:
+      StrBuf_AppendCStr(&view->Outcome, "noted");
       break;
     case ToolViewKind::Unknown:
       StrBuf_AppendCStr(&view->Outcome, "completed");

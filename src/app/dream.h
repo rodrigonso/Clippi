@@ -147,6 +147,7 @@ struct DreamStatus {
   bool HasLastDream;
   WikiJournalEntry LastDream;
   u32 PendingSessions;
+  u32 PendingNotes;
   u32 Snapshots;
 };
 

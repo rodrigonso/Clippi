@@ -2287,6 +2287,39 @@ bool Tui_WaitForSubmit(Tui* t, TuiSubmission* out) {
   }
 }
 
+TuiWaitResult Tui_WaitForSubmitUntil(Tui* t, TuiSubmission* out, u64 deadlineMs) {
+  const u32 kDeferMs = 5000;
+  Mutex_Lock(&t->Lock);
+  for (;;) {
+    if (t->Quit || t->Stop) {
+      Mutex_Unlock(&t->Lock);
+      return TuiWaitResult::Stopped;
+    }
+    if (QPop(t, out)) {
+      Mutex_Unlock(&t->Lock);
+      return TuiWaitResult::Submitted;
+    }
+    if (!deadlineMs) {
+      Cond_Wait(&t->SubmitCv, &t->Lock);
+      continue;
+    }
+    u64 now = MonotonicMillis();
+    if (now >= deadlineMs) {
+      // A draft or open dialog means the user is back; idle work would make them wait.
+      if (LineEdit_Empty(&t->Edit) && t->ModalKind == TuiModalKind::None &&
+          !t->AgentRunning && !t->OperationActive) {
+        Mutex_Unlock(&t->Lock);
+        return TuiWaitResult::Deadline;
+      }
+      Cond_WaitTimeout(&t->SubmitCv, &t->Lock, kDeferMs);
+      continue;
+    }
+    u64 remaining = deadlineMs - now;
+    Cond_WaitTimeout(&t->SubmitCv, &t->Lock,
+                     remaining > 0xffffffffull ? 0xffffffffu : (u32)remaining);
+  }
+}
+
 bool Tui_SubmissionPending(Tui* t, u32 waitMs) {
   Mutex_Lock(&t->Lock);
   bool pending = t->QCount || t->Quit || t->Stop;

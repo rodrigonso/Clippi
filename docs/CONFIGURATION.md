@@ -190,6 +190,31 @@ optional one-shot instructions — `/compact keep only the API decisions` — wh
 are appended to the summarization prompt for that compaction only. They are
 never persisted and never applied to automatic compaction.
 
+### Idle compaction
+
+Providers evict their prompt cache after a few minutes without requests, and
+the next request then pays for the whole prefix anyway. So when the TUI has
+been idle that long after a prompt, Clippi compacts while you are away: it
+folds everything beyond `keepRecentTokens`, exactly as automatic compaction
+would, and leaves smaller sessions alone. With the memory wiki on it also
+starts a background dream (see [MEMORY.md](MEMORY.md)). This is a deliberate
+divergence from pi, which compacts only near the context limit.
+
+It happens at most once per idle stretch, only in the TUI, never while a draft
+is in the composer or a dialog is open, and never for a session you switched
+away from. Interrupt it like any turn. The wait comes from the provider (10
+minutes for OpenRouter and ChatGPT, the upper end of OpenAI's documented
+eviction window); override it, or turn the feature off with `0`:
+
+```json
+{
+  "cacheIdleMinutes": 10
+}
+```
+
+The value is whole minutes from 0 to 1440. `compaction.enabled: false` turns
+off idle compaction too, but not idle dreaming.
+
 ## Retries
 
 Provider requests that fail with a retryable error are retried by the agent

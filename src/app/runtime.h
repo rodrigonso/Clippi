@@ -81,9 +81,19 @@ struct InteractiveRuntime {
   // The persisted setting, which a run-level override leaves untouched.
   bool MemoryEnabled = true;
   StrView DreamModel;
+  bool HasCacheIdleMinutes = false;
+  u32 CacheIdleMinutes = 0;
+  // Bumped by RuntimeAnnounceSession, so idle work armed for one session never
+  // fires on the next.
+  u64 SessionGeneration = 0;
 };
 
 StrView RuntimeMemoryStore(const InteractiveRuntime* rt, bool enabled);
+
+inline u32 RuntimeCacheIdleMinutes(const InteractiveRuntime* rt) {
+  if (rt->HasCacheIdleMinutes) return rt->CacheIdleMinutes;
+  return rt->Spec ? rt->Spec->PromptCacheIdleMinutes : 0;
+}
 
 bool RuntimeRebuildPrompt(InteractiveRuntime* rt, StrBuf* error);
 

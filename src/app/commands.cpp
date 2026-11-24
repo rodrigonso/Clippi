@@ -780,6 +780,8 @@ static AppCommandHandlerResult HandleReloadCommand(
   bool rounded = rt->Rounded;
   bool memory = rt->MemoryEnabled;
   StrView dreamModel = rt->DreamModel;
+  bool hasCacheIdleMinutes = rt->HasCacheIdleMinutes;
+  u32 cacheIdleMinutes = rt->CacheIdleMinutes;
   AppSettings settings = {};
   AppSettingsLoadResult settingsResult =
       AppSettings_Load(&scratch, rt->SettingsPath, &settings);
@@ -795,6 +797,8 @@ static AppCommandHandlerResult HandleReloadCommand(
     rounded = settings.Rounded;
     memory = settings.Memory;
     dreamModel = settings.DreamModel;
+    hasCacheIdleMinutes = settings.HasCacheIdleMinutes;
+    cacheIdleMinutes = settings.CacheIdleMinutes;
   } else if (settingsResult == AppSettingsLoadResult::Malformed ||
              settingsResult == AppSettingsLoadResult::ReadFailure) {
     StrView message =
@@ -865,6 +869,8 @@ static AppCommandHandlerResult HandleReloadCommand(
   rt->Rounded = rounded;
   rt->MemoryEnabled = memory;
   rt->DreamModel = dreamModel.Length ? StrView_Dup(rt->Mem, dreamModel) : StrView{};
+  rt->HasCacheIdleMinutes = hasCacheIdleMinutes;
+  rt->CacheIdleMinutes = cacheIdleMinutes;
   MemoryExtension_SetEnabled(rt->Memory, memory);
   if (rt->TuiView) {
     Tui_SetPermissionMode(rt->TuiView,

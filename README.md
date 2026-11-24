@@ -26,7 +26,8 @@ an agent at all.
 - **Full-screen terminal UI** with markdown rendering, a multi-line editor,
   mid-turn steering, and a plain mode for pipes and scripts.
 - **Eight built-in tools:** `read`, `write`, `edit`, `ls`, `find`, `grep`,
-  `shell`, and `ask_user`. Tool calls in a turn run in parallel.
+  `shell`, and `ask_user`, plus `remember` while the memory wiki is on. Tool
+  calls in a turn run in parallel.
 - **OpenRouter and ChatGPT.** Sign in through the browser or use an API key,
   then pick any model from the provider's live catalog.
 - **Durable, branchable sessions** with resume, fork, and automatic compaction.
@@ -35,7 +36,8 @@ an agent at all.
 - **Project context:** `AGENTS.md` / `CLAUDE.md`, [Agent Skills](https://agentskills.io),
   and prompt templates.
 - **Memory wiki:** a per-repository knowledge base that carries what the agent
-  learned from one session to the next.
+  learned from one session to the next, consolidated automatically while you
+  are away.
 - **Embeddable core SDK** with no third-party dependencies.
 
 ## Install

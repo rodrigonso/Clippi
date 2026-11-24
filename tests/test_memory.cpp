@@ -681,6 +681,129 @@ void TestDreamMessagesFromLiveLog(Arena* a, StrView root) {
   JsonlRepository_Destroy(&writerStore);
 }
 
+ToolArgs JsonArgs(Arena* a, StrView json) {
+  ToolArgs args = {};
+  args.Json = json;
+  args.Root = Json_ParseCopy(a, json);
+  return args;
+}
+
+ToolArgs NoteArgs(Arena* a, StrView note) {
+  StrBuf json = StrBuf_Make(a, note.Length + 16);
+  StrBuf_AppendCStr(&json, "{\"note\":");
+  Json_WriteString(&json, note);
+  StrBuf_AppendChar(&json, '}');
+  return JsonArgs(a, StrBuf_View(&json));
+}
+
+void TestRememberTool(Arena* a, StrView root) {
+  StrView work = Fs_Join(a, root, SVL("remember-work"));
+  CHECK(Fs_MkdirP(a, work));
+  MemoryExtension memory = {};
+  Tool tool = RememberTool(&memory);
+  MemoryExtension_Init(&memory, nullptr, Fs_Join(a, root, SVL("remember-store")), true);
+  AppExtension extension = MemoryExtension_Make(&memory);
+  AppSessionContext session = {};
+  session.SessionId = SVL("remember-session");
+  session.ProjectKey = SVL("remember-key");
+  session.WorkingDirectory = work;
+  extension.SessionChanged(&memory, &session);
+
+  ToolArgs args = NoteArgs(a, SVL("  The user builds with tools/build.ps1, never raw CMake.\n"));
+  ToolResult result = {};
+  StrBuf err = StrBuf_Make(a, 128);
+  CHECK(tool.Execute(tool.Ctx, a, SVL("call-1"), &args, nullptr, nullptr, &result, &err));
+  Array<WikiJournalEntry> entries = Array_Make<WikiJournalEntry>(a, 4);
+  u64 end = 0;
+  WikiJournal_Read(a, memory.Location.Journal, 0, &entries, &end);
+  CHECK(entries.Count == 1);
+  if (entries.Count == 1)
+    CHECK_ALL(entries.Data[0].Kind == WikiJournalKind::Note,
+              StrView_EqCStr(entries.Data[0].Text,
+                             "The user builds with tools/build.ps1, never raw CMake."),
+              StrView_EqCStr(entries.Data[0].SessionId, "remember-session"),
+              StrView_EqCStr(entries.Data[0].ToolCallId, "call-1"));
+
+  ToolPermissionInfo info = {};
+  CHECK(tool.DescribePermission(tool.Ctx, a, &args, nullptr, &info, &err));
+  CHECK_ALL(info.AutoAllow, StrView_EqCStr(info.GrantKey, "remember"),
+            StrView_Contains(info.Action, "tools/build.ps1"));
+
+  StrBuf tooLong = StrBuf_Make(a, WIKI_NOTE_MAX_BYTES + 2);
+  for (u32 i = 0; i <= WIKI_NOTE_MAX_BYTES; i++) StrBuf_AppendChar(&tooLong, 'x');
+  ToolArgs longArgs = NoteArgs(a, StrBuf_View(&tooLong));
+  ToolArgs emptyArgs = NoteArgs(a, SVL("  "));
+  StrBuf longErr = StrBuf_Make(a, 128);
+  StrBuf emptyErr = StrBuf_Make(a, 128);
+  CHECK(!tool.Execute(tool.Ctx, a, SVL("c2"), &longArgs, nullptr, nullptr, &result, &longErr));
+  CHECK(!tool.Execute(tool.Ctx, a, SVL("c3"), &emptyArgs, nullptr, nullptr, &result, &emptyErr));
+  MemoryExtension_SetEnabled(&memory, false);
+  StrView offNote = SVL("{\"note\":\"x\"}");
+  ToolArgs offArgs = JsonArgs(a, offNote);
+  StrBuf offErr = StrBuf_Make(a, 128);
+  CHECK(!tool.Execute(tool.Ctx, a, SVL("c4"), &offArgs, nullptr, nullptr, &result, &offErr));
+  CHECK_ALL(StrView_Contains(StrBuf_View(&longErr), "limited to"),
+            StrView_Contains(StrBuf_View(&emptyErr), "missing 'note'"),
+            StrView_Contains(StrBuf_View(&offErr), "memory wiki is off"),
+            CountJournal(a, memory.Location.Journal, WikiJournalKind::Note) == 1);
+  extension.Shutdown(&memory);
+}
+
+void TestDreamNotes(Arena* a, StrView root) {
+  StrView work = Fs_Join(a, root, SVL("notes-work"));
+  CHECK(Fs_MkdirP(a, work));
+  WikiLocation location = {};
+  CHECK(Wiki_Locate(a, Fs_Join(a, root, SVL("notes-store")), work, &location));
+  WikiJournalEntry note = {};
+  note.Kind = WikiJournalKind::Note;
+  note.TimeMs = NowMillis();
+  note.Text = SVL("Releases are drafts only;\nnever publish from CI.");
+  CHECK(WikiJournal_Append(a, location.Journal, &note));
+
+  DreamStatus status = {};
+  Dream_ReadStatus(a, &location, &status);
+  CHECK(status.PendingNotes == 1);
+
+  MemoryRepository memory = {};
+  MemoryRepository_Init(&memory);
+  SessionRepository sessions = MemoryRepository_AsRepository(&memory);
+  ScriptStep steps[1] = {};
+  steps[0].Text = SVL("Filed the release note.");
+  steps[0].Stop = StopReason::Stop;
+  ScriptProvider script = {steps, 1, 0};
+  DreamRun run = {};
+  run.Location = location;
+  run.Sources = &sessions;
+  run.Sessions = &sessions;
+  run.ProviderImpl = ScriptProvider_Make(&script);
+  run.ModelInfo.Id = SVL("script");
+  run.ModelInfo.Provider = SVL("script");
+  run.SystemPrompt = SVL("dream");
+  run.NowMs = NowMillis();
+
+  DreamResult result = {};
+  Dream_Execute(a, &run, &result);
+  CHECK_ALL(result.Outcome == DreamOutcome::Dreamed, result.Digests == 0, script.Index == 1);
+  bool running = true;
+  DreamProgress progress = {};
+  CHECK(Dream_ReadProgress(a, &location, &running, &progress));
+  Array<Message> messages = {};
+  CHECK(SessionResult_IsOk(Dream_ReadMessages(a, &sessions, &progress, &messages)));
+  CHECK(messages.Count > 0 && messages.Data[0].Content.Count > 0);
+  if (messages.Count > 0 && messages.Data[0].Content.Count > 0)
+    CHECK(StrView_Contains(messages.Data[0].Content.Data[0].Text,
+                           "Remembered notes:\n- Releases are drafts only; never publish "
+                           "from CI.\n"));
+
+  Dream_ReadStatus(a, &location, &status);
+  DreamResult again = {};
+  run.NowMs += 1000;
+  Dream_Execute(a, &run, &again);
+  CHECK_ALL(status.PendingNotes == 0, again.Outcome == DreamOutcome::NothingToDo,
+            script.Index == 1);
+  MemoryRepository_Destroy(&memory);
+}
+
 void TestDreamWatchState() {
   const u64 since = 1000;
   DreamProgress earlier = {};
@@ -718,9 +841,11 @@ void TestMemory() {
   TestLintAndCatalog(&arena, root);
   TestPromptBlock(&arena, root);
   TestMemoryExtension(&arena, root);
+  TestRememberTool(&arena, root);
   TestDigest(&arena);
   TestDreamState(&arena, root);
   TestDreamExecute(&arena, root);
+  TestDreamNotes(&arena, root);
   TestDreamMessagesFromLiveLog(&arena, root);
   TestDreamWatchState();
   CHECK(Fs_RemoveTree(&arena, root));

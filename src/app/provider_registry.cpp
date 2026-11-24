@@ -48,6 +48,7 @@ const ProviderSpec PROVIDERS[] = {
         CreateResponsesProvider,
         CreateResponsesModel,
         ListResponsesModels,
+        10,
     },
     {
         SVL("openai-codex"),
@@ -59,6 +60,7 @@ const ProviderSpec PROVIDERS[] = {
         CreateResponsesProvider,
         CreateResponsesModel,
         ListResponsesModels,
+        10,
     },
 };
 

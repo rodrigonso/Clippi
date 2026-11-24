@@ -7,6 +7,10 @@ SessionResult AgentDriver_Run(AgentHarness* harness, StrView prompt);
 // `instructions` is never persisted; it applies to this compaction only.
 SessionResult AgentDriver_Compact(AgentHarness* harness, StrView instructions);
 
+// Folds history down to the keep-recent budget; `outStarted` is false when
+// there was not more than that to fold, in which case nothing is published.
+SessionResult AgentDriver_CompactIdle(AgentHarness* harness, bool* outStarted);
+
 bool AgentDriver_ReviewPermission(
     void* user, Arena* arena, const AgentPermissionReviewRequest* request,
     volatile i32* abort, AgentPermissionReviewResult* out);

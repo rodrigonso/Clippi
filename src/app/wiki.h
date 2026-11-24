@@ -102,7 +102,9 @@ void Wiki_AppendPromptBlock(Arena* arena, StrBuf* out, const Wiki* wiki,
                             StrView pagesDir, bool writable,
                             WikiCatalogStats* stats);
 
-enum class WikiJournalKind : u8 { Unknown, Session, Page, Dream };
+enum class WikiJournalKind : u8 { Unknown, Session, Page, Dream, Note };
+
+constexpr u32 WIKI_NOTE_MAX_BYTES = 2000;
 
 struct WikiJournalEntry {
   WikiJournalKind Kind;
@@ -114,6 +116,7 @@ struct WikiJournalEntry {
   StrView Slug;
   StrView ToolCallId;
   StrView Status;
+  StrView Text;
   u32 PagesChanged;
 };
 

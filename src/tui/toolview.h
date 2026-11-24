@@ -1,7 +1,7 @@
 #pragma once
 #include "base/str.h"
 
-enum class ToolViewKind : u8 { Unknown, Shell, Read, Grep, Find, Ls, Write, Edit, Ask };
+enum class ToolViewKind : u8 { Unknown, Shell, Read, Grep, Find, Ls, Write, Edit, Ask, Remember };
 
 struct ToolLabel {
   StrView Name;

@@ -30,8 +30,10 @@ clippi --dream                  # consolidate this repository's memory wiki
 ## Tools
 
 All eight tools (`read`, `write`, `edit`, `ls`, `find`, `grep`, `shell`,
-`ask_user`) are enabled by default. The active set shapes the system prompt, so
-disabling a tool also removes its snippet and guideline bullets.
+`ask_user`) are enabled by default, and `remember` joins them when the memory
+wiki is on at startup (see [MEMORY.md](MEMORY.md)). The active set shapes the
+system prompt, so disabling a tool also removes its snippet and guideline
+bullets.
 
 ```sh
 clippi -t read,ls,grep      # allowlist: only these three
@@ -90,7 +92,9 @@ global excludes and `.git/info/exclude` are not currently loaded.
 ### Asking the user
 
 The `ask_user` tool lets the agent put a question to you mid-run and wait for
-the answer, either free-form or as a fixed set of choices. It runs on its own,
+the answer, either free-form or as a set of suggested choices. A choice list
+always ends with `Other (type your own answer)`, which opens a text box;
+Backspace on the empty box returns to the list. It runs on its own,
 never alongside another tool, so two questions can never compete for the
 screen. With no user present it returns an error the model can read and work
 around rather than blocking, which is what keeps `-p` and `--mode json` usable.

@@ -46,18 +46,32 @@ do not exist -- and problems come back in the tool result. With memory off the
 system prompt is byte-for-byte what it is without the feature, which is the
 only place it diverges from pi.
 
+## Remember
+
+Writing a well-formed page mid-task is a detour, so with memory on the agent
+also gets a `remember` tool: one short fact (at most 2,000 bytes) goes into the
+journal as a note, and the next dream files it into the right page, merges it,
+or drops it. Notes do not reach the prompt until a dream files them. The tool
+is registered only when memory is on at startup, so with memory off the tool
+list, like the prompt, is pi's; switching memory off mid-session makes it
+refuse instead. It is permissioned like a page write: Auto allows it, and Ask
+asks, with a session grant covering every later note.
+
 `memory` in `settings.json` (default `true`) turns the wiki on; `--no-memory` or
 `CLIPPI_NO_MEMORY=1` turns it off for one run. `/memory` shows the wiki's
-location, size, lint summary, and dreaming status; `/memory lint` lists
-findings, `/memory on|off` switches it, and `/memory restore` puts back the
-snapshot taken before the last dream.
+location, size, lint summary, dreaming status, and notes waiting for a dream;
+`/memory lint` lists findings, `/memory on|off` switches it, and
+`/memory restore` puts back the snapshot taken before the last dream.
 
 ## Dreaming
 
 Dreaming is an offline pass in which an agent replays what recent sessions did
-and corrects, extends, merges, and prunes the wiki. `/dream` starts it in the
-background and `/dream watch` follows it live; `clippi --dream` runs it in the
-foreground for the working directory's repository. A pass:
+and corrects, extends, merges, and prunes the wiki. It starts on its own in the
+background once the TUI has sat idle past the provider's prompt-cache lifetime
+after a prompt (`cacheIdleMinutes`, alongside idle compaction; see
+[CONFIGURATION.md](CONFIGURATION.md)). `/dream` starts one by hand and
+`/dream watch` follows it live; `clippi --dream` runs it in the foreground for
+the working directory's repository. A pass:
 
 1. Takes `.dream/lock`, so only one pass runs per repository.
 2. Reads the journal for sessions that worked in the repository -- from any
@@ -74,8 +88,9 @@ foreground for the working directory's repository. A pass:
 6. Advances `.dream/state.json` and journals the outcome. A failed pass
    advances nothing and is retried from the same point.
 
-A pass with no new session activity, no page writes, and a clean wiki does not
-start the agent. The dream's system prompt can be replaced by `~/.clippi/DREAM.md`,
+A pass with no new session activity, no notes, no page writes, and a clean wiki
+does not start the agent. Notes are listed in the dream's first message and
+consumed when the pass commits. The dream's system prompt can be replaced by `~/.clippi/DREAM.md`,
 or by `<repo>/.clippi/DREAM.md` in a trusted repository, using `{{inbox}}`,
 `{{pages}}`, `{{repo}}`, `{{page_limit}}`, and `{{pinned_limit}}`.
 `dreamModel` in `settings.json` picks a different (cheaper) model for dreaming;

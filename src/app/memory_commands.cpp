@@ -140,6 +140,8 @@ AppCommandHandlerResult Status(InteractiveRuntime* rt, const WikiLocation* locat
   }
   StrBuf_AppendCStr(&message, "\nSessions since the last dream: ");
   StrBuf_AppendU64(&message, dream.PendingSessions);
+  StrBuf_AppendCStr(&message, "\nNotes waiting for a dream: ");
+  StrBuf_AppendU64(&message, dream.PendingNotes);
   StrBuf_AppendCStr(&message, "\nSnapshots: ");
   StrBuf_AppendU64(&message, dream.Snapshots);
   if (dream.Snapshots) StrBuf_AppendCStr(&message, " (/memory restore)");

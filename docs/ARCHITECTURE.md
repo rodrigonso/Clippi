@@ -4,7 +4,8 @@
 
 A runnable Clippi agent: the agent loop + an OpenAI Responses API provider
 (HTTP/SSE) + `read`, `write`, `edit`, `ls`, `find`, `grep`,
-`shell`, and `ask_user` tools + a streaming REPL.
+`shell`, and `ask_user` tools (and `remember` with the memory wiki) + a
+streaming REPL.
 
 ```
 src/

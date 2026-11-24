@@ -177,6 +177,19 @@ AppSettingsLoadResult AppSettings_Load(Arena* a, StrView path, AppSettings* out)
     dreamModel = dreamModelValue->Str;
   }
 
+  bool hasCacheIdleMinutes = false;
+  u32 cacheIdleMinutes = 0;
+  JsonValue* cacheIdleValue = Json_Get(root, "cacheIdleMinutes");
+  if (cacheIdleValue) {
+    if (cacheIdleValue->Kind != JsonKind::Number || cacheIdleValue->Number < 0.0 ||
+        cacheIdleValue->Number > (f64)APP_SETTINGS_MAX_CACHE_IDLE_MINUTES)
+      return AppSettingsLoadResult::Malformed;
+    cacheIdleMinutes = (u32)cacheIdleValue->Number;
+    if ((f64)cacheIdleMinutes != cacheIdleValue->Number)
+      return AppSettingsLoadResult::Malformed;
+    hasCacheIdleMinutes = true;
+  }
+
   Array<StrView> skills = {};
   Array<StrView> promptTemplates = {};
   if (!ReadStringArray(a, root, "skills", &skills) ||
@@ -236,6 +249,8 @@ AppSettingsLoadResult AppSettings_Load(Arena* a, StrView path, AppSettings* out)
   out->Rounded = rounded;
   out->Memory = memory;
   out->DreamModel = dreamModel;
+  out->HasCacheIdleMinutes = hasCacheIdleMinutes;
+  out->CacheIdleMinutes = cacheIdleMinutes;
   out->Skills = skills;
   out->PromptTemplates = promptTemplates;
   return AppSettingsLoadResult::Success;
@@ -323,6 +338,10 @@ bool AppSettings_Save(Arena* a, StrView path, const AppSettings* settings) {
   if (settings->DreamModel.Length) {
     StrBuf_AppendCStr(&content, ",\"dreamModel\":");
     Json_WriteString(&content, settings->DreamModel);
+  }
+  if (settings->HasCacheIdleMinutes) {
+    StrBuf_AppendCStr(&content, ",\"cacheIdleMinutes\":");
+    StrBuf_AppendU64(&content, settings->CacheIdleMinutes);
   }
   WriteStringArray(&content, "skills", &settings->Skills);
   WriteStringArray(&content, "promptTemplates", &settings->PromptTemplates);

@@ -935,6 +935,39 @@ SessionResult AgentHarness_Compact(AgentHarness* harness, StrView instructions) 
   return result;
 }
 
+SessionResult AgentHarness_CompactIdle(AgentHarness* harness, bool* outCompacted) {
+  if (outCompacted) *outCompacted = false;
+  if (!harness || !harness->Initialized || !outCompacted)
+    return SessionResult_Invalid("compaction arguments are invalid");
+  {
+    ScopedLock lock(&harness->StateLock);
+    SessionResult idle = EnsureIdleLocked(harness, SVL("agent harness is already running"));
+    if (!SessionResult_IsOk(idle)) return idle;
+    harness->Running = true;
+    ArenaReset(&harness->LastResult);
+    Atomic_StoreI32(&harness->AbortFlag, 0);
+  }
+
+  bool started = false;
+  SessionResult result = AgentDriver_CompactIdle(harness, &started);
+
+  {
+    ScopedLock lock(&harness->StateLock);
+    if (started) {
+      ApplyAcceptedCancellationLocked(harness, &result);
+      if (result.Status == SessionStatus::IoError || result.Status == SessionStatus::Faulted)
+        harness->Faulted = true;
+      CompleteAgentTurnLocked(harness, AgentTurnKind::Compaction, &result);
+    } else {
+      ArenaReset(&harness->Work);
+      ArenaTrim(&harness->Work, WORK_ARENA_KEEP_BYTES);
+      harness->Running = false;
+    }
+  }
+  *outCompacted = started && SessionResult_IsOk(result);
+  return result;
+}
+
 SessionResult AgentHarness_Navigate(AgentHarness* harness, DurableId targetEntryId) {
   if (!harness || !harness->Initialized || !DurableId_IsSet(targetEntryId))
     return SessionResult_Invalid("navigation arguments are invalid");

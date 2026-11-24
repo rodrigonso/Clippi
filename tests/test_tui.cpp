@@ -111,6 +111,34 @@ void InitHeadlessTui(Tui* t, Arena* a, bool color) {
   Tui_InitModel(t, a, opts);
 }
 
+void StopTuiSoon(void* user) {
+  Tui* t = (Tui*)user;
+  Sleep_Ms(50);
+  Mutex_Lock(&t->Lock);
+  t->Stop = true;
+  Cond_Broadcast(&t->SubmitCv);
+  Mutex_Unlock(&t->Lock);
+}
+
+void TestSubmitDeadline() {
+  Arena a = ArenaCreate();
+  Tui t;
+  InitHeadlessTui(&t, &a, false);
+  TuiSubmission submission = {};
+  CHECK(Tui_WaitForSubmitUntil(&t, &submission, 1) == TuiWaitResult::Deadline);
+  Feed(&t, "go\r");
+  CHECK(Tui_WaitForSubmitUntil(&t, &submission, 1) == TuiWaitResult::Submitted);
+  CHECK(StrView_EqCStr(submission.Text, "go"));
+
+  Feed(&t, "draft");
+  Thread stopper = {};
+  CHECK(Thread_Start(&stopper, StopTuiSoon, &t));
+  CHECK(Tui_WaitForSubmitUntil(&t, &submission, 1) == TuiWaitResult::Stopped);
+  Thread_Join(&stopper);
+  Tui_Stop(&t);
+  ArenaRelease(&a);
+}
+
 const UiNode* ComposerNode(const Tui* t) {
   for (u32 i = 0; i < t->Ui.Nodes.Count; i++) {
     const UiNode* node = Ui_GetNode(&t->Ui, i);
@@ -1156,6 +1184,7 @@ void TestTui() {
   TestHydrationPayloadOwnership(&a);
   TestTranscriptAppend(&a);
   TestHydratedRuns(&a);
+  TestSubmitDeadline();
   TuiOpts o;
   o.ModelName = SVL("test-model");
   o.Color = true;

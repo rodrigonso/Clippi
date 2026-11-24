@@ -443,7 +443,8 @@ void Wiki_AppendPromptBlock(Arena* arena, StrBuf* out, const Wiki* wiki,
 
 namespace {
 
-const StrView kJournalKinds[] = {SVL(""), SVL("session"), SVL("page"), SVL("dream")};
+const StrView kJournalKinds[] = {SVL(""), SVL("session"), SVL("page"), SVL("dream"),
+                                 SVL("note")};
 
 }
 
@@ -467,6 +468,7 @@ bool WikiJournal_Append(Arena* scratch, StrView journalPath,
   if (entry->Slug.Length) JsonWrite_String(&w, "slug", entry->Slug);
   if (entry->ToolCallId.Length) JsonWrite_String(&w, "toolCallId", entry->ToolCallId);
   if (entry->Status.Length) JsonWrite_String(&w, "status", entry->Status);
+  if (entry->Text.Length) JsonWrite_String(&w, "text", entry->Text);
   if (entry->Kind == WikiJournalKind::Dream)
     JsonWrite_U64(&w, "pagesChanged", entry->PagesChanged);
   JsonWrite_End(&w);
@@ -508,6 +510,7 @@ void WikiJournal_Read(Arena* arena, StrView journalPath, u64 offset,
     entry.Slug = Json_GetStr(root, "slug");
     entry.ToolCallId = Json_GetStr(root, "toolCallId");
     entry.Status = Json_GetStr(root, "status");
+    entry.Text = Json_GetStr(root, "text");
     i64 changed = Json_GetInt(root, "pagesChanged", 0);
     entry.PagesChanged = changed > 0 ? (u32)changed : 0;
     Array_Push(out, entry);
