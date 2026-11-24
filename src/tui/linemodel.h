@@ -179,7 +179,7 @@ void LineModel_AddFooter(LineModel* m, TurnStats stats);
 bool LineModel_SetThinking(LineModel* m, u64 startMs, u64 nowMs);
 bool LineModel_EndThinking(LineModel* m);
 void LineModel_AddTool(LineModel* m, StrView toolId, StrView name, StrView argsJson,
-                       u64 startMs = 0);
+                       u64 startMs = 0, StrView label = {});
 bool LineModel_UpdateTool(LineModel* m, StrView toolId, StrView preview);
 bool LineModel_FinishTool(LineModel* m, StrView toolId, StrView result, StrView preview,
                           bool isError, u64 endMs = 0);

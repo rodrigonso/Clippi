@@ -1889,6 +1889,7 @@ static void TestNativeGrep(Arena* a) {
 struct FakeAsk {
   StrView SeenQuestion;
   u32 SeenChoiceCount;
+  bool SeenAllowFreeText;
   u32 Calls;
   AgentAskStatus Reply;
   u32 ReplyIndex;
@@ -1902,6 +1903,7 @@ static bool FakeAskFn(void* user, Arena* arena, const AgentAskRequest* request,
   fake->Calls++;
   fake->SeenQuestion = StrView_Dup(arena, request->Question);
   fake->SeenChoiceCount = request->ChoiceCount;
+  fake->SeenAllowFreeText = request->AllowFreeText;
   if (fake->Fail) return false;
   out->Status = fake->Reply;
   out->ChoiceIndex = fake->ReplyIndex;
@@ -1948,7 +1950,7 @@ static void TestAskUser(Arena* a) {
     CHECK(RunTool(tool, a,
                   SVL("{\"question\":\"Pick one\",\"choices\":[\"a\",\"b\"]}"),
                   &result, &err));
-    CHECK(fake.SeenChoiceCount == 2);
+    CHECK_ALL(fake.SeenChoiceCount == 2, fake.SeenAllowFreeText);
     CHECK(result.Content.Count == 1);
     CHECK(StrView_Eq(result.Content.Data[0].Text, SVL("b")));
   }

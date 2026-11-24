@@ -130,6 +130,24 @@ RuntimeInputResult RuntimeReadText(InteractiveRuntime* rt, Arena* arena,
                    : failed ? RuntimeInputResult::Failed : RuntimeInputResult::Cancelled;
 }
 
+static bool ReadAskAnswer(InteractiveRuntime* rt, Arena* arena,
+                          const AgentAskRequest* request, StrView category,
+                          AgentAskResponse* out, bool* back) {
+  StrView answer = {};
+  RuntimeInputResult result =
+      RuntimeReadText(rt, arena, request->Question, SVL("Your answer"), StrView{},
+                      &answer, category);
+  *back = result == RuntimeInputResult::Back;
+  if (result != RuntimeInputResult::Confirmed || StrView_Trim(answer).Length == 0) {
+    out->Status = AgentAskStatus::Declined;
+    return false;
+  }
+  out->Status = AgentAskStatus::Answered;
+  out->ChoiceIndex = request->ChoiceCount;
+  out->Answer = answer;
+  return true;
+}
+
 static bool RuntimeAskUserImpl(void* user, Arena* arena,
                                const AgentAskRequest* request,
                                AgentAskResponse* out) {
@@ -138,32 +156,38 @@ static bool RuntimeAskUserImpl(void* user, Arena* arena,
   if (!rt || !rt->Interactive || request->Question.Length == 0) return false;
   StrView category =
       request->Category.Length ? request->Category : SVL("Question");
+  bool back = false;
 
   if (request->ChoiceCount) {
-    u32 selected = 0;
-    RuntimeInputResult result =
-        RuntimeSelect(rt, request->Question, request->Choices,
-                      request->ChoiceCount, &selected, 0, category);
-    if (result != RuntimeInputResult::Confirmed) {
-      out->Status = AgentAskStatus::Declined;
-      return true;
+    const StrView* options = request->Choices;
+    u32 optionCount = request->ChoiceCount;
+    if (request->AllowFreeText) {
+      StrView* withOther = ArenaPushArray(arena, StrView, optionCount + 1);
+      for (u32 i = 0; i < optionCount; i++) withOther[i] = options[i];
+      withOther[optionCount++] = SVL("Other (type your own answer)");
+      options = withOther;
     }
-    out->Status = AgentAskStatus::Answered;
-    out->ChoiceIndex = selected;
-    out->Answer = StrView_Dup(arena, request->Choices[selected]);
-    return true;
+    u32 initial = 0;
+    for (;;) {
+      u32 selected = 0;
+      RuntimeInputResult result = RuntimeSelect(rt, request->Question, options,
+                                                optionCount, &selected, initial, category);
+      if (result != RuntimeInputResult::Confirmed) {
+        out->Status = AgentAskStatus::Declined;
+        return true;
+      }
+      if (selected < request->ChoiceCount) {
+        out->Status = AgentAskStatus::Answered;
+        out->ChoiceIndex = selected;
+        out->Answer = StrView_Dup(arena, request->Choices[selected]);
+        return true;
+      }
+      if (ReadAskAnswer(rt, arena, request, category, out, &back) || !back) return true;
+      initial = selected;
+    }
   }
 
-  StrView answer = {};
-  RuntimeInputResult result =
-      RuntimeReadText(rt, arena, request->Question, SVL("Your answer"), StrView{},
-                      &answer, category);
-  if (result != RuntimeInputResult::Confirmed || StrView_Trim(answer).Length == 0) {
-    out->Status = AgentAskStatus::Declined;
-    return true;
-  }
-  out->Status = AgentAskStatus::Answered;
-  out->Answer = answer;
+  ReadAskAnswer(rt, arena, request, category, out, &back);
   return true;
 }
 

@@ -3,9 +3,22 @@
 
 #include "base/arena.h"
 #include "check.h"
+#include "tools/tools.h"
 #include "tui/linemodel.h"
 
 namespace {
+
+StrView BuiltinLabel(StrView name) {
+  Tool builtins[] = {ReadTool(), WriteTool(), EditTool(),  LsTool(),
+                     FindTool(), GrepTool(),  ShellTool(), AskUserTool()};
+  for (const Tool& tool : builtins)
+    if (StrView_Eq(tool.Name, name)) return tool.Label;
+  return {};
+}
+
+void AddTool(LineModel* m, StrView id, StrView name, StrView args, u64 startMs = 0) {
+  LineModel_AddTool(m, id, name, args, startMs, BuiltinLabel(name));
+}
 
 StrView RowText(Arena* a, const SpanLine* row) {
   StrBuf text = StrBuf_Make(a, 64);
@@ -164,7 +177,7 @@ void FuzzApply(LineModel* m, const FuzzStep& s) {
     case FuzzOp::BeginAssistant: LineModel_BeginAssistant(m); break;
     case FuzzOp::Append: LineModel_AppendAssistant(m, s.Text); break;
     case FuzzOp::EndAssistant: LineModel_EndAssistant(m); break;
-    case FuzzOp::AddTool: LineModel_AddTool(m, s.Id, s.Text, s.Text2, s.A); break;
+    case FuzzOp::AddTool: AddTool(m, s.Id, s.Text, s.Text2, s.A); break;
     case FuzzOp::UpdateTool: LineModel_UpdateTool(m, s.Id, s.Text); break;
     case FuzzOp::FinishTool:
       LineModel_FinishTool(m, s.Id, s.Text, s.Text2, s.Flag, s.A);
@@ -778,8 +791,8 @@ void TestLineModel() {
   {
     LineModel tools;
     LineModel_Init(&tools, &a, 100, 5000);
-    LineModel_AddTool(&tools, SVL("shell-id"), SVL("shell"), SVL("{\"command\":\"echo hi\"}"));
-    LineModel_AddTool(&tools, SVL("read-id"), SVL("read"),
+    AddTool(&tools, SVL("shell-id"), SVL("shell"), SVL("{\"command\":\"echo hi\"}"));
+    AddTool(&tools, SVL("read-id"), SVL("read"),
                       SVL("{\"path\":\"src/main.cpp\",\"offset\":10,\"limit\":5}"));
     CHECK_ALL(BlankRows(&tools) == 0, tools.Entries.Count == 2,
               StrView_Eq(tools.Entries.Data[0].Tool.View.Marker, SVL("$")),
@@ -827,7 +840,7 @@ void TestLineModel() {
               !LineModel_IsEntryCollapsed(&tools, readEntryId));
     CHECK(LineModel_ToggleAllTools(&tools));
 
-    LineModel_AddTool(
+    AddTool(
         &tools, SVL("control-id"), SVL("shell"),
         SVL("{\"command\":\"first line\\n\\u001b[31msecond line\\u001b[0m\"}"));
     CHECK_ALL(AnyRowHas(&a, &tools, " \xe2\x96\xb8  Shell first line second line"),
@@ -839,7 +852,7 @@ void TestLineModel() {
   {
     LineModel toolWrap;
     LineModel_Init(&toolWrap, &a, 16, 5000);
-    LineModel_AddTool(&toolWrap, SVL("shell"), SVL("shell"),
+    AddTool(&toolWrap, SVL("shell"), SVL("shell"),
                       SVL("{\"command\":\"echo this command wraps\"}"));
     u64 shellId = toolWrap.Entries.Data[0].Id;
     CHECK_ALL(RowStartsWith(&a, LineModel_At(&toolWrap, 0), " \xe2\x96\xb8  "),
@@ -848,7 +861,7 @@ void TestLineModel() {
     CHECK(LineModel_ToggleEntry(&toolWrap, shellId));
     CHECK(RowStartsWith(&a, LineModel_At(&toolWrap, 1), "    "));
 
-    LineModel_AddTool(&toolWrap, SVL("read"), SVL("read"),
+    AddTool(&toolWrap, SVL("read"), SVL("read"),
                       SVL("{\"path\":\"src/very_long_file.cpp\"}"));
     u64 readId = toolWrap.Entries.Data[1].Id;
     CHECK(LineModel_ToggleEntry(&toolWrap, readId));
@@ -861,7 +874,7 @@ void TestLineModel() {
   {
     LineModel compact;
     LineModel_Init(&compact, &a, 48, 5000);
-    LineModel_AddTool(&compact, SVL("unicode"), SVL("edit"),
+    AddTool(&compact, SVL("unicode"), SVL("edit"),
                       SVL("{\"path\":\"src/a_very_long_directory/\xe4\xb8\xad\xe6\x96\x87/status.cpp\","
                           "\"oldText\":\"a\",\"newText\":\"b\"}"));
     CHECK(Finish(&compact, SVL("unicode"), SVL("-1 old\n+1 new\n+2 added")));
@@ -892,7 +905,7 @@ void TestLineModel() {
   {
     LineModel failures;
     LineModel_Init(&failures, &a, 72, 5000, false);
-    LineModel_AddTool(&failures, SVL("edit-fail"), SVL("edit"),
+    AddTool(&failures, SVL("edit-fail"), SVL("edit"),
                       SVL("{\"path\":\"a.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"));
     CHECK(Finish(&failures, SVL("edit-fail"),
                  SVL("Target text was not found.\nCheck the original text.\nMore details."), true));
@@ -910,7 +923,7 @@ void TestLineModel() {
     for (u32 i = 0; i < 200; i++) StrBuf_AppendCStr(&result, "compiling source\n");
     StrBuf_AppendCStr(&result, "error C2065: unknown identifier\ncompilation stopped\n"
                               "extra output\n\nCommand exited with code 1");
-    LineModel_AddTool(&failures, SVL("build-fail"), SVL("shell"),
+    AddTool(&failures, SVL("build-fail"), SVL("shell"),
                       SVL("{\"command\":\"build\"}"), 1000);
     CHECK(LineModel_FinishTool(&failures, SVL("build-fail"), StrBuf_View(&result),
                                StrView{result.Data, 1500}, true, 4500));
@@ -951,7 +964,7 @@ void TestLineModel() {
     LineModel_SetThinking(&accented, 1000, 1200);
     row = FindRow(&a, &accented, "Thinking");
     CHECK(row != nullptr && row->Spans.Data[1].Live && row->Spans.Data[1].St.Fg == 33);
-    LineModel_AddTool(&accented, SVL("t1"), SVL("read"), SVL("{\"path\":\"a.md\"}"), 1000);
+    AddTool(&accented, SVL("t1"), SVL("read"), SVL("{\"path\":\"a.md\"}"), 1000);
     row = FindRow(&a, &accented, "a.md");
     CHECK(row != nullptr && row->Spans.Data[1].St.Fg == 33);
     CHECK(Finish(&accented, SVL("t1"), SVL("ok")));
@@ -985,7 +998,7 @@ void TestLineModel() {
               !AnyRowHas(&a, &live, "Thinking"), !LineModel_EndThinking(&live));
 
     LineModel_SetThinking(&live, 1000, 1200);
-    LineModel_AddTool(&live, SVL("t1"), SVL("read"), SVL("{\"path\":\"a.md\"}"));
+    AddTool(&live, SVL("t1"), SVL("read"), SVL("{\"path\":\"a.md\"}"));
     CHECK_ALL(live.Entries.Count == 2, live.Entries.Data[1].Kind == EntryKind::Tool,
               !AnyRowHas(&a, &live, "Thinking"));
     LineModel_SetThinking(&live, 1000, 1200);
@@ -1048,7 +1061,7 @@ void TestLineModel() {
         {SVL("grep"), SVL("grep"),
          SVL("{\"pattern\":\"needle\",\"path\":\"src\",\"glob\":\"*.cpp\"}"),
          SVL("a.cpp-1-before\na.cpp:2: one\na.cpp-3-after\nb.cpp:4: two"),
-         "Search \"needle\" in src (*.cpp)", "2 matching lines"},
+         "Grep \"needle\" in src (*.cpp)", "2 matching lines"},
         {SVL("find"), SVL("find"), SVL("{\"pattern\":\"*.h\",\"path\":\"src\"}"),
          SVL("a.h\nb.h"), "2 files", nullptr},
         {SVL("ls"), SVL("ls"), SVL("{\"path\":\"src\"}"), SVL("agent/\nterm/"),
@@ -1096,7 +1109,7 @@ void TestLineModel() {
     bool summariesMatch = true;
     for (u32 i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
       SummaryCase c = cases[i];
-      LineModel_AddTool(&summaries, c.Id, c.Name, c.Args);
+      AddTool(&summaries, c.Id, c.Name, c.Args);
       bool caseMatches = Finish(&summaries, c.Id, c.Result) &&
                          AnyRowHas(&a, &summaries, c.Expected) &&
                          (c.Detail == nullptr || AnyRowHas(&a, &summaries, c.Detail));
@@ -1104,30 +1117,30 @@ void TestLineModel() {
     }
     CHECK(summariesMatch);
 
-    LineModel_AddTool(&summaries, SVL("grep-limit-text"), SVL("grep"),
+    AddTool(&summaries, SVL("grep-limit-text"), SVL("grep"),
                       SVL("{\"pattern\":\"limit reached\"}"));
     CHECK(Finish(&summaries, SVL("grep-limit-text"), SVL("a.cpp:1: limit reached")));
     CHECK(TextEq(StrBuf_View(&summaries.Entries.Data[summaries.Entries.Count - 1].Tool.View.Outcome),
                  SVL("1 matching line")));
 
-    LineModel_AddTool(&summaries, SVL("scaled-write"), SVL("write"),
+    AddTool(&summaries, SVL("scaled-write"), SVL("write"),
                       SVL("{\"path\":\"large.txt\",\"content\":\"\"}"));
     summaries.Entries.Data[summaries.Entries.Count - 1].Tool.View.CountHint = 1234;
     CHECK(Finish(&summaries, SVL("scaled-write"), SVL("Successfully wrote 1234 bytes")));
     CHECK(AnyRowHas(&a, &summaries, "1.2 KiB"));
 
-    LineModel_AddTool(&summaries, SVL("json-read"), SVL("read"),
+    AddTool(&summaries, SVL("json-read"), SVL("read"),
                       SVL("{\"path\":\"config.json\"}"));
     CHECK_ALL(
         StrView_Eq(summaries.Entries.Data[summaries.Entries.Count - 1].Tool.View.Marker, SVL("J")),
         AnyRowHas(&a, &summaries, " \xe2\x96\xb8  Read config.json"));
 
-    LineModel_AddTool(&summaries, SVL("unknown"), SVL("custom"), SVL("{\"value\":1}"));
+    AddTool(&summaries, SVL("unknown"), SVL("custom"), SVL("{\"value\":1}"));
     bool unknownFinished = Finish(&summaries, SVL("unknown"), SVL("done"));
     CHECK_ALL(unknownFinished, AnyRowHas(&a, &summaries, "custom"),
               AnyRowHas(&a, &summaries, "completed"));
 
-    LineModel_AddTool(&summaries, SVL("colour-edit"), SVL("edit"),
+    AddTool(&summaries, SVL("colour-edit"), SVL("edit"),
                       SVL("{\"path\":\"f.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"));
     CHECK(Finish(&summaries, SVL("colour-edit"),
                  SVL("Successfully replaced 1 block(s) in f.cpp.\n\n"
@@ -1146,7 +1159,7 @@ void TestLineModel() {
                 SpansWithFg(&a, plainOutcome, 167, TOOL_TEXT_SPAN).Length == 0);
     }
 
-    LineModel_AddTool(&summaries, SVL("error"), SVL("shell"), SVL("{\"command\":\"false\"}"));
+    AddTool(&summaries, SVL("error"), SVL("shell"), SVL("{\"command\":\"false\"}"));
     CHECK(Finish(&summaries, SVL("error"), SVL("Command exited with code 1"), true));
     const SpanLine* failed = FindRow(&a, &summaries, "Shell false  exit 1");
     CHECK(failed != nullptr);
@@ -1172,13 +1185,68 @@ void TestLineModel() {
     };
     bool shellMatch = true;
     for (u32 i = 0; i < sizeof(shellCases) / sizeof(shellCases[0]); i++) {
-      LineModel_AddTool(&summaries, SVL("sh"), SVL("shell"), SVL("{\"command\":\"run\"}"));
+      AddTool(&summaries, SVL("sh"), SVL("shell"), SVL("{\"command\":\"run\"}"));
       bool finished = Finish(&summaries, SVL("sh"), shellCases[i].Result, shellCases[i].IsError);
       const ToolEntry& tool = summaries.Entries.Data[summaries.Entries.Count - 1].Tool;
       shellMatch = finished && TextEq(StrBuf_View(&tool.View.Outcome), SV(shellCases[i].Expected)) &&
                    shellMatch;
     }
     CHECK(shellMatch);
+
+    AddTool(&summaries, SVL("ask"), SVL("ask_user"),
+            SVL("{\"question\":\"Which DB?\",\"choices\":[\"PostgreSQL\",\"MySQL\"]}"));
+    CHECK(Finish(&summaries, SVL("ask"), SVL("PostgreSQL")));
+    CHECK_ALL(AnyRowHas(&a, &summaries, " \xe2\x96\xb8  Ask user \"Which DB?\"  PostgreSQL"),
+              !AnyRowHas(&a, &summaries, "choices"));
+
+    AddTool(&summaries, SVL("ask-long"), SVL("ask_user"), SVL("{\"question\":\"Why?\"}"));
+    StrBuf longAnswer = StrBuf_Make(&a, 128);
+    for (u32 i = 0; i < 100; i++) StrBuf_AppendChar(&longAnswer, i == 30 ? '\n' : 'x');
+    CHECK(Finish(&summaries, SVL("ask-long"), StrBuf_View(&longAnswer)));
+    StrView longOutcome =
+        StrBuf_View(&summaries.Entries.Data[summaries.Entries.Count - 1].Tool.View.Outcome);
+    CHECK_ALL(longOutcome.Length == 63, StrView_EndsWith(longOutcome, SVL("...")),
+              !StrView_Contains(longOutcome, "\n"));
+
+    struct AskCase {
+      StrView Args;
+      StrView Result;
+      bool IsError;
+      const char* Detail;
+      const char* Outcome;
+    };
+    AskCase askCases[] = {
+        {SVL("{\"permission_request_id\":\"p1\"}"),
+         SVL("Permission granted for this session. Retry the exact original tool call."), false,
+         "permission request", "granted"},
+        {SVL("{\"permission_request_id\":\"p2\"}"),
+         SVL("Permission denied. Do not retry the unchanged tool call."), false,
+         "permission request", "denied"},
+        {SVL("{\"question\":\"Go?\"}"),
+         SVL("the user dismissed the question without answering"), true, "\"Go?\"", "dismissed"},
+        {SVL("{\"question\":\"Go?\"}"),
+         SVL("no user is available to answer questions in this session; proceed without asking"),
+         true, "\"Go?\"", "unavailable"},
+    };
+    bool askMatch = true;
+    for (u32 i = 0; i < sizeof(askCases) / sizeof(askCases[0]); i++) {
+      AddTool(&summaries, SVL("ask-case"), SVL("ask_user"), askCases[i].Args);
+      bool finished =
+          Finish(&summaries, SVL("ask-case"), askCases[i].Result, askCases[i].IsError);
+      const ToolEntry& tool = summaries.Entries.Data[summaries.Entries.Count - 1].Tool;
+      askMatch = finished && tool.View.Kind == ToolViewKind::Ask &&
+                 TextEq(StrBuf_View(&tool.View.Detail), SV(askCases[i].Detail)) &&
+                 TextEq(StrBuf_View(&tool.View.Outcome), SV(askCases[i].Outcome)) && askMatch;
+    }
+    CHECK(askMatch);
+
+    LineModel_AddTool(&summaries, SVL("unlabeled"), SVL("shell"), SVL("{\"command\":\"pwd\"}"));
+    LineModel_AddTool(&summaries, SVL("relabeled"), SVL("grep"), SVL("{\"pattern\":\"q\"}"), 0,
+                      SVL("Search"));
+    CHECK_ALL(AnyRowHas(&a, &summaries, " \xe2\x96\xb8  shell pwd"),
+              AnyRowHas(&a, &summaries, " \xe2\x96\xb8  Search \"q\" in ."),
+              StrView_Eq(summaries.Entries.Data[summaries.Entries.Count - 1].Tool.View.Marker,
+                         SVL("/")));
     LineModel_Release(&summaries);
   }
 
@@ -1187,13 +1255,13 @@ void TestLineModel() {
     LineModel_Init(&noColor, &a, 40, 5000, false);
     LineModel_AddUser(&noColor, SVL("plain"), 0);
     CHECK(LineModel_At(&noColor, 0)->Spans.Data[1].St.Fg == COL_DEFAULT);
-    LineModel_AddTool(&noColor, SVL("id"), SVL("shell"), SVL("{\"command\":\"echo\"}"));
+    AddTool(&noColor, SVL("id"), SVL("shell"), SVL("{\"command\":\"echo\"}"));
     CHECK(Finish(&noColor, SVL("id"), SVL("ok")));
     const SpanLine* row = FindRow(&a, &noColor, " \xe2\x96\xb8  Shell echo");
     CHECK(row != nullptr);
     CHECK(row->Spans.Data[1].St.Fg == COL_DEFAULT);
 
-    LineModel_AddTool(&noColor, SVL("nc-edit"), SVL("edit"),
+    AddTool(&noColor, SVL("nc-edit"), SVL("edit"),
                       SVL("{\"path\":\"g.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"));
     CHECK(Finish(&noColor, SVL("nc-edit"),
                  SVL("Successfully replaced 1 block(s) in g.cpp.\n\n"
@@ -1212,9 +1280,9 @@ void TestLineModel() {
     LineModel bullets;
     LineModel_Init(&bullets, &a, 40, 5000, true, false);
     LineModel_AddUser(&bullets, SVL("hi"), 0);
-    LineModel_AddTool(&bullets, SVL("sq"), SVL("shell"), SVL("{\"command\":\"echo\"}"));
+    AddTool(&bullets, SVL("sq"), SVL("shell"), SVL("{\"command\":\"echo\"}"));
     CHECK(Finish(&bullets, SVL("sq"), SVL("ok")));
-    LineModel_AddTool(&bullets, SVL("run"), SVL("shell"), SVL("{\"command\":\"sleep\"}"));
+    AddTool(&bullets, SVL("run"), SVL("shell"), SVL("{\"command\":\"sleep\"}"));
     CHECK_ALL(!bullets.Rounded,
               TextEq(ExtractRow(&a, LineModel_At(&bullets, 0), 40, 0, 6),
                      SVL(" \xe2\x97\xbc  hi")),
@@ -1243,8 +1311,8 @@ void TestLineModel() {
   {
     LineModel timed;
     LineModel_Init(&timed, &a, 60, 5000);
-    LineModel_AddTool(&timed, SVL("slow"), SVL("shell"), SVL("{\"command\":\"make\"}"), 1000);
-    LineModel_AddTool(&timed, SVL("fast"), SVL("read"), SVL("{\"path\":\"a.txt\"}"), 1000);
+    AddTool(&timed, SVL("slow"), SVL("shell"), SVL("{\"command\":\"make\"}"), 1000);
+    AddTool(&timed, SVL("fast"), SVL("read"), SVL("{\"path\":\"a.txt\"}"), 1000);
     const SpanLine* slowRow = FindRow(&a, &timed, "Shell make");
     CHECK_ALL(timed.LiveTools == 2, slowRow != nullptr);
     if (slowRow != nullptr) {
@@ -1279,7 +1347,7 @@ void TestLineModel() {
               slowRow && TextEq(slowRow->Right.Text, SVL("4.2s")),
               fastRow && !fastRow->HasRight);
 
-    LineModel_AddTool(&timed, SVL("lost"), SVL("shell"), SVL("{\"command\":\"hang\"}"), 6000);
+    AddTool(&timed, SVL("lost"), SVL("shell"), SVL("{\"command\":\"hang\"}"), 6000);
     CHECK(timed.LiveTools == 1);
     LineModel_SettleTools(&timed);
     const SpanLine* lostRow = FindRow(&a, &timed, "Shell hang");
@@ -1291,7 +1359,7 @@ void TestLineModel() {
   {
     LineModel tail;
     LineModel_Init(&tail, &a, 60, 5000);
-    LineModel_AddTool(&tail, SVL("t"), SVL("shell"), SVL("{\"command\":\"build\"}"), 1);
+    AddTool(&tail, SVL("t"), SVL("shell"), SVL("{\"command\":\"build\"}"), 1);
     u64 tailId = tail.Entries.Data[0].Id;
     CHECK_ALL(LineModel_Count(&tail) == 1, !LineModel_At(&tail, 0)->HasHiddenContent);
     CHECK(LineModel_UpdateTool(&tail, SVL("t"), SVL("l1\nl2\nl3\nl4\nl5\nl6\nl7\n")));
@@ -1318,7 +1386,7 @@ void TestLineModel() {
   {
     LineModel diff;
     LineModel_Init(&diff, &a, 60, 5000);
-    LineModel_AddTool(&diff, SVL("e"), SVL("edit"),
+    AddTool(&diff, SVL("e"), SVL("edit"),
                       SVL("{\"path\":\"h.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"));
     CHECK(Finish(&diff, SVL("e"),
                  SVL("Successfully replaced 1 block(s) in h.cpp.\n\n"
@@ -1337,10 +1405,10 @@ void TestLineModel() {
   {
     LineModel bounded;
     LineModel_Init(&bounded, &a, 100, 50);
-    LineModel_AddTool(&bounded, SVL("one"), SVL("read"), SVL("{\"path\":\"one.txt\"}"));
+    AddTool(&bounded, SVL("one"), SVL("read"), SVL("{\"path\":\"one.txt\"}"));
     bool firstFinished =
         Finish(&bounded, SVL("one"), SVL("first-preview-that-fits-on-one-row"));
-    LineModel_AddTool(&bounded, SVL("two"), SVL("read"), SVL("{\"path\":\"two.txt\"}"));
+    AddTool(&bounded, SVL("two"), SVL("read"), SVL("{\"path\":\"two.txt\"}"));
     bool secondFinished =
         Finish(&bounded, SVL("two"), SVL("second-preview-that-fits-on-one-row"));
     CHECK_ALL(firstFinished, secondFinished);
@@ -1379,7 +1447,7 @@ void TestLineModel() {
     usize historyBytes = cached.RowsMem.Used;
 
     LineModel_AddUser(&cached, SVL("next prompt"), 0);
-    LineModel_AddTool(&cached, SVL("tool"), SVL("shell"), SVL("{\"command\":\"echo ok\"}"));
+    AddTool(&cached, SVL("tool"), SVL("shell"), SVL("{\"command\":\"echo ok\"}"));
     for (u32 i = 0; i < 128; i++)
       CHECK(LineModel_UpdateTool(&cached, SVL("tool"), SVL("progress")));
     CHECK(cached.RowsMem.Used == historyBytes);
@@ -1418,7 +1486,7 @@ void TestLineModel() {
     LineModel bulk;
     LineModel_Init(&bulk, &a, 80, 20);
     for (u32 i = 0; i < 20; i++)
-      LineModel_AddTool(&bulk, StrView{}, SVL("custom"), SVL("{}"));
+      AddTool(&bulk, StrView{}, SVL("custom"), SVL("{}"));
     LineModel_Layout(&bulk);
     const SpanLine* survivor = bulk.Entries.Data[19].Rows.Data;
     u64 survivorId = bulk.Entries.Data[19].Id;
@@ -1487,7 +1555,7 @@ void TestLineModel() {
     LineModel_Init(&middle, &a, 80, 100);
     LineModel_AddNotice(&middle, EntryKind::Info, SVL("first"));
     LineModel_AddNotice(&middle, EntryKind::Info, SVL("second"));
-    LineModel_AddTool(&middle, SVL("middle"), SVL("read"), SVL("{\"path\":\"file\"}"));
+    AddTool(&middle, SVL("middle"), SVL("read"), SVL("{\"path\":\"file\"}"));
     LineModel_AddNotice(&middle, EntryKind::Info, SVL("later"));
     LineModel_Layout(&middle);
     const SpanLine* suffixCache = middle.Entries.Data[3].Rows.Data;
@@ -1621,9 +1689,9 @@ void TestLineModel() {
   {
     LineModel previews;
     LineModel_Init(&previews, &a, 40, 5);
-    LineModel_AddTool(&previews, SVL("first"), SVL("read"), SVL("{\"path\":\"one\"}"));
+    AddTool(&previews, SVL("first"), SVL("read"), SVL("{\"path\":\"one\"}"));
     Finish(&previews, SVL("first"), SVL("first a\nfirst b\nfirst c"));
-    LineModel_AddTool(&previews, SVL("second"), SVL("read"), SVL("{\"path\":\"two\"}"));
+    AddTool(&previews, SVL("second"), SVL("read"), SVL("{\"path\":\"two\"}"));
     Finish(&previews, SVL("second"), SVL("second a\nsecond b\nsecond c"));
     LineModel_Layout(&previews);
     LineModel_ToggleAllTools(&previews);
@@ -1651,7 +1719,7 @@ void TestLineModel() {
     for (u32 i = 0; i < 4096; i++) StrBuf_AppendChar(&args, 'x');
     StrBuf_AppendCStr(&args, "\"}");
     usize before = a.Used;
-    LineModel_AddTool(&parseMemory, SVL("id"), SVL("write"), StrBuf_View(&args));
+    AddTool(&parseMemory, SVL("id"), SVL("write"), StrBuf_View(&args));
     CHECK_ALL(a.Used - before < 2048, AnyRowHas(&a, &parseMemory, "Write large.txt"));
     LineModel_Release(&parseMemory);
   }

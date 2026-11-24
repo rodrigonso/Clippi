@@ -84,7 +84,9 @@ static void HydrateMessages(Tui* t, const Message* messages, u32 count) {
         const Content* content = &message->Content.Data[c];
         if (content->Kind == ContentKind::ToolCall) {
           LineModel_AddTool(&t->Model, content->ToolId, content->ToolName,
-                            content->ToolArgsJson);
+                            content->ToolArgsJson, 0,
+                            ToolLabel_Find(t->ToolLabels, t->ToolLabelCount,
+                                           content->ToolName));
           run->Stats.Tools++;
         }
       }

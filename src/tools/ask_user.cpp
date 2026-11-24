@@ -92,6 +92,7 @@ static bool AskUserExec(void* ctx, Arena* arena, StrView id, const ToolArgs* arg
   request.Question = question;
   request.Choices = choiceCount ? choices : nullptr;
   request.ChoiceCount = choiceCount;
+  request.AllowFreeText = true;
   AgentAskResponse response =
       AgentAskUser_Invoke(context ? &context->Ask : nullptr, arena, &request);
 
@@ -127,8 +128,9 @@ Tool AskUserTool(AskUserToolContext* context) {
       "{\"type\":\"object\",\"properties\":{\"question\":{\"type\":[\"string\","
       "\"null\"],\"description\":\"The question to put to the user; required "
       "unless permission_request_id is set\"},\"choices\":{\"type\":[\"array\","
-      "\"null\"],\"items\":{\"type\":\"string\"},\"description\":\"Optional fixed "
-      "answers to choose from; omit to ask for free-form text\"},"
+      "\"null\"],\"items\":{\"type\":\"string\"},\"description\":\"Optional suggested "
+      "answers; the user may pick one or type their own. Omit to ask for free-form "
+      "text\"},"
       "\"permission_request_id\":{\"type\":[\"string\",\"null\"],\"description\":"
       "\"Permission request ID returned by a denied tool call; send it on its "
       "own, with no question or choices\"}},\"additionalProperties\":false}");

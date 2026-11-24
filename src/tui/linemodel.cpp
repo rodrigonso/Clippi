@@ -1637,7 +1637,7 @@ bool LineModel_EndThinking(LineModel* m) {
 }
 
 void LineModel_AddTool(LineModel* m, StrView toolId, StrView name, StrView argsJson,
-                       u64 startMs) {
+                       u64 startMs, StrView label) {
   FFI(m->HasAssistant);
   LineModel_EndThinking(m);
   Entry entry = {};
@@ -1651,7 +1651,7 @@ void LineModel_AddTool(LineModel* m, StrView toolId, StrView name, StrView argsJ
   entry.Tool.StartMs = startMs;
   entry.Tool.Live = startMs != 0;
   if (entry.Tool.Live) m->LiveTools++;
-  ToolView_Init(m->Mem, &entry.Tool.View, name, argsJson);
+  ToolView_Init(m->Mem, &entry.Tool.View, name, argsJson, label);
   Array_Push(&m->Entries, entry);
   InvalidateEntry(m, m->Entries.Count - 1);
   m->TrimPending = true;

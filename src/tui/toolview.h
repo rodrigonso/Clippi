@@ -1,7 +1,12 @@
 #pragma once
 #include "base/str.h"
 
-enum class ToolViewKind : u8 { Unknown, Shell, Read, Grep, Find, Ls, Write, Edit };
+enum class ToolViewKind : u8 { Unknown, Shell, Read, Grep, Find, Ls, Write, Edit, Ask };
+
+struct ToolLabel {
+  StrView Name;
+  StrView Label;
+};
 
 struct ToolView {
   ToolViewKind Kind;
@@ -13,5 +18,8 @@ struct ToolView {
   u32 CountHint;
 };
 
-void ToolView_Init(Arena* arena, ToolView* view, StrView name, StrView argsJson);
+// An empty label falls back to the tool name.
+void ToolView_Init(Arena* arena, ToolView* view, StrView name, StrView argsJson,
+                   StrView label = {});
+StrView ToolLabel_Find(const ToolLabel* labels, u32 count, StrView name);
 void ToolView_Finish(ToolView* view, StrView result, bool isError);

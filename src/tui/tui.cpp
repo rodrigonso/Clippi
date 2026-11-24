@@ -471,7 +471,8 @@ void ApplyDisplayEvent(Tui* t, const TuiDisplayEvent& ev) {
       if (t->AgentRunning && t->State == TuiState::Streaming) t->State = TuiState::Thinking;
       break;
     case TuiDisplayEventKind::ToolStart:
-      LineModel_AddTool(&t->Model, ev.ToolCallId, ev.ToolName, ev.ToolArgsJson, ev.Timestamp);
+      LineModel_AddTool(&t->Model, ev.ToolCallId, ev.ToolName, ev.ToolArgsJson, ev.Timestamp,
+                        ToolLabel_Find(t->ToolLabels, t->ToolLabelCount, ev.ToolName));
       t->RunStats.Tools++;
       t->State = TuiState::Tool;
       SetTransientText(&t->StateTool, ev.ToolName);
@@ -2086,6 +2087,15 @@ void Tui_InitModel(Tui* t, Arena* mem, TuiOpts opts) {
   t->ModalMem = ArenaCreate((usize)1 << 20);
   t->CommandMemUp = true;
   SetCommandsUnlocked(t, opts.Commands, opts.CommandCount);
+  if (opts.ToolLabelCount) {
+    t->ToolLabels = (ToolLabel*)ArenaAlloc(mem, sizeof(ToolLabel) * opts.ToolLabelCount,
+                                           alignof(ToolLabel));
+    for (u32 i = 0; i < opts.ToolLabelCount; i++) {
+      t->ToolLabels[i].Name = StrView_Dup(mem, opts.ToolLabels[i].Name);
+      t->ToolLabels[i].Label = StrView_Dup(mem, opts.ToolLabels[i].Label);
+    }
+    t->ToolLabelCount = opts.ToolLabelCount;
+  }
   t->ScreenMem = ArenaCreate();
   t->ScreenUp = true;
   Screen_Init(&t->Scr, &t->ScreenMem, nullptr, nullptr);

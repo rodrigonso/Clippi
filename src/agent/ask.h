@@ -17,6 +17,9 @@ struct AgentAskRequest {
   StrView Category;
   const StrView* Choices;
   u32 ChoiceCount;
+  // Offers a typed answer beside Choices; such an answer reports
+  // ChoiceIndex == ChoiceCount. Off for prompts that dispatch on the index.
+  bool AllowFreeText;
 };
 
 struct AgentAskResponse {

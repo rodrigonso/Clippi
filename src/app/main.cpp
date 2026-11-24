@@ -223,9 +223,19 @@ static void RunTuiRepl(InteractiveRuntime* rt) {
   u32 catalogCount = 0;
   opts.Commands = RuntimeCommandCatalog(rt, rt->Mem, &catalogCount);
   opts.CommandCount = catalogCount;
+  const AgentHarnessConfig& harnessTools = rt->Harness->Config;
+  Arena labelScratch = ArenaCreate();
+  Array<ToolLabel> toolLabels = Array_Make<ToolLabel>(&labelScratch, harnessTools.ToolCount + 1);
+  for (u32 i = 0; i < harnessTools.ToolCount; i++)
+    Array_Push(&toolLabels,
+               ToolLabel{harnessTools.Tools[i].Name, harnessTools.Tools[i].Label});
+  opts.ToolLabels = toolLabels.Data;
+  opts.ToolLabelCount = toolLabels.Count;
 
   Tui tui;
-  if (!Tui_Start(&tui, rt->Mem, opts)) {
+  bool started = Tui_Start(&tui, rt->Mem, opts);
+  ArenaRelease(&labelScratch);
+  if (!started) {
     Http_GlobalInit();
     RunPlainRepl(rt);
     return;

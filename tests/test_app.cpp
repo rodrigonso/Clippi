@@ -1554,6 +1554,98 @@ bool ArenaContainsSyntheticKey(const Arena* arena) {
                           "synthetic-private-key");
 }
 
+struct AskRun {
+  AgentAskUser Ask;
+  AgentAskRequest Request;
+  Arena Mem;
+  AgentAskResponse Response;
+};
+
+void RunAsk(void* user) {
+  AskRun* run = (AskRun*)user;
+  run->Response = AgentAskUser_Invoke(&run->Ask, &run->Mem, &run->Request);
+}
+
+u32 ModalOptionCount(Tui* tui) {
+  Mutex_Lock(&tui->Lock);
+  u32 count = tui->Sess.ModalOptionCount;
+  Mutex_Unlock(&tui->Lock);
+  return count;
+}
+
+void TestRuntimeAskUserFreeText() {
+  Arena arena = ArenaCreate();
+  Arena tuiArena = ArenaCreate();
+  Tui tui = {};
+  TuiOpts options = {};
+  Tui_InitModel(&tui, &tuiArena, options);
+  InteractiveRuntime rt = {};
+  InteractiveRuntime_Init(&rt, &arena);
+  rt.Interactive = true;
+  rt.TuiView = &tui;
+
+  StrView choices[] = {SVL("Postgres"), SVL("SQLite")};
+  AskRun run = {};
+  run.Ask = RuntimeAskUser(&rt);
+  run.Request.Question = SVL("Which database?");
+  run.Request.Choices = choices;
+  run.Request.ChoiceCount = 2;
+  run.Request.AllowFreeText = true;
+  run.Mem = ArenaCreate();
+  Thread worker = {};
+
+  CHECK(Thread_Start(&worker, RunAsk, &run));
+  if (WaitSettingsModal(&tui, TuiModalKind::Select, run.Request.Question)) {
+    CHECK(ModalOptionCount(&tui) == 3);
+    FeedSettings(&tui, "\x1b[B\x1b[B\r");
+    if (WaitSettingsModal(&tui, TuiModalKind::Text, run.Request.Question))
+      FeedSettings(&tui, "  DuckDB please \r");
+    Thread_Join(&worker);
+  } else {
+    StopSettingsWorker(&tui, &worker);
+  }
+  CHECK_ALL(run.Response.Status == AgentAskStatus::Answered,
+            run.Response.ChoiceIndex == 2,
+            StrView_EqCStr(run.Response.Answer, "  DuckDB please "));
+
+  CHECK(Thread_Start(&worker, RunAsk, &run));
+  if (WaitSettingsModal(&tui, TuiModalKind::Select, run.Request.Question)) {
+    FeedSettings(&tui, "\x1b[B\x1b[B\r");
+    if (WaitSettingsModal(&tui, TuiModalKind::Text, run.Request.Question))
+      FeedSettings(&tui, "\x7f");
+    if (WaitSettingsModal(&tui, TuiModalKind::Select, run.Request.Question)) {
+      Mutex_Lock(&tui.Lock);
+      u32 reselected = tui.ModalSelected;
+      Mutex_Unlock(&tui.Lock);
+      CHECK(reselected == 2);
+      FeedSettings(&tui, "\x1b[H\r");
+    }
+    Thread_Join(&worker);
+  } else {
+    StopSettingsWorker(&tui, &worker);
+  }
+  CHECK_ALL(run.Response.Status == AgentAskStatus::Answered,
+            run.Response.ChoiceIndex == 0,
+            StrView_EqCStr(run.Response.Answer, "Postgres"));
+
+  run.Request.AllowFreeText = false;
+  CHECK(Thread_Start(&worker, RunAsk, &run));
+  if (WaitSettingsModal(&tui, TuiModalKind::Select, run.Request.Question)) {
+    CHECK(ModalOptionCount(&tui) == 2);
+    FeedSettings(&tui, "\x1b");
+    Thread_Join(&worker);
+  } else {
+    StopSettingsWorker(&tui, &worker);
+  }
+  CHECK(run.Response.Status == AgentAskStatus::Declined);
+
+  ArenaRelease(&run.Mem);
+  InteractiveRuntime_Release(&rt);
+  Tui_Stop(&tui);
+  ArenaRelease(&tuiArena);
+  ArenaRelease(&arena);
+}
+
 void TestSecretSettingsCommands() {
   Arena arena = ArenaCreate();
   Arena fixture = ArenaCreate();
@@ -1849,6 +1941,7 @@ void TestApp() {
   TestEventPumpTranscriptLifecycle();
   TestJsonOutput();
   TestSecretSettingsCommands();
+  TestRuntimeAskUserFreeText();
   TestPlainTextInputPrivacy();
   TestConfigPaths();
   TestTrustChoiceMenu();

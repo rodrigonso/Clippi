@@ -141,6 +141,8 @@ struct TuiOpts {
   u8 Accent = 0;
   const TuiCommandSpec* Commands = nullptr;
   u32 CommandCount = 0;
+  const ToolLabel* ToolLabels = nullptr;
+  u32 ToolLabelCount = 0;
 };
 
 struct Tui {
@@ -154,6 +156,8 @@ struct Tui {
   Arena RevealMem;
   Arena ScreenMem;
   TuiAgentHooks Agent;
+  ToolLabel* ToolLabels;  // in Mem: survives session clears
+  u32 ToolLabelCount;
   Term Trm;  Screen Scr;
   UiContext Ui;
   UiTextInputState InputUi;

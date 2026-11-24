@@ -1159,6 +1159,9 @@ void TestTui() {
   TuiOpts o;
   o.ModelName = SVL("test-model");
   o.Color = true;
+  ToolLabel labels[] = {{SVL("shell"), SVL("Shell")}};
+  o.ToolLabels = labels;
+  o.ToolLabelCount = 1;
 
   Tui t;
   Tui_InitModel(&t, &a, o);

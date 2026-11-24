@@ -10,6 +10,7 @@ namespace {
 
 const u32 TOOL_LABEL_MAX_BYTES = 32;
 const u32 TOOL_SUMMARY_MAX_BYTES = 240;
+const u32 TOOL_ANSWER_MAX_BYTES = 60;
 const u32 TOOL_ARGS_PREVIEW_BYTES = 160;
 const u32 TOOL_PATH_MAX_BYTES = 300;
 const u32 TOOL_FILTER_MAX_BYTES = 320;
@@ -238,12 +239,9 @@ void AppendShellFailure(StrBuf* out, StrView result) {
     StrBuf_AppendCStr(out, "failed");
 }
 
-void InitUnknown(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrView args) {
+void InitUnknown(Arena* scratch, ToolView* view, StrView args) {
   view->Kind = ToolViewKind::Unknown;
   view->Marker = SVL(">");
-  StrBuf label = StrBuf_Make(scratch, TOOL_LABEL_MAX_BYTES + 1);
-  AppendFlat(scratch, &label, name, TOOL_LABEL_MAX_BYTES);
-  view->Label = StrView_Dup(arena, StrBuf_View(&label));
   u32 n = args.Length < TOOL_ARGS_PREVIEW_BYTES ? args.Length : TOOL_ARGS_PREVIEW_BYTES;
   while (n < args.Length && n > 0 && Utf8IsContinuation(args.Data[n])) n--;
   AppendFlat(scratch, &view->Detail, StrView{args.Data, n}, TOOL_SUMMARY_MAX_BYTES);
@@ -259,14 +257,13 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
   StrBuf_Append(&jsonText, argsJson);
   JsonValue* args = Json_Parse(scratch, StrBuf_View(&jsonText));
   if (!Json_IsObject(args)) {
-    InitUnknown(arena, scratch, view, name, argsJson);
+    InitUnknown(scratch, view, argsJson);
     return;
   }
 
   if (Eq(name, "shell")) {
     view->Kind = ToolViewKind::Shell;
     view->Marker = SVL("$");
-    view->Label = SVL("Shell");
     AppendFlat(scratch, &view->Detail, Json_GetStr(args, "command"), TOOL_SUMMARY_MAX_BYTES);
     return;
   }
@@ -275,7 +272,6 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
     view->Kind = ToolViewKind::Read;
     StrView path = Json_GetStr(args, "path");
     view->Marker = ReadMarker(path);
-    view->Label = SVL("Read");
     i64 offset = Json_GetInt(args, "offset", 0);
     i64 limit = Json_GetInt(args, "limit", 0);
     AppendFlat(scratch, &view->Detail, path, TOOL_SUMMARY_MAX_BYTES);
@@ -293,7 +289,6 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
   if (Eq(name, "grep")) {
     view->Kind = ToolViewKind::Grep;
     view->Marker = SVL("/");
-    view->Label = SVL("Search");
     AppendQuoted(scratch, &view->Detail, Json_GetStr(args, "pattern"));
     StrBuf_AppendCStr(&view->Detail, " in ");
     StrView path = Json_GetStr(args, "path");
@@ -310,7 +305,6 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
   if (Eq(name, "find")) {
     view->Kind = ToolViewKind::Find;
     view->Marker = SVL("/");
-    view->Label = SVL("Find");
     AppendQuoted(scratch, &view->Detail, Json_GetStr(args, "pattern"));
     StrBuf_AppendCStr(&view->Detail, " in ");
     StrView path = Json_GetStr(args, "path");
@@ -321,7 +315,6 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
   if (Eq(name, "ls")) {
     view->Kind = ToolViewKind::Ls;
     view->Marker = SVL("L");
-    view->Label = SVL("List");
     StrView path = Json_GetStr(args, "path");
     AppendFlat(scratch, &view->Detail, path.Length ? path : SVL("."),
                TOOL_SUMMARY_MAX_BYTES);
@@ -331,7 +324,6 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
   if (Eq(name, "write")) {
     view->Kind = ToolViewKind::Write;
     view->Marker = SVL("+");
-    view->Label = SVL("Write");
     AppendFlat(scratch, &view->Detail, Json_GetStr(args, "path"), TOOL_SUMMARY_MAX_BYTES);
     view->CountHint = Json_GetStr(args, "content").Length;
     return;
@@ -340,7 +332,6 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
   if (Eq(name, "edit")) {
     view->Kind = ToolViewKind::Edit;
     view->Marker = SVL("~");
-    view->Label = SVL("Edit");
     AppendFlat(scratch, &view->Detail, Json_GetStr(args, "path"), TOOL_SUMMARY_MAX_BYTES);
     JsonValue* edits = Json_Get(args, "edits");
     if (Json_IsString(edits)) {
@@ -357,15 +348,73 @@ void InitParsed(Arena* arena, Arena* scratch, ToolView* view, StrView name, StrV
     return;
   }
 
-  InitUnknown(arena, scratch, view, name, argsJson);
+  if (Eq(name, "ask_user")) {
+    view->Kind = ToolViewKind::Ask;
+    view->Marker = SVL("?");
+    StrView question = Json_GetStr(args, "question");
+    if (question.Length) {
+      AppendQuoted(scratch, &view->Detail, question);
+    } else if (Json_GetStr(args, "permission_request_id").Length) {
+      StrBuf_AppendCStr(&view->Detail, "permission request");
+      view->CountHint = 1;
+    }
+    return;
+  }
+
+  InitUnknown(scratch, view, argsJson);
+}
+
+void AppendAskOutcome(StrBuf* out, StrView result, bool permission) {
+  if (permission) {
+    if (StrView_StartsWith(result, SVL("Permission granted")))
+      StrBuf_AppendCStr(out, "granted");
+    else if (StrView_StartsWith(result, SVL("Permission denied")))
+      StrBuf_AppendCStr(out, "denied");
+    else
+      StrBuf_AppendCStr(out, "completed");
+    return;
+  }
+  Arena scratch = ArenaCreate((usize)result.Length * TOOL_PARSE_SCRATCH_SCALE +
+                              TOOL_PARSE_SCRATCH_BASE);
+  StrView answer = StrView_Trim(result);
+  StrBuf flat = StrBuf_Make(&scratch, TOOL_ANSWER_MAX_BYTES + 8);
+  AppendFlat(&scratch, &flat, answer, TOOL_ANSWER_MAX_BYTES + 4);
+  StrView text = StrBuf_View(&flat);
+  if (text.Length > TOOL_ANSWER_MAX_BYTES) {
+    u32 n = TOOL_ANSWER_MAX_BYTES;
+    while (n > 0 && Utf8IsContinuation(text.Data[n])) n--;
+    StrBuf_Append(out, StrView{text.Data, n});
+    StrBuf_AppendCStr(out, "...");
+  } else {
+    StrBuf_Append(out, text);
+  }
+  ArenaRelease(&scratch);
+}
+
+void AppendAskFailure(StrBuf* out, StrView result) {
+  if (StrView_Contains(result, "dismissed")) StrBuf_AppendCStr(out, "dismissed");
+  else if (StrView_Contains(result, "no user is available"))
+    StrBuf_AppendCStr(out, "unavailable");
+  else if (StrView_StartsWith(result, SVL("cancelled"))) StrBuf_AppendCStr(out, "cancelled");
+  else StrBuf_AppendCStr(out, "failed");
 }
 
 }
 
-void ToolView_Init(Arena* arena, ToolView* view, StrView name, StrView argsJson) {
+StrView ToolLabel_Find(const ToolLabel* labels, u32 count, StrView name) {
+  for (u32 i = 0; i < count; i++)
+    if (StrView_Eq(labels[i].Name, name)) return labels[i].Label;
+  return {};
+}
+
+void ToolView_Init(Arena* arena, ToolView* view, StrView name, StrView argsJson,
+                   StrView label) {
   usize reserve = (usize)argsJson.Length * TOOL_PARSE_SCRATCH_SCALE + TOOL_PARSE_SCRATCH_BASE;
   Arena scratch = ArenaCreate(reserve);
   InitParsed(arena, &scratch, view, name, argsJson);
+  StrBuf clean = StrBuf_Make(&scratch, TOOL_LABEL_MAX_BYTES + 1);
+  AppendFlat(&scratch, &clean, label.Length ? label : name, TOOL_LABEL_MAX_BYTES);
+  view->Label = StrView_Dup(arena, StrBuf_View(&clean));
   ArenaRelease(&scratch);
 }
 
@@ -374,6 +423,7 @@ void ToolView_Finish(ToolView* view, StrView result, bool isError) {
   view->OutcomeSplit = 0;
   if (isError) {
     if (view->Kind == ToolViewKind::Shell) AppendShellFailure(&view->Outcome, result);
+    else if (view->Kind == ToolViewKind::Ask) AppendAskFailure(&view->Outcome, result);
     else StrBuf_AppendCStr(&view->Outcome, "failed");
     return;
   }
@@ -432,6 +482,9 @@ void ToolView_Finish(ToolView* view, StrView result, bool isError) {
       StrBuf_AppendChar(&view->Outcome, '-');
       StrBuf_AppendU64(&view->Outcome, removed);
     } break;
+    case ToolViewKind::Ask:
+      AppendAskOutcome(&view->Outcome, result, view->CountHint != 0);
+      break;
     case ToolViewKind::Unknown:
       StrBuf_AppendCStr(&view->Outcome, "completed");
       break;
