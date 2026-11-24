@@ -732,7 +732,48 @@ struct TranscriptComponentData {
   u16 Height;
   bool HasSelection;
   TranscriptSelection Selection;
+  bool EmptyState;
 };
+
+// The Clippi mascot as 1-bit pixel rows, MSB leftmost; each cell row draws two
+// pixel rows with half blocks.
+constexpr u16 kMascotPixels[] = {
+    0b0000000000000000, 0b0000001111110000, 0b0000010000001000, 0b0000010000001000,
+    0b0000010000001000, 0b0000010000001000, 0b0111100000001000, 0b1000010000001000,
+    0b0111100001111000, 0b1111110010000100, 0b1110010001111000, 0b1110010011111100,
+    0b1111110011100100, 0b0111100011100100, 0b0000000011111100, 0b0100000001111000,
+    0b0100100001000010, 0b0100100001000100, 0b0100100001000100, 0b0100100001000100,
+    0b0100100001000100, 0b0100011110000100, 0b0100000000000100, 0b0010000000001000,
+    0b0001111111110000, 0b0000000000000000,
+};
+constexpr u16 kMascotCols = 15;
+constexpr u16 kMascotRows = (u16)(sizeof(kMascotPixels) / sizeof(kMascotPixels[0]) / 2);
+
+void PaintEmptyState(const Tui* t, UiCanvas* canvas, u16 top, u16 rows, u16 cols) {
+  StrView title = SVL("Clippi");
+  StrView hint = SVL("Ask anything, or type / for commands");
+  u16 height = (u16)(kMascotRows + 3);
+  if (rows < height || cols < hint.Length + 2) return;
+  u16 y = (u16)(top + (rows - height) / 2);
+  u16 x = (u16)((cols - kMascotCols) / 2);
+  for (u16 r = 0; r < kMascotRows; r++) {
+    u16 upper = kMascotPixels[2 * r];
+    u16 lower = kMascotPixels[2 * r + 1];
+    for (u16 c = 0; c < kMascotCols; c++) {
+      u16 bit = (u16)(0x8000u >> c);
+      bool a = (upper & bit) != 0;
+      bool b = (lower & bit) != 0;
+      if (!a && !b) continue;
+      UiCanvas_PutChar(canvas, x + c, y + r, a && b ? 0x2588u : a ? 0x2580u : 0x2584u,
+                       StyleDefault());
+    }
+  }
+  y = (u16)(y + kMascotRows + 1);
+  UiCanvas_PutText(canvas, (cols - (u16)title.Length) / 2, y, title,
+                   StyleMake(COL_DEFAULT, COL_DEFAULT, ATTR_BOLD));
+  UiCanvas_PutText(canvas, (cols - (u16)hint.Length) / 2, y + 1, hint,
+                   TuiSt(t, 244, ATTR_NONE));
+}
 
 bool EventTranscriptNode(UiContext* ui, UiNode* node, const UiEvent& event);
 
@@ -798,6 +839,12 @@ void PaintTranscriptNode(UiContext*, const UiNode* node, UiCanvas* canvas) {
           canvas, UiRect{selected.Start, r,
                          (u16)(selected.End - selected.Start), 1},
           SelectionTransform, t);
+  }
+
+  if (data->EmptyState && data->Layout.Count < data->Height) {
+    u16 top = data->Layout.Count ? (u16)(data->Layout.Count + 1) : 0;
+    if (top < data->Height)
+      PaintEmptyState(t, canvas, top, (u16)(data->Height - top), data->Layout.Cols);
   }
 
   t->LastScrollbarThumbTop = 0;
@@ -981,8 +1028,9 @@ void ComposeAtSize(Tui* t, u16 cols, u16 rows, u64 nowMs) {
       (TranscriptComponentData*)Ui_FrameAlloc(
           &t->Ui, sizeof(TranscriptComponentData),
           alignof(TranscriptComponentData));
-  *transcriptData =
-      TranscriptComponentData{t, transcript, paneH, hasSelection, selection};
+  bool emptyState = !t->AgentRunning && !LineModel_HasConversation(&t->Model);
+  *transcriptData = TranscriptComponentData{t, transcript, paneH, hasSelection, selection,
+                                            emptyState};
   UiNodeDesc transcriptNode = {};
   transcriptNode.Kind = UiNodeKind::Custom;
   transcriptNode.Key = Ui_Key(SVL("transcript"));

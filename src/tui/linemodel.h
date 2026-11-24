@@ -152,6 +152,8 @@ bool LineModel_FitsAtWidth(LineModel* m, u16 width, u32 maxRows);
 const SpanLine* LineModel_At(const LineModel* m, u32 i);
 u64 LineModel_RowEntryId(const LineModel* m, u32 row);
 u64 LineModel_DisplayRevision(const LineModel* m);
+// True once anything but notices (Info/Error) has been added.
+bool LineModel_HasConversation(const LineModel* m);
 bool LineModel_FindEntryRows(const LineModel* m, u64 entryId, u32* firstRow, u32* rowCount);
 bool LineModel_IsEntryCollapsed(const LineModel* m, u64 entryId);
 bool LineModel_ToggleEntry(LineModel* m, u64 entryId);

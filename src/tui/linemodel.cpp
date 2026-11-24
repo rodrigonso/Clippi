@@ -994,6 +994,14 @@ u64 LineModel_DisplayRevision(const LineModel* m) {
   return m->DisplayRevision;
 }
 
+bool LineModel_HasConversation(const LineModel* m) {
+  for (u32 i = 0; i < m->Entries.Count; i++) {
+    EntryKind kind = m->Entries.Data[i].Kind;
+    if (kind != EntryKind::Info && kind != EntryKind::Error) return true;
+  }
+  return false;
+}
+
 DisplayRowLayout LineModel_LayoutDisplayRow(const SpanLine* line, u16 columns) {
   DisplayRowLayout layout = {};
   layout.Line = line;

@@ -1212,6 +1212,30 @@ void TestTui() {
   }
 
   {
+    Arena ea = ArenaCreate();
+    Tui* et = ArenaPushStruct(&ea, Tui);
+    InitHeadlessTui(et, &ea, true);
+    const char* hint = "Ask anything, or type / for commands";
+    Tui_ComposeFrame(et, 60, 30);
+    bool fresh = ScreenContains(et, hint) && ScreenContains(et, "Clippi");
+    Tui_ComposeFrame(et, 60, 12);
+    bool tooShort = ScreenContains(et, hint);
+    LineModel_AddNotice(&et->Model, EntryKind::Info, SVL("startup notice"));
+    Tui_ComposeFrame(et, 60, 30);
+    bool withNotice = ScreenContains(et, hint) && ScreenContains(et, "startup notice");
+    et->AgentRunning = true;
+    Tui_ComposeFrame(et, 60, 30);
+    bool running = ScreenContains(et, hint);
+    et->AgentRunning = false;
+    LineModel_AddUser(&et->Model, SVL("first prompt"), 0);
+    Tui_ComposeFrame(et, 60, 30);
+    bool conversation = ScreenContains(et, hint);
+    CHECK_ALL(fresh, !tooShort, withNotice, !running, !conversation);
+    Tui_Stop(et);
+    ArenaRelease(&ea);
+  }
+
+  {
     Arena spinnerArena = ArenaCreate();
     Tui spinnerTui;
     InitHeadlessTui(&spinnerTui, &spinnerArena, false);
@@ -1250,7 +1274,7 @@ void TestTui() {
     CHECK(Tui_UpdateDebugOverlay(&ot, TuiToggleAction::Toggle));
     SeedPerf(&ot);
     Tui_ComposeFrame(&ot, 60, 24, 1000);
-    CHECK(FrameHash(&ot) == 16153633079681490555ull);
+    CHECK(FrameHash(&ot) == 10216703255224257733ull);
 
     CHECK_ALL(ScreenContains(&ot, "debug"),
               ScreenContains(&ot, "58.8"),     // 1e7 / 17000us, in tenths
