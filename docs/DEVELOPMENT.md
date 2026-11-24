@@ -71,8 +71,7 @@ To build only the CLI and run it from your current directory:
 
 ### Visual Studio
 
-The checked-in `.vsconfig` declares the Desktop development with C++ workload
-and CMake tools. Open the folder in Visual Studio to use its CMake integration,
+Open the folder in Visual Studio to use its CMake integration,
 or build with `.\tools\build.ps1 -Config Debug` and launch or attach the debugger to
 `build\clippi.exe`. There are no project-specific CMake presets to maintain.
 
