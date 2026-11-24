@@ -175,12 +175,13 @@ void TestHostInfo() {
                            "../.git/modules/sub"),
             Git_GitdirFromFile(SVL("not a gitdir file")).Length == 0);
 
-  StrView home = SVL("C:\\Users\\rodri");
+  StrView home = SVL("C:\\Users\\dev");
   CHECK_ALL(
-      StrView_EqCStr(Sys_AbbreviatePath(&a, SVL("C:\\Users\\rodri\\.worktrees\\wt"), home),
+      StrView_EqCStr(Sys_AbbreviatePath(&a, SVL("C:\\Users\\dev\\.worktrees\\wt"), home),
                      "~\\.worktrees\\wt"),
       StrView_EqCStr(Sys_AbbreviatePath(&a, home, home), "~"));
-  CHECK(StrView_EqCStr(Sys_AbbreviatePath(&a, SVL("C:\\Users\\rodrigo\\x"), home), "C:\\Users\\rodrigo\\x"));
+  CHECK(StrView_EqCStr(Sys_AbbreviatePath(&a, SVL("C:\\Users\\developer\\x"), home),
+                       "C:\\Users\\developer\\x"));
   CHECK(StrView_EqCStr(Sys_AbbreviatePath(&a, SVL("D:\\proj"), StrView{nullptr, 0}), "D:\\proj"));
 
   StrView cwd = Sys_CurrentDir(&a);

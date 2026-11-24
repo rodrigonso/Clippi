@@ -128,7 +128,8 @@ for build options, the dependency-free core SDK, and packaging.
 Clippi reads and modifies files and runs shell commands with your user's
 permissions, and sends conversation and tool context to the selected model
 provider. Permission modes are an approval policy, not a sandbox. Start in Ask
-mode and review what the agent proposes.
+mode and review what the agent proposes. To report a vulnerability, see the
+[security policy](SECURITY.md).
 
 ## License
 
