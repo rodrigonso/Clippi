@@ -57,7 +57,6 @@ struct DreamRun {
   AgentResolveAuthFn ResolveAuth;
   AgentPermissionReviewer Reviewer;
   StrView ReviewerModel;
-  f64 ReviewerThreshold;
   AgentRetryPolicy Retry;
   AgentTurnLimitPolicy TurnLimit;
   AgentCompactionPolicy Compaction;

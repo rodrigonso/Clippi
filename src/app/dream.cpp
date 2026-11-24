@@ -642,7 +642,6 @@ bool RunAgent(Arena* arena, const DreamRun* run, const DreamPaths* paths,
   config.PermissionMode = AgentPermissionMode::Auto;
   config.PermissionReviewer = run->Reviewer;
   config.PermissionReviewerModel = run->ReviewerModel;
-  config.PermissionReviewerThreshold = run->ReviewerThreshold;
   config.WorkingDirectory = location->Root;
   config.Hooks.User = &sandbox;
   config.Hooks.BeforeTool = SandboxGate;
@@ -1049,10 +1048,6 @@ int Dream_RunCommandLine(Arena* arena, const DreamCommandLine* options) {
   }
   RuntimeSelection selected =
       LoadRuntimeSelection(arena, options->SettingsPath, options->ModelOverride);
-  if (selected.Settings.PermissionReviewerInvalid || selected.Settings.PermissionReviewerThresholdInvalid) {
-    fprintf(stderr, "error: the permission reviewer in settings is invalid\n");
-    return 1;
-  }
   if (!selected.Settings.Memory) {
     fprintf(stderr, "error: memory is turned off in settings; run /memory on first\n");
     return 1;
@@ -1072,9 +1067,6 @@ int Dream_RunCommandLine(Arena* arena, const DreamCommandLine* options) {
   AppAuth auth = {};
   auth.Mem = arena;
   auth.Path = options->AuthPath;
-  StrView reviewerModel = selected.Settings.PermissionReviewerModel.Length
-                              ? selected.Settings.PermissionReviewerModel
-                              : AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
   JsonlRepository jsonl = {};
   JsonlRepository_Init(&jsonl, options->DataRoot);
   SessionRepository sessions = JsonlRepository_AsRepository(&jsonl);
@@ -1089,11 +1081,10 @@ int Dream_RunCommandLine(Arena* arena, const DreamCommandLine* options) {
   run.ProviderImpl = selected.Spec->CreateProvider(arena, selected.Spec);
   run.AuthUser = &auth;
   run.ResolveAuth = AppResolveAuth;
-  run.ReviewerModel = reviewerModel;
-  run.ReviewerThreshold = selected.Settings.PermissionReviewerThreshold;
-  run.Reviewer = TypeSafePermissionReviewer_Make(arena, reviewerModel,
-                                                 selected.Settings.PermissionReviewerThreshold,
-                                                 options->AuthPath);
+  run.Reviewer = PermissionReviewer_ForProvider(
+      arena, options->AgentDirectory, selected.Spec,
+      ProviderModelChoice_Find(&selected.Settings.PermissionReviewerModels, selected.Spec->Id),
+      run.ProviderImpl, run.AuthUser, run.ResolveAuth, &run.ReviewerModel);
   run.Retry = selected.Settings.Retry;
   run.TurnLimit = selected.Settings.TurnLimit;
   run.Compaction = selected.Settings.Compaction;

@@ -205,12 +205,9 @@ Interactive commands:
 - `/trust` — save project trust for a future Clippi process.
 - `/permissions [ask|auto|yolo|reset]` — inspect or change [tool permissions](PERMISSIONS.md);
   opens a settings menu in the TUI; `reset` clears session grants and restores Ask.
-- `/permissions key [clear]` — configure the Jev API key through masked entry
-  or remove the saved key; never accepts a key as a command argument.
-- `/permissions model [jev-...]` — inspect or save and apply the Jev reviewer
-  model while idle; defaults to `jev-latest`.
-- `/permissions threshold [0-1]` — inspect or save and apply the Auto review
-  threshold while idle; applies to both judgments and defaults to `0.95`.
+- `/permissions model [<model id>|default]` — inspect, or save and apply while
+  idle, the Auto reviewer model for the active provider; `default` returns to
+  the provider's cheap default.
 - `/reload` — transactionally reload settings and prompt context while idle.
 - `/debug [on|off]` — toggle the [performance overlay](#debug-overlay). TUI only.
 - `/rounded [on|off]` — toggle [rounded corners and bullets](#rounded-style).

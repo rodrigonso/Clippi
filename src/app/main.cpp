@@ -637,19 +637,6 @@ int main(int argc, char** argv) {
   appAuth.Path = authPath;
   RuntimeSelection selected =
       LoadRuntimeSelection(&arena, settingsPath, modelOverride);
-  if (selected.Settings.PermissionReviewerInvalid) {
-    fprintf(stderr,
-            "error: permissionReviewerModel in settings must be a non-empty, "
-            "supported Jev model name or alias\n");
-    ArenaRelease(&arena);
-    return 1;
-  }
-  if (selected.Settings.PermissionReviewerThresholdInvalid) {
-    fprintf(stderr,
-            "error: permissionReviewerThreshold in settings must be a number from 0 to 1\n");
-    ArenaRelease(&arena);
-    return 1;
-  }
   if (!selected.Spec || !selected.Spec->CreateProvider || !selected.Spec->CreateModel) {
     fprintf(stderr, "error: no usable built-in provider is registered\n");
     Http_GlobalShutdown();
@@ -749,9 +736,6 @@ int main(int argc, char** argv) {
             "'%.*s'; using model defaults where needed\n",
             (int)model.Id.Length, model.Id.Data);
   }
-  StrView reviewerId = selected.Settings.PermissionReviewerModel.Length
-                           ? selected.Settings.PermissionReviewerModel
-                           : AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
   FileLock_Init();
   // Empty under `--no-session`: the tool falls back to the OS temp directory.
   ShellToolContext shellContext = {};
@@ -841,11 +825,6 @@ int main(int argc, char** argv) {
   harnessConfig.Retry = selected.Settings.Retry;
   harnessConfig.TurnLimit = selected.Settings.TurnLimit;
   harnessConfig.PermissionMode = selected.Settings.PermissionMode;
-  harnessConfig.PermissionReviewerModel = reviewerId;
-  harnessConfig.PermissionReviewerThreshold = selected.Settings.PermissionReviewerThreshold;
-  harnessConfig.PermissionReviewer =
-      TypeSafePermissionReviewer_Make(&arena, reviewerId,
-                                      selected.Settings.PermissionReviewerThreshold, authPath);
   harnessConfig.WorkingDirectory = workingDirectory;
   if (hasMaxTurnsOverride) {
     harnessConfig.TurnLimit.Enabled = maxTurnsOverride != 0;
@@ -853,6 +832,11 @@ int main(int argc, char** argv) {
   }
   harnessConfig.AuthUser = &appAuth;
   harnessConfig.ResolveAuth = AppResolveAuth;
+  harnessConfig.PermissionReviewer = PermissionReviewer_ForProvider(
+      &arena, agentDirectory, selected.Spec,
+      ProviderModelChoice_Find(&selected.Settings.PermissionReviewerModels, selected.Spec->Id),
+      harnessConfig.ProviderImpl, harnessConfig.AuthUser, harnessConfig.ResolveAuth,
+      &harnessConfig.PermissionReviewerModel);
 
   SessionLog sessionLog = {};
   SessionInfo sessionInfo = {};
@@ -945,6 +929,11 @@ int main(int argc, char** argv) {
         harness.Config.ModelInfo = model;
         harness.Config.ProviderImpl = restored->CreateProvider(&arena, restored);
         harness.Config.Stream.Profile = profile;
+        harness.Config.PermissionReviewer = PermissionReviewer_ForProvider(
+            &arena, agentDirectory, restored,
+            ProviderModelChoice_Find(&selected.Settings.PermissionReviewerModels, restored->Id),
+            harness.Config.ProviderImpl, harness.Config.AuthUser, harness.Config.ResolveAuth,
+            &harness.Config.PermissionReviewerModel);
         if (modelOverride) {
           SessionResult overridden = AgentHarness_SetModel(
               &harness, model, harness.Config.ProviderImpl, profile);
@@ -996,8 +985,7 @@ int main(int argc, char** argv) {
   runtime.PreferredProfile = preference;
   runtime.PermissionMode = selected.Settings.PermissionMode;
   runtime.PersistedPermissionMode = persistedPermissionMode;
-  runtime.PermissionReviewerModel = reviewerId;
-  runtime.PermissionReviewerThreshold = selected.Settings.PermissionReviewerThreshold;
+  runtime.PermissionReviewerModels = selected.Settings.PermissionReviewerModels;
   runtime.YoloAcknowledged = selected.Settings.YoloAcknowledged;
   runtime.PermissionModeOverridden = hasPermissionModeOverride;
   runtime.Harness = &harness;

@@ -7,6 +7,7 @@
 #include "app/project_trust.h"
 #include "app/prompt_context.h"
 #include "app/provider_registry.h"
+#include "app/settings.h"
 #include "auth/resolve.h"
 #include "base/str.h"
 #include "session/jsonl_repository.h"
@@ -61,8 +62,8 @@ struct InteractiveRuntime {
   DefaultProjectTrust DefaultTrust;
   AgentPermissionMode PermissionMode = AgentPermissionMode::Auto;
   AgentPermissionMode PersistedPermissionMode = AgentPermissionMode::Auto;
-  StrView PermissionReviewerModel = AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
-  f64 PermissionReviewerThreshold = AGENT_PERMISSION_DEFAULT_REVIEWER_THRESHOLD;
+  // Saved per-provider overrides, in Mem; see RuntimeReviewerOverride.
+  Array<ProviderModelChoice> PermissionReviewerModels;
   bool YoloAcknowledged = false;
   // Keeps a one-run CLI mode from leaking into unrelated settings saves.
   bool PermissionModeOverridden = false;
@@ -93,6 +94,12 @@ StrView RuntimeMemoryStore(const InteractiveRuntime* rt, bool enabled);
 inline u32 RuntimeCacheIdleMinutes(const InteractiveRuntime* rt) {
   if (rt->HasCacheIdleMinutes) return rt->CacheIdleMinutes;
   return rt->Spec ? rt->Spec->PromptCacheIdleMinutes : 0;
+}
+
+// The active provider's saved reviewer model; empty means its default.
+inline StrView RuntimeReviewerOverride(const InteractiveRuntime* rt) {
+  return rt->Spec ? ProviderModelChoice_Find(&rt->PermissionReviewerModels, rt->Spec->Id)
+                  : StrView{};
 }
 
 bool RuntimeRebuildPrompt(InteractiveRuntime* rt, StrBuf* error);

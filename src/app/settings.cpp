@@ -57,6 +57,24 @@ StrView AppSettings_DefaultPath(Arena* a) {
   return ClippiDataPath(a, "settings.json");
 }
 
+StrView ProviderModelChoice_Find(const Array<ProviderModelChoice>* choices, StrView provider) {
+  for (u32 i = 0; choices && i < choices->Count; i++)
+    if (StrView_Eq(choices->Data[i].Provider, provider)) return choices->Data[i].Model;
+  return {};
+}
+
+Array<ProviderModelChoice> ProviderModelChoice_Set(Arena* arena,
+                                                   const Array<ProviderModelChoice>* choices,
+                                                   StrView provider, StrView model) {
+  u32 count = choices ? choices->Count : 0;
+  Array<ProviderModelChoice> next = Array_Make<ProviderModelChoice>(arena, count + 1);
+  for (u32 i = 0; i < count; i++)
+    if (!StrView_Eq(choices->Data[i].Provider, provider)) Array_Push(&next, choices->Data[i]);
+  if (model.Length)
+    Array_Push(&next, ProviderModelChoice{StrView_Dup(arena, provider), StrView_Dup(arena, model)});
+  return next;
+}
+
 AppSettingsLoadResult AppSettings_Load(Arena* a, StrView path, AppSettings* out) {
   *out = AppSettings{};
   StrView content = {};
@@ -204,27 +222,20 @@ AppSettingsLoadResult AppSettings_Load(Arena* a, StrView path, AppSettings* out)
       return AppSettingsLoadResult::Malformed;
   }
 
-  StrView permissionReviewerModel = AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
-  JsonValue* permissionReviewerValue =
-      Json_Get(root, "permissionReviewerModel");
+  // The retired single-string `permissionReviewerModel` only ever named TypeSafe
+  // Jev models, so it is ignored rather than migrated.
+  Array<ProviderModelChoice> permissionReviewerModels = {};
+  JsonValue* permissionReviewerValue = Json_Get(root, "permissionReviewerModels");
   if (permissionReviewerValue) {
-    if (!Json_IsString(permissionReviewerValue) ||
-        !TypeSafePermissionReviewer_ModelSupported(permissionReviewerValue->Str)) {
-      out->PermissionReviewerInvalid = true;
-      return AppSettingsLoadResult::Malformed;
+    if (!Json_IsObject(permissionReviewerValue)) return AppSettingsLoadResult::Malformed;
+    for (u32 i = 0; i < permissionReviewerValue->MemberCount; i++) {
+      const JsonMember& member = permissionReviewerValue->Members[i];
+      if (!member.Key.Length || !Json_IsString(member.Value) || !member.Value->Str.Length)
+        return AppSettingsLoadResult::Malformed;
+      if (PermissionReviewer_IsRetiredModel(member.Value->Str)) continue;
+      permissionReviewerModels = ProviderModelChoice_Set(
+          a, &permissionReviewerModels, member.Key, member.Value->Str);
     }
-    permissionReviewerModel = permissionReviewerValue->Str;
-  }
-
-  f64 permissionReviewerThreshold = AGENT_PERMISSION_DEFAULT_REVIEWER_THRESHOLD;
-  JsonValue* threshold = Json_Get(root, "permissionReviewerThreshold");
-  if (threshold) {
-    if (threshold->Kind != JsonKind::Number ||
-        !TypeSafePermissionReviewer_ThresholdIsValid(threshold->Number)) {
-      out->PermissionReviewerThresholdInvalid = true;
-      return AppSettingsLoadResult::Malformed;
-    }
-    permissionReviewerThreshold = threshold->Number;
   }
 
   bool yoloAcknowledged = false;
@@ -243,8 +254,7 @@ AppSettingsLoadResult AppSettings_Load(Arena* a, StrView path, AppSettings* out)
   out->Retry = retry;
   out->TurnLimit = turnLimit;
   out->PermissionMode = permissionMode;
-  out->PermissionReviewerModel = permissionReviewerModel;
-  out->PermissionReviewerThreshold = permissionReviewerThreshold;
+  out->PermissionReviewerModels = permissionReviewerModels;
   out->YoloAcknowledged = yoloAcknowledged;
   out->Rounded = rounded;
   out->Memory = memory;
@@ -262,15 +272,11 @@ bool AppSettings_Save(Arena* a, StrView path, const AppSettings* settings) {
   StrView permissionMode = AgentPermissionMode_Name(settings->PermissionMode);
   if (!trust.Length ||
       !permissionMode.Length ||
-      !TypeSafePermissionReviewer_ModelSupported(
-          settings->PermissionReviewerModel) ||
-      !TypeSafePermissionReviewer_ThresholdIsValid(
-          settings->PermissionReviewerThreshold) ||
       (settings->Profile.Effort != ModelEffort::None && !effort.Length))
     return false;
   StrBuf content = StrBuf_Make(
       a, settings->Provider.Length + settings->Model.Length + trust.Length +
-             effort.Length + settings->PermissionReviewerModel.Length + 192);
+             effort.Length + 192);
   StrBuf_AppendCStr(&content, "{\"provider\":");
   Json_WriteString(&content, settings->Provider);
   StrBuf_AppendCStr(&content, ",\"model\":");
@@ -322,13 +328,16 @@ bool AppSettings_Save(Arena* a, StrView path, const AppSettings* settings) {
   StrBuf_AppendChar(&content, '}');
   StrBuf_AppendCStr(&content, ",\"permissionMode\":");
   Json_WriteString(&content, permissionMode);
-  StrBuf_AppendCStr(&content, ",\"permissionReviewerModel\":");
-  Json_WriteString(&content, settings->PermissionReviewerModel);
-  StrBuf_AppendCStr(&content, ",\"permissionReviewerThreshold\":");
-  char threshold[64];
-  u32 thresholdLength = Json_FormatNumber(
-      threshold, sizeof(threshold), settings->PermissionReviewerThreshold);
-  StrBuf_Append(&content, StrView{threshold, thresholdLength});
+  if (settings->PermissionReviewerModels.Count) {
+    StrBuf_AppendCStr(&content, ",\"permissionReviewerModels\":{");
+    for (u32 i = 0; i < settings->PermissionReviewerModels.Count; i++) {
+      if (i) StrBuf_AppendChar(&content, ',');
+      Json_WriteString(&content, settings->PermissionReviewerModels.Data[i].Provider);
+      StrBuf_AppendChar(&content, ':');
+      Json_WriteString(&content, settings->PermissionReviewerModels.Data[i].Model);
+    }
+    StrBuf_AppendChar(&content, '}');
+  }
   StrBuf_AppendCStr(&content, ",\"yoloAcknowledged\":");
   StrBuf_AppendCStr(&content, settings->YoloAcknowledged ? "true" : "false");
   StrBuf_AppendCStr(&content, ",\"rounded\":");

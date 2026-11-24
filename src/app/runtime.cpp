@@ -294,12 +294,8 @@ bool RuntimePersistSettings(InteractiveRuntime* rt) {
   settings.PermissionMode = rt->PermissionModeOverridden
                                 ? rt->PersistedPermissionMode
                                 : rt->PermissionMode;
-  settings.PermissionReviewerModel =
-      rt->PermissionReviewerModel.Length
-          ? rt->PermissionReviewerModel
-          : AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
+  settings.PermissionReviewerModels = rt->PermissionReviewerModels;
   settings.YoloAcknowledged = rt->YoloAcknowledged;
-  settings.PermissionReviewerThreshold = rt->PermissionReviewerThreshold;
   settings.Rounded = rt->Rounded;
   settings.Memory = rt->MemoryEnabled;
   settings.DreamModel = rt->DreamModel;
@@ -315,21 +311,15 @@ bool RuntimePersistSettings(InteractiveRuntime* rt) {
 }
 
 bool RuntimeRefreshPermissionReviewer(InteractiveRuntime* rt) {
-  if (!rt || !rt->Mem || !rt->Harness) return false;
-  StrView reviewerId = rt->PermissionReviewerModel.Length
-                           ? rt->PermissionReviewerModel
-                           : AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
-  if (!TypeSafePermissionReviewer_ModelSupported(reviewerId) ||
-      !TypeSafePermissionReviewer_ThresholdIsValid(rt->PermissionReviewerThreshold))
-    return false;
-  rt->PermissionReviewerModel = reviewerId;
-  rt->Harness->Config.PermissionReviewerModel = reviewerId;
-  rt->Harness->Config.PermissionReviewerThreshold = rt->PermissionReviewerThreshold;
-  rt->Harness->Config.PermissionReviewer =
-      TypeSafePermissionReviewer_Make(rt->Mem, reviewerId,
-                                      rt->PermissionReviewerThreshold, rt->AuthPath);
+  if (!rt || !rt->Mem || !rt->Harness || !rt->Spec) return false;
+  StrView modelId = {};
+  rt->Harness->Config.PermissionReviewer = PermissionReviewer_ForProvider(
+      rt->Mem, rt->AgentDirectory, rt->Spec, RuntimeReviewerOverride(rt),
+      rt->Harness->Config.ProviderImpl, rt->Harness->Config.AuthUser,
+      rt->Harness->Config.ResolveAuth, &modelId);
+  rt->Harness->Config.PermissionReviewerModel = modelId;
   AgentPermissionEngine_InvalidateReviews(&rt->Harness->Permissions);
-  return true;
+  return modelId.Length != 0;
 }
 
 AppCommandDispatchResult RuntimeDispatchCommand(InteractiveRuntime* rt, StrView input,

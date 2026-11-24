@@ -556,11 +556,11 @@ void TestReviewInputsAndCacheFreshness() {
   CHECK_ALL(!decision.Block, state.Reviews == 4, engine.Cache.Count == 1);
 
   state.ReviewUnavailable = true;
-  state.Rationale = SVL("TypeSafe permission review failed (HTTP 529).");
+  state.Rationale = SVL("The permission reviewer request failed.");
   ToolArgs failed = Args(&arena, SVL("{\"command\":\"unavailable\"}"));
   AgentPermission_Decide(&arena, &gate, &tool, &failed, &decision);
   CHECK_ALL(decision.Block, state.Reviews == 5,
-            StrView_Contains(decision.Reason, "HTTP 529"),
+            StrView_Contains(decision.Reason, "reviewer request failed"),
             RequestId(&arena, decision.Reason).Length == DURABLE_ID_CHAR_COUNT);
 
   state.ReviewUnavailable = false;
@@ -753,7 +753,7 @@ bool HarnessReview(void* user, Arena*, const AgentPermissionReviewRequest* reque
             StrView_Eq(request->TrustedUserText, SVL("trusted requested work")));
   out->Decision = AgentPermissionReviewDecision::Allow;
   out->Rationale = SVL("requested work");
-  out->Model = SVL("jev-1.13.0");
+  out->Model = SVL("reviewer-model");
   return true;
 }
 
@@ -798,7 +798,7 @@ void TestHarnessReviewerIsolation() {
   config.ProviderImpl = ScriptProvider_Make(&script);
   config.PermissionMode = AgentPermissionMode::Auto;
   u32 reviews = 0;
-  config.PermissionReviewerModel = AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
+  config.PermissionReviewerModel = SVL("configured-reviewer");
   config.PermissionReviewer = {&reviews, HarnessReview};
   config.WorkingDirectory = SVL("C:\\work");
 
@@ -824,7 +824,7 @@ void TestHarnessReviewerIsolation() {
       reviewEnds++;
       CHECK(event.PermissionReview.Outcome ==
             AgentPermissionReviewOutcome::Allow);
-      CHECK(StrView_Eq(event.PermissionReview.Model, SVL("jev-1.13.0")));
+      CHECK(StrView_Eq(event.PermissionReview.Model, SVL("reviewer-model")));
     }
     if (event.Kind == AgentHarnessEventKind::TransientAgentEnd)
       sawAgentEnd = true;

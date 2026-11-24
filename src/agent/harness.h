@@ -28,7 +28,6 @@ struct AgentHarnessConfig {
   // Yolo default keeps zero-initialized embedding configs running every tool.
   AgentPermissionMode PermissionMode = AgentPermissionMode::Yolo;
   StrView PermissionReviewerModel;
-  f64 PermissionReviewerThreshold = AGENT_PERMISSION_DEFAULT_REVIEWER_THRESHOLD;
   AgentPermissionReviewer PermissionReviewer;
   StrView WorkingDirectory;
   const StrView* WritableRoots;

@@ -1,19 +1,31 @@
 #pragma once
 
 #include "agent/permissions.h"
-#include "net/http.h"
+#include "agent/primitives.h"
+#include "app/provider_registry.h"
 
-bool TypeSafePermissionReviewer_ModelSupported(StrView model);
-bool TypeSafePermissionReviewer_ThresholdIsValid(f64 threshold);
-// Optional test transport dependencies must outlive the returned reviewer.
-AgentPermissionReviewer TypeSafePermissionReviewer_Make(
-    Arena* arena, StrView model,
-    f64 threshold = AGENT_PERMISSION_DEFAULT_REVIEWER_THRESHOLD,
-    StrView authPath = {}, const HttpRetryDeps* deps = nullptr);
-bool TypeSafePermissionReviewer_KeyConfigured(StrView authPath);
+struct ModelPermissionReviewerConfig {
+  Provider ProviderImpl;
+  Model ModelInfo;
+  void* AuthUser;
+  AgentResolveAuthFn ResolveAuth;
+};
 
-bool TypeSafePermissionReviewer_ReviewWithDeps(
-    Arena* arena, StrView model, StrView apiKey,
-    const AgentPermissionReviewRequest* request, volatile i32* abort,
-    const HttpRetryDeps* deps, AgentPermissionReviewResult* out,
-    f64 threshold = AGENT_PERMISSION_DEFAULT_REVIEWER_THRESHOLD);
+// The tool the reviewer is forced to call; exposed for tests that script it.
+constexpr StrView PERMISSION_REVIEWER_DECISION_TOOL = SVL("permission_decision");
+
+// `configured` when set, otherwise the provider's cheap default.
+StrView PermissionReviewer_ModelId(const ProviderSpec* spec, StrView configured);
+
+// Retired TypeSafe Jev names are read as "use the provider default".
+bool PermissionReviewer_IsRetiredModel(StrView model);
+
+// ModelInfo's strings must outlive the reviewer.
+AgentPermissionReviewer ModelPermissionReviewer_Make(
+    Arena* arena, const ModelPermissionReviewerConfig* config);
+
+// The reviewer for `spec`'s chat provider; `*outModelId` names the model used.
+AgentPermissionReviewer PermissionReviewer_ForProvider(
+    Arena* arena, StrView agentDirectory, const ProviderSpec* spec, StrView configured,
+    Provider provider, void* authUser, AgentResolveAuthFn resolveAuth,
+    StrView* outModelId);

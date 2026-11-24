@@ -150,32 +150,32 @@ static void TestStoreFailurePreservesContent() {
       SVL("{\"other\":{\"type\":\"oauth\",\"access\":\"a\",\"expires\":1}}"),
       SVL("{\"other\":{\"type\":\"oauth\",\"access\":\"\",\"refresh\":\"r\",\"expires\":1}}"),
       SVL("{\"other\":{\"type\":\"oauth\",\"access\":\"a\",\"refresh\":\"r\",\"expires\":1,\"accountId\":7}}"),
-      SVL("{\"typesafe\":{\"type\":\"api_key\",\"key\":\"synthetic-old\"},\"other\":false}")};
+      SVL("{\"openrouter\":{\"type\":\"api_key\",\"key\":\"synthetic-old\"},\"other\":false}")};
   for (StrView content : invalidStores) {
     CHECK(ConfigFile_WriteAtomic(&arena, path, content));
-    CHECK(!AuthStore_Write(&arena, path, SVL("typesafe"), &replacement));
-    CHECK(!AuthStore_Delete(&arena, path, SVL("typesafe")));
+    CHECK(!AuthStore_Write(&arena, path, SVL("openrouter"), &replacement));
+    CHECK(!AuthStore_Delete(&arena, path, SVL("openrouter")));
     StrView after = {};
     CHECK(ConfigFile_ReadAll(&arena, path, &after) == ConfigFileReadResult::Success);
     CHECK(StrView_Eq(after, content));
   }
   Credential usable = {};
-  CHECK(AuthStore_Read(&arena, path, SVL("typesafe"), &usable));
+  CHECK(AuthStore_Read(&arena, path, SVL("openrouter"), &usable));
   CHECK(StrView_EqCStr(usable.ApiKey, "synthetic-old"));
-  StrView complete = SVL("{\"typesafe\":{\"type\":\"api_key\",\"key\":\"synthetic-old\"}}");
+  StrView complete = SVL("{\"openrouter\":{\"type\":\"api_key\",\"key\":\"synthetic-old\"}}");
   for (u32 length = 0; length < complete.Length; length++) {
     StrView truncated = {complete.Data, length};
     CHECK(ConfigFile_WriteAtomic(&arena, path, truncated));
-    CHECK(!AuthStore_Write(&arena, path, SVL("typesafe"), &replacement));
-    CHECK(!AuthStore_Delete(&arena, path, SVL("typesafe")));
-    CHECK(!AuthStore_Read(&arena, path, SVL("typesafe"), &usable));
+    CHECK(!AuthStore_Write(&arena, path, SVL("openrouter"), &replacement));
+    CHECK(!AuthStore_Delete(&arena, path, SVL("openrouter")));
+    CHECK(!AuthStore_Read(&arena, path, SVL("openrouter"), &usable));
     StrView after = {};
     CHECK(ConfigFile_ReadAll(&arena, path, &after) == ConfigFileReadResult::Success);
     CHECK(StrView_Eq(after, truncated));
   }
   remove("clippi_auth_failure_test.json");
-  CHECK(AuthStore_Write(&arena, path, SVL("typesafe"), &replacement));
-  CHECK(AuthStore_Read(&arena, path, SVL("typesafe"), &usable));
+  CHECK(AuthStore_Write(&arena, path, SVL("openrouter"), &replacement));
+  CHECK(AuthStore_Read(&arena, path, SVL("openrouter"), &usable));
   CHECK(StrView_Eq(usable.ApiKey, replacement.ApiKey));
   remove("clippi_auth_failure_test.json");
   ArenaReleaseSecure(&arena);

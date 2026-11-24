@@ -1053,7 +1053,7 @@ static void TestSecretText() {
   InitHeadlessTui(&t, &arena, false);
   const StrView secret = SVL("SYNTHETIC_SECRET_ONLY");
   Feed(&t, "draft");
-  CHECK(Tui_BeginTextEntry(&t, SVL("Jev key"), SVL("Paste API key"), {},
+  CHECK(Tui_BeginTextEntry(&t, SVL("API key"), SVL("Paste API key"), {},
                            SVL("Permissions"), TextInputMode::Secret));
   Feed(&t, "\x1b[200~SYNTHETIC_SECRET_ONLY\x1b[201~");
   const u16 widths[] = {80, 20};

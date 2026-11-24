@@ -90,8 +90,7 @@ turns.
 Deliberate limits:
 
 - **ChatGPT is the only subscription sign-in.** Claude Pro/Max tokens are
-  issued for a protocol Clippi does not speak. Auto permission reviews use a
-  separate TypeSafe runtime environment key.
+  issued for a protocol Clippi does not speak.
 - **Reasoning replay is model-scoped.** Encrypted reasoning and item IDs are
   only valid for the model that produced them, so a mid-session model switch
   drops prior reasoning and regenerates IDs rather than replaying stale ones.
@@ -126,8 +125,7 @@ changes, and `/reload` invalidate or replace the cache.
 
 Resolution priority: stored api_key → env var for OpenRouter; the stored
 sign-in for ChatGPT. `--logout <provider>` removes chat credentials. The Auto
-permission reviewer's TypeSafe key is configured separately; see
-[Permissions](PERMISSIONS.md).
+permission reviewer uses the same credential; see [Permissions](PERMISSIONS.md).
 
 ## Compaction
 

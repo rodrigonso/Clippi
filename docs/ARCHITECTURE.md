@@ -81,8 +81,8 @@ tests/     single CLI test harness (suite selection via args; offline by default
   `POST /v1/responses`; every chat provider is a row of
   endpoint data rather than a protocol implementation. The request builder and
   SSE parser are tested against recorded fixtures offline. See
-  [Providers](CONFIGURATION.md#providers). Auto permission reviews use TypeSafe Jev through a
-  separate direct HTTP integration, not the chat protocol.
+  [Providers](CONFIGURATION.md#providers). Auto permission reviews reuse the
+  same protocol and credentials, calling a cheap model on the active provider.
 - **External lifecycle hooks** let an editor or supervisor follow a run without
   linking against Clippi. See [Lifecycle hooks](HOOKS.md).
 

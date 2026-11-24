@@ -43,11 +43,7 @@ void TestSettings() {
             loaded.Profile.Effort == ModelEffort::None,
             loaded.Profile.ContextWindow == 0, loaded.Rounded,
             loaded.PermissionMode == AgentPermissionMode::Auto,
-            StrView_Eq(loaded.PermissionReviewerModel,
-                       AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL),
-            !loaded.PermissionReviewerInvalid,
-            loaded.PermissionReviewerThreshold == 0.95,
-            !loaded.PermissionReviewerThresholdInvalid,
+            !loaded.PermissionReviewerModels.Count,
             !loaded.YoloAcknowledged);
   CHECK_ALL(loaded.Compaction.Enabled,
             loaded.Compaction.ReserveTokens ==
@@ -63,74 +59,39 @@ void TestSettings() {
   CHECK_ALL(loaded.TurnLimit.Enabled,
             loaded.TurnLimit.MaxTurns == AGENT_TURN_LIMIT_DEFAULT_MAX_TURNS);
 
-  const char* invalidThresholds[] = {
-      "\"0.9\"", "null", "true", "[]", "{}", "-0.01", "1.01", "1e999", "-1e999"};
-  for (const char* threshold : invalidThresholds) {
-    StrBuf content = StrBuf_Make(&a, 160);
-    StrBuf_AppendCStr(&content,
-        "{\"provider\":\"openrouter\",\"model\":\"chat\",\"permissionReviewerThreshold\":");
-    StrBuf_AppendCStr(&content, threshold);
-    StrBuf_AppendChar(&content, '}');
-    CHECK(ConfigFile_WriteAtomic(&a, SV(path), StrBuf_View(&content)));
-    CHECK(AppSettings_Load(&a, SV(path), &loaded) == AppSettingsLoadResult::Malformed);
-    bool parsable = !StrView_Contains(SV(threshold), "e999");
-    CHECK(loaded.PermissionReviewerThresholdInvalid == parsable);
-  }
-  AppSettings thresholdSettings = {};
-  thresholdSettings.Provider = SVL("openrouter");
-  thresholdSettings.Model = SVL("chat");
-  const f64 thresholds[] = {0, 1, 0.95, 0.9000000000000001};
-  for (f64 threshold : thresholds) {
-    thresholdSettings.PermissionReviewerThreshold = threshold;
-    CHECK(AppSettings_Save(&a, SV(path), &thresholdSettings));
-    CHECK(AppSettings_Load(&a, SV(path), &loaded) == AppSettingsLoadResult::Success);
-    CHECK_ALL(loaded.PermissionReviewerThreshold == threshold,
-              !loaded.PermissionReviewerThresholdInvalid);
-  }
-  const f64 invalidValues[] = {-0.01, 1.01, (f64)NAN, (f64)INFINITY, -(f64)INFINITY};
-  for (f64 threshold : invalidValues) {
-    thresholdSettings.PermissionReviewerThreshold = threshold;
-    CHECK(!AppSettings_Save(&a, SV(path), &thresholdSettings));
-    CHECK(AppSettings_Load(&a, SV(path), &loaded) == AppSettingsLoadResult::Success);
-    CHECK(loaded.PermissionReviewerThreshold == 0.9000000000000001);
-  }
-
-  const char* invalidReviewers[] = {
-      "\"\"", "null", "true", "42", "[]", "{}", "\"   \"", "\"jev-\"",
-      "\"jev-1.13.0/invalid\"", "\" Jev-1.13.0\"", "\"z-ai/glm-5.2\"",
-      "\"openrouter/auto\"", "\"reviewer/model\""};
+  const char* invalidReviewers[] = {"\"m\"", "null", "[]", "{\"openrouter\":\"\"}",
+                                    "{\"openrouter\":42}", "{\"\":\"m\"}"};
   for (u32 i = 0; i < sizeof(invalidReviewers) / sizeof(invalidReviewers[0]);
        i++) {
     StrBuf content = StrBuf_Make(&a, 160);
     StrBuf_AppendCStr(
         &content,
         "{\"provider\":\"openrouter\",\"model\":\"chat\","
-        "\"permissionReviewerModel\":");
+        "\"permissionReviewerModels\":");
     StrBuf_AppendCStr(&content, invalidReviewers[i]);
     StrBuf_AppendChar(&content, '}');
     CHECK(ConfigFile_WriteAtomic(&a, SV(path), StrBuf_View(&content)));
     CHECK(AppSettings_Load(&a, SV(path), &loaded) ==
           AppSettingsLoadResult::Malformed);
-    CHECK(loaded.PermissionReviewerInvalid);
-  }
-
-  const char* jevReviewers[] = {"jev-1.13.0", "jev-1", "jev-latest"};
-  for (u32 i = 0; i < sizeof(jevReviewers) / sizeof(jevReviewers[0]); i++) {
-    AppSettings valid = {};
-    valid.Provider = SVL("openrouter");
-    valid.Model = SVL("chat");
-    valid.PermissionReviewerModel = SV(jevReviewers[i]);
-    CHECK(AppSettings_Save(&a, SV(path), &valid));
-    CHECK(AppSettings_Load(&a, SV(path), &loaded) ==
-          AppSettingsLoadResult::Success);
-    CHECK_ALL(!loaded.PermissionReviewerInvalid,
-              StrView_EqCStr(loaded.PermissionReviewerModel, jevReviewers[i]));
   }
 
   CHECK(ConfigFile_WriteAtomic(
       &a, SV(path),
       SVL("{\"provider\":\"openrouter\",\"model\":\"chat\","
-          "\"permissionReviewerModel\":\"jev-1.12.0\","
+          "\"permissionReviewerModel\":\"jev-latest\",\"permissionReviewerThreshold\":0.95,"
+          "\"permissionReviewerModels\":{\"openrouter\":\"jev-latest\"}}")));
+  CHECK(AppSettings_Load(&a, SV(path), &loaded) == AppSettingsLoadResult::Success);
+  CHECK(!loaded.PermissionReviewerModels.Count);
+  CHECK(AppSettings_Save(&a, SV(path), &loaded));
+  StrView retired = {};
+  CHECK(ConfigFile_ReadAll(&a, SV(path), &retired) == ConfigFileReadResult::Success);
+  CHECK_ALL(!StrView_Contains(retired, "permissionReviewer"), !StrView_Contains(retired, "jev"));
+
+  CHECK(ConfigFile_WriteAtomic(
+      &a, SV(path),
+      SVL("{\"provider\":\"openrouter\",\"model\":\"chat\","
+          "\"permissionReviewerModels\":{\"openrouter\":\"openai/gpt-6-luna\","
+          "\"openai-codex\":\"gpt-6-luna\"},"
           "\"permissionMode\":\"ask\",\"yoloAcknowledged\":true,"
           "\"defaultProjectTrust\":\"never\",\"effort\":\"high\","
           "\"contextWindow\":1000000,\"rounded\":false,"
@@ -145,7 +106,13 @@ void TestSettings() {
   CHECK(AppSettings_Save(&a, SV(path), &loaded));
   CHECK(AppSettings_Load(&a, SV(path), &loaded) ==
         AppSettingsLoadResult::Success);
-  CHECK_ALL(StrView_EqCStr(loaded.PermissionReviewerModel, "jev-1.12.0"),
+  CHECK_ALL(StrView_EqCStr(ProviderModelChoice_Find(&loaded.PermissionReviewerModels,
+                                                    SVL("openrouter")),
+                           "openai/gpt-6-luna"),
+            StrView_EqCStr(ProviderModelChoice_Find(&loaded.PermissionReviewerModels,
+                                                    SVL("openai-codex")),
+                           "gpt-6-luna"),
+            !ProviderModelChoice_Find(&loaded.PermissionReviewerModels, SVL("other")).Length,
             StrView_EqCStr(loaded.Provider, "openrouter"),
             StrView_EqCStr(loaded.Model, "chat"),
             loaded.PermissionMode == AgentPermissionMode::Ask,
@@ -164,15 +131,6 @@ void TestSettings() {
             loaded.Skills.Count == 1, loaded.PromptTemplates.Count == 1);
   CHECK_ALL(StrView_EqCStr(loaded.Skills.Data[0], "skills/a"),
             StrView_EqCStr(loaded.PromptTemplates.Data[0], "prompts/a"));
-  const char* unsupportedReviewers[] = {
-      "jev-", "z-ai/glm-5.2", "openrouter/auto", "reviewer/model"};
-  for (const char* reviewer : unsupportedReviewers) {
-    loaded.PermissionReviewerModel = SV(reviewer);
-    CHECK(!AppSettings_Save(&a, SV(path), &loaded));
-    CHECK(AppSettings_Load(&a, SV(path), &loaded) ==
-          AppSettingsLoadResult::Success);
-    CHECK(StrView_EqCStr(loaded.PermissionReviewerModel, "jev-1.12.0"));
-  }
 
   CHECK(ConfigFile_WriteAtomic(
       &a, SV(path),
@@ -362,7 +320,7 @@ void TestSettings() {
   CHECK(ConfigFile_WriteAtomic(
       &a, SV(path),
       SVL("{\"provider\":\"anthropic\",\"model\":\"bad\","
-          "\"permissionReviewerModel\":\"\"}")));
+          "\"permissionReviewerModels\":\"\"}")));
   CHECK(AppSettings_Load(&a, SV(path), &loaded) ==
         AppSettingsLoadResult::Malformed);
   CHECK(ConfigFile_WriteAtomic(
@@ -396,7 +354,8 @@ void TestSettings() {
   saved.TurnLimit.Enabled = true;
   saved.TurnLimit.MaxTurns = 42;
   saved.PermissionMode = AgentPermissionMode::Yolo;
-  saved.PermissionReviewerModel = SVL("jev-1.13.0");
+  saved.PermissionReviewerModels =
+      ProviderModelChoice_Set(&a, nullptr, SVL("openrouter"), SVL("openai/gpt-6-luna"));
   saved.YoloAcknowledged = true;
   CHECK(AppSettings_Save(&a, SV(path), &saved));
   CHECK(AppSettings_Load(&a, SV(path), &loaded) == AppSettingsLoadResult::Success);
@@ -411,7 +370,9 @@ void TestSettings() {
             loaded.Retry.BaseDelayMs == 250, loaded.Retry.MaxDelayMs == 3000);
   CHECK_ALL(loaded.TurnLimit.Enabled, loaded.TurnLimit.MaxTurns == 42);
   CHECK_ALL(loaded.PermissionMode == AgentPermissionMode::Yolo,
-            StrView_EqCStr(loaded.PermissionReviewerModel, "jev-1.13.0"),
+            StrView_EqCStr(ProviderModelChoice_Find(&loaded.PermissionReviewerModels,
+                                                    SVL("openrouter")),
+                           "openai/gpt-6-luna"),
             loaded.YoloAcknowledged);
 
   saved.Rounded = false;

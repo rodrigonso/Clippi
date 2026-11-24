@@ -32,6 +32,8 @@ struct ProviderSpec {
   // Idle time after which the vendor has surely evicted the prompt cache; an
   // upper bound, since cold-cache work is wasted if the cache is still warm.
   u32 PromptCacheIdleMinutes;
+  // A fast, cheap model in this provider's catalog for permission review.
+  StrView DefaultReviewerModel;
 };
 
 u32 ProviderRegistry_Count();

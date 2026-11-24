@@ -11,6 +11,17 @@
 
 constexpr u32 APP_SETTINGS_MAX_CACHE_IDLE_MINUTES = 24 * 60;
 
+struct ProviderModelChoice {
+  StrView Provider;
+  StrView Model;
+};
+
+StrView ProviderModelChoice_Find(const Array<ProviderModelChoice>* choices, StrView provider);
+// Returns a fresh array in `arena`; an empty `model` removes the provider's entry.
+Array<ProviderModelChoice> ProviderModelChoice_Set(Arena* arena,
+                                                   const Array<ProviderModelChoice>* choices,
+                                                   StrView provider, StrView model);
+
 struct AppSettings {
   StrView Provider;
   StrView Model;
@@ -20,11 +31,9 @@ struct AppSettings {
   AgentRetryPolicy Retry = AgentRetryPolicy_Default();
   AgentTurnLimitPolicy TurnLimit = AgentTurnLimitPolicy_Default();
   AgentPermissionMode PermissionMode = AgentPermissionMode::Auto;
-  StrView PermissionReviewerModel = AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
-  f64 PermissionReviewerThreshold = AGENT_PERMISSION_DEFAULT_REVIEWER_THRESHOLD;
-  // Load-only diagnostics; never written to settings.json.
-  bool PermissionReviewerInvalid = false;
-  bool PermissionReviewerThresholdInvalid = false;
+  // Keyed by provider id, since model ids differ between providers; a provider
+  // without an entry uses its DefaultReviewerModel.
+  Array<ProviderModelChoice> PermissionReviewerModels;
   bool YoloAcknowledged = false;
   bool Rounded = true;
   // `--no-memory` and CLIPPI_NO_MEMORY override this for one run only.

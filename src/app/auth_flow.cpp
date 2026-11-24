@@ -200,8 +200,7 @@ RuntimeSelection LoadRuntimeSelection(Arena* arena, StrView settingsPath,
               (int)defaults->DefaultModel.Length, defaults->DefaultModel.Data);
     }
   } else if (load == AppSettingsLoadResult::Malformed) {
-    if (!settings->PermissionReviewerInvalid && !settings->PermissionReviewerThresholdInvalid)
-      WarnUsingDefaults(settingsPath, defaults, "settings file is malformed:");
+    WarnUsingDefaults(settingsPath, defaults, "settings file is malformed:");
   } else if (load == AppSettingsLoadResult::ReadFailure) {
     WarnUsingDefaults(settingsPath, defaults, "could not read settings file:");
   }
@@ -887,6 +886,7 @@ bool ActivateRuntimeSelection(InteractiveRuntime* rt, const ProviderSpec* spec,
       (!rt->Auth ||
        !StrView_Eq(rt->Auth->Cache.Provider, spec->Id)))
     AppAuth_Invalidate(rt->Auth);
+  if (providerChanged) RuntimeRefreshPermissionReviewer(rt);
   if (rt->TuiView)
     Tui_SetModelProfile(rt->TuiView, model.Id, activeProfile);
   bool saved = PersistRuntimeSelection(rt, ux);

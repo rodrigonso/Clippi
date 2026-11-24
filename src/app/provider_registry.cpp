@@ -49,6 +49,7 @@ const ProviderSpec PROVIDERS[] = {
         CreateResponsesModel,
         ListResponsesModels,
         10,
+        SVL("openai/gpt-6-luna"),
     },
     {
         SVL("openai-codex"),
@@ -61,6 +62,7 @@ const ProviderSpec PROVIDERS[] = {
         CreateResponsesModel,
         ListResponsesModels,
         10,
+        SVL("gpt-6-luna"),
     },
 };
 

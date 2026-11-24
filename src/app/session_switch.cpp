@@ -266,11 +266,12 @@ SessionResult RuntimeSwitchToLog(InteractiveRuntime* rt,
       StrView_Dup(rt->Mem, targetInfo->WorkingDirectory);
   // The engine's atomic mode is authoritative: the TUI cycles it off-thread.
   config.PermissionMode = AgentHarness_GetPermissionMode(rt->Harness);
-  StrView reviewerId = rt->PermissionReviewerModel.Length
-                           ? rt->PermissionReviewerModel
-                           : AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL;
-  if (!TypeSafePermissionReviewer_ModelSupported(reviewerId) ||
-      !TypeSafePermissionReviewer_ThresholdIsValid(rt->PermissionReviewerThreshold)) {
+  config.PermissionReviewer = PermissionReviewer_ForProvider(
+      rt->Mem, rt->AgentDirectory, targetSpec,
+      ProviderModelChoice_Find(&rt->PermissionReviewerModels, targetSpec->Id),
+      config.ProviderImpl, config.AuthUser, config.ResolveAuth,
+      &config.PermissionReviewerModel);
+  if (!config.PermissionReviewerModel.Length) {
     SessionLog_Close(&target);
     PromptContext_Release(&nextPrompt);
     ArenaRelease(&scratch);
@@ -278,14 +279,6 @@ SessionResult RuntimeSwitchToLog(InteractiveRuntime* rt,
         SessionStatus::InvalidState,
         SVL("the target session has no usable permission reviewer"));
   }
-  if (!config.PermissionReviewer.Review ||
-      !StrView_Eq(config.PermissionReviewerModel, reviewerId) ||
-      config.PermissionReviewerThreshold != rt->PermissionReviewerThreshold)
-    config.PermissionReviewer =
-        TypeSafePermissionReviewer_Make(rt->Mem, reviewerId,
-                                        rt->PermissionReviewerThreshold, rt->AuthPath);
-  config.PermissionReviewerModel = reviewerId;
-  config.PermissionReviewerThreshold = rt->PermissionReviewerThreshold;
 
   if (rt->EventPump) StopHarnessEventPump(rt->EventPump);
   SessionResult closed = AgentHarness_Close(rt->Harness);

@@ -12,10 +12,6 @@ StrView AgentPermissionMode_Name(AgentPermissionMode mode);
 bool AgentPermissionMode_Parse(StrView value, AgentPermissionMode* out);
 AgentPermissionMode AgentPermissionMode_Next(AgentPermissionMode mode);
 
-constexpr StrView AGENT_PERMISSION_DEFAULT_REVIEWER_MODEL =
-    SVL("jev-latest");
-constexpr f64 AGENT_PERMISSION_DEFAULT_REVIEWER_THRESHOLD = 0.95;
-
 enum class AgentPermissionReviewDecision : u8 {
   Ask,
   Allow,
