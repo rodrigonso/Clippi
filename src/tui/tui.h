@@ -200,6 +200,9 @@ struct Tui {
   u32 ContextTokens;
   u32 Spinner;
   u64 SpinnerStartMs;
+  bool MascotActive;
+  u64 MascotSinceMs;
+  u32 MascotWakeMs;  // 0 unless the empty-state mascot is animating
   StrView ModelName;
   ModelRequestProfile Profile;
   TuiPermissionMode Permission;

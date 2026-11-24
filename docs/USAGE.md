@@ -147,8 +147,9 @@ marker, spinners, and blockquote bars take the OS accent colour.
 Honors `NO_COLOR`. Bracketed paste inserts literal multi-line text and replaces
 a composer selection.
 
-Until the first prompt, a new session shows the Clippi mascot and a short hint
-in the transcript area, below any startup notices, when the terminal has room.
+Until the first prompt, a new session shows the Clippi mascot, which blinks and
+raises its brows now and then, with a short hint in the transcript area, below
+any startup notices, when the terminal has room.
 Shift+Enter needs a terminal that reports modified keys: entering the TUI
 requests the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, Alacritty,
 iTerm2, Windows Terminal 1.25+) and xterm's `modifyOtherKeys` level 2 (xterm,

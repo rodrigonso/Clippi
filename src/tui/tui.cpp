@@ -733,32 +733,75 @@ struct TranscriptComponentData {
   bool HasSelection;
   TranscriptSelection Selection;
   bool EmptyState;
+  u8 MascotFrame;
 };
 
 // The Clippi mascot as 1-bit pixel rows, MSB leftmost; each cell row draws two
 // pixel rows with half blocks.
-constexpr u16 kMascotPixels[] = {
-    0b0000000000000000, 0b0000001111110000, 0b0000010000001000, 0b0000010000001000,
-    0b0000010000001000, 0b0000010000001000, 0b0111100000001000, 0b1000010000001000,
-    0b0111100001111000, 0b1111110010000100, 0b1110010001111000, 0b1110010011111100,
-    0b1111110011100100, 0b0111100011100100, 0b0000000011111100, 0b0100000001111000,
-    0b0100100001000010, 0b0100100001000100, 0b0100100001000100, 0b0100100001000100,
-    0b0100100001000100, 0b0100011110000100, 0b0100000000000100, 0b0010000000001000,
-    0b0001111111110000, 0b0000000000000000,
+enum : u8 { kMascotBase, kMascotBlink, kMascotBrows };
+constexpr u16 kMascotFrames[][26] = {
+    {
+        0b0000000000000000, 0b0000001111110000, 0b0000010000001000, 0b0000010000001000,
+        0b0000010000001000, 0b0000010000001000, 0b0111100000001000, 0b1000010000001000,
+        0b0111100001111000, 0b1111110010000100, 0b1110010001111000, 0b1110010011111100,
+        0b1111110011100100, 0b0111100011100100, 0b0000000011111100, 0b0100000001111000,
+        0b0100100001000010, 0b0100100001000100, 0b0100100001000100, 0b0100100001000100,
+        0b0100100001000100, 0b0100011110000100, 0b0100000000000100, 0b0010000000001000,
+        0b0001111111110000, 0b0000000000000000,
+    },
+    {
+        0b0000000000000000, 0b0000001111110000, 0b0000010000001000, 0b0000010000001000,
+        0b0000010000001000, 0b0000010000001000, 0b0111100000001000, 0b1000010000001000,
+        0b0000000001111000, 0b0000000010000100, 0b0000000000000000, 0b1111110000000000,
+        0b0111100000000000, 0b0000000011111100, 0b0000000001111000, 0b0100000000000000,
+        0b0100100001000010, 0b0100100001000100, 0b0100100001000100, 0b0100100001000100,
+        0b0100100001000100, 0b0100011110000100, 0b0100000000000100, 0b0010000000001000,
+        0b0001111111110000, 0b0000000000000000,
+    },
+    {
+        0b0000000000000000, 0b0000001111110000, 0b0000010000001000, 0b0000010000001000,
+        0b0000010000001000, 0b0111100000001000, 0b1000010000001000, 0b0000000001111000,
+        0b0111100010000100, 0b1111110000000000, 0b1110010001111000, 0b1110010011111100,
+        0b1111110011100100, 0b0111100011100100, 0b0000000011111100, 0b0100000001111000,
+        0b0100100001000010, 0b0100100001000100, 0b0100100001000100, 0b0100100001000100,
+        0b0100100001000100, 0b0100011110000100, 0b0100000000000100, 0b0010000000001000,
+        0b0001111111110000, 0b0000000000000000,
+    },
 };
 constexpr u16 kMascotCols = 15;
-constexpr u16 kMascotRows = (u16)(sizeof(kMascotPixels) / sizeof(kMascotPixels[0]) / 2);
+constexpr u16 kMascotRows = 13;
 
-void PaintEmptyState(const Tui* t, UiCanvas* canvas, u16 top, u16 rows, u16 cols) {
+struct MascotKey {
+  u32 StartMs;
+  u8 Frame;
+};
+constexpr MascotKey kMascotTimeline[] = {
+    {0, kMascotBase},    {2500, kMascotBlink}, {2660, kMascotBase}, {4500, kMascotBrows},
+    {5100, kMascotBase}, {6000, kMascotBlink}, {6160, kMascotBase},
+};
+constexpr u32 kMascotPeriodMs = 7000;
+constexpr u32 kMascotKeys = sizeof(kMascotTimeline) / sizeof(kMascotTimeline[0]);
+
+// Returns the frame for `phaseMs` and how long until the next frame change.
+u8 MascotFrameAt(u32 phaseMs, u32* untilChangeMs) {
+  u32 key = 0;
+  while (key + 1 < kMascotKeys && kMascotTimeline[key + 1].StartMs <= phaseMs) key++;
+  u32 nextMs = key + 1 < kMascotKeys ? kMascotTimeline[key + 1].StartMs : kMascotPeriodMs;
+  *untilChangeMs = nextMs - phaseMs;
+  return kMascotTimeline[key].Frame;
+}
+
+void PaintEmptyState(const Tui* t, UiCanvas* canvas, u16 top, u16 rows, u16 cols, u8 frame) {
   StrView title = SVL("Clippi");
   StrView hint = SVL("Ask anything, or type / for commands");
   u16 height = (u16)(kMascotRows + 3);
   if (rows < height || cols < hint.Length + 2) return;
   u16 y = (u16)(top + (rows - height) / 2);
   u16 x = (u16)((cols - kMascotCols) / 2);
+  const u16* pixels = kMascotFrames[frame];
   for (u16 r = 0; r < kMascotRows; r++) {
-    u16 upper = kMascotPixels[2 * r];
-    u16 lower = kMascotPixels[2 * r + 1];
+    u16 upper = pixels[2 * r];
+    u16 lower = pixels[2 * r + 1];
     for (u16 c = 0; c < kMascotCols; c++) {
       u16 bit = (u16)(0x8000u >> c);
       bool a = (upper & bit) != 0;
@@ -844,7 +887,8 @@ void PaintTranscriptNode(UiContext*, const UiNode* node, UiCanvas* canvas) {
   if (data->EmptyState && data->Layout.Count < data->Height) {
     u16 top = data->Layout.Count ? (u16)(data->Layout.Count + 1) : 0;
     if (top < data->Height)
-      PaintEmptyState(t, canvas, top, (u16)(data->Height - top), data->Layout.Cols);
+      PaintEmptyState(t, canvas, top, (u16)(data->Height - top), data->Layout.Cols,
+                      data->MascotFrame);
   }
 
   t->LastScrollbarThumbTop = 0;
@@ -1029,8 +1073,18 @@ void ComposeAtSize(Tui* t, u16 cols, u16 rows, u64 nowMs) {
           &t->Ui, sizeof(TranscriptComponentData),
           alignof(TranscriptComponentData));
   bool emptyState = !t->AgentRunning && !LineModel_HasConversation(&t->Model);
+  u8 mascotFrame = kMascotBase;
+  t->MascotWakeMs = 0;
+  if (!emptyState) {
+    t->MascotActive = false;
+  } else {
+    if (!t->MascotActive || nowMs < t->MascotSinceMs) t->MascotSinceMs = nowMs;
+    t->MascotActive = true;
+    u32 phase = (u32)((nowMs - t->MascotSinceMs) % kMascotPeriodMs);
+    mascotFrame = MascotFrameAt(phase, &t->MascotWakeMs);
+  }
   *transcriptData = TranscriptComponentData{t, transcript, paneH, hasSelection, selection,
-                                            emptyState};
+                                            emptyState, mascotFrame};
   UiNodeDesc transcriptNode = {};
   transcriptNode.Kind = UiNodeKind::Custom;
   transcriptNode.Key = Ui_Key(SVL("transcript"));
@@ -1898,6 +1952,7 @@ void RenderLoop(void* arg) {
                                   t->OperationActive || t->CopyNoticeActive)
                                      ? 60
                                      : 200));
+    if (t->MascotWakeMs && t->MascotWakeMs < interval) interval = t->MascotWakeMs;
     if (!t->Dirty && !t->Stop) Cond_WaitTimeout(&t->RenderCv, &t->Lock, interval);
     t->Dirty = false;
     while (!t->Stop) {

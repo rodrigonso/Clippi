@@ -1236,6 +1236,31 @@ void TestTui() {
   }
 
   {
+    Arena ma = ArenaCreate();
+    Tui* mt = ArenaPushStruct(&ma, Tui);
+    InitHeadlessTui(mt, &ma, true);
+    Tui_ComposeFrame(mt, 60, 30, 10000);
+    u64 base = FrameHash(mt);
+    u32 firstWake = mt->MascotWakeMs;
+    Tui_ComposeFrame(mt, 60, 30, 12600);
+    u64 blink = FrameHash(mt);
+    u32 blinkWake = mt->MascotWakeMs;
+    Tui_ComposeFrame(mt, 60, 30, 14600);
+    u64 brows = FrameHash(mt);
+    Tui_ComposeFrame(mt, 60, 30, 16050);
+    u64 secondBlink = FrameHash(mt);
+    Tui_ComposeFrame(mt, 60, 30, 17000);
+    u64 looped = FrameHash(mt);
+    LineModel_AddUser(&mt->Model, SVL("go"), 0);
+    Tui_ComposeFrame(mt, 60, 30, 17100);
+    CHECK_ALL(firstWake == 2500, blink != base, blinkWake == 60, brows != base,
+              brows != blink, secondBlink == blink, looped == base,
+              mt->MascotWakeMs == 0);
+    Tui_Stop(mt);
+    ArenaRelease(&ma);
+  }
+
+  {
     Arena spinnerArena = ArenaCreate();
     Tui spinnerTui;
     InitHeadlessTui(&spinnerTui, &spinnerArena, false);
