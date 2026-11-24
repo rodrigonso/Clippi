@@ -791,19 +791,19 @@ void TestLineModel() {
     CHECK(Finish(&tools, SVL("read-id"), SVL("alpha-preview\nbeta-preview\ngamma-preview")));
     const SpanLine* shellRow = FindRow(&a, &tools, "Shell echo hi");
     CHECK(shellRow != nullptr);
-    CHECK_ALL(TextEq(shellRow->Spans.Data[1].Text, SVL("\xe2\x9c\x93")),
-              shellRow->Spans.Data[1].St.Fg == 71,
+    CHECK_ALL(TextEq(shellRow->Spans.Data[1].Text, SVL("\xe2\x96\xb8")),
+              shellRow->Spans.Data[1].St.Fg == 244,
               shellRow->Spans.Data[1].St.Attr == ATTR_NONE,
-              AnyRowHas(&a, &tools, " \xe2\x9c\x93  Shell echo hi  exit 0 \xc2\xb7 1 line"),
+              AnyRowHas(&a, &tools, " \xe2\x96\xb8  Shell echo hi  exit 0 \xc2\xb7 1 line"),
               AnyRowHas(&a, &tools, "Read src/main.cpp L10:14"),
-              AnyRowHas(&a, &tools, "3 lines read"),
+              AnyRowHas(&a, &tools, "3 lines"),
               !AnyRowHas(&a, &tools, "alpha-preview"));
     u64 shellEntryId = tools.Entries.Data[0].Id;
     u64 readEntryId = tools.Entries.Data[1].Id;
     u32 readFirst = 0;
     u32 readRows = 0;
     bool found = LineModel_FindEntryRows(&tools, readEntryId, &readFirst, &readRows);
-    CHECK_ALL(found, readRows == 1, LineModel_At(&tools, readFirst)->HasHiddenContent);
+    CHECK_ALL(found, readRows == 1, !LineModel_At(&tools, readFirst)->HasHiddenContent);
 
     CHECK(LineModel_ToggleAllTools(&tools));
     CHECK_ALL(!LineModel_IsEntryCollapsed(&tools, shellEntryId),
@@ -830,7 +830,7 @@ void TestLineModel() {
     LineModel_AddTool(
         &tools, SVL("control-id"), SVL("shell"),
         SVL("{\"command\":\"first line\\n\\u001b[31msecond line\\u001b[0m\"}"));
-    CHECK_ALL(AnyRowHas(&a, &tools, " \xe2\x97\x8b  Shell first line second line"),
+    CHECK_ALL(AnyRowHas(&a, &tools, " \xe2\x96\xb8  Shell first line second line"),
               !StrView_Contains(StrBuf_View(&tools.Entries.Data[2].Tool.View.Detail), "\n"),
               !StrView_Contains(StrBuf_View(&tools.Entries.Data[2].Tool.View.Detail), "\x1b"));
     LineModel_Release(&tools);
@@ -842,9 +842,9 @@ void TestLineModel() {
     LineModel_AddTool(&toolWrap, SVL("shell"), SVL("shell"),
                       SVL("{\"command\":\"echo this command wraps\"}"));
     u64 shellId = toolWrap.Entries.Data[0].Id;
-    CHECK_ALL(RowStartsWith(&a, LineModel_At(&toolWrap, 0), " \xe2\x97\x8b  "),
-              LineModel_Count(&toolWrap) == 1,
-              LineModel_At(&toolWrap, 0)->HasHiddenContent);
+    CHECK_ALL(RowStartsWith(&a, LineModel_At(&toolWrap, 0), " \xe2\x96\xb8  "),
+              LineModel_Count(&toolWrap) == 1, AllRowsFit(&toolWrap, 16),
+              AnyRowHas(&a, &toolWrap, "\xe2\x80\xa6"));
     CHECK(LineModel_ToggleEntry(&toolWrap, shellId));
     CHECK(RowStartsWith(&a, LineModel_At(&toolWrap, 1), "    "));
 
@@ -856,6 +856,74 @@ void TestLineModel() {
     CHECK(readPath != nullptr);
     CHECK(RowStartsWith(&a, readPath, "    "));
     LineModel_Release(&toolWrap);
+  }
+
+  {
+    LineModel compact;
+    LineModel_Init(&compact, &a, 48, 5000);
+    LineModel_AddTool(&compact, SVL("unicode"), SVL("edit"),
+                      SVL("{\"path\":\"src/a_very_long_directory/\xe4\xb8\xad\xe6\x96\x87/status.cpp\","
+                          "\"oldText\":\"a\",\"newText\":\"b\"}"));
+    CHECK(Finish(&compact, SVL("unicode"), SVL("-1 old\n+1 new\n+2 added")));
+    const SpanLine* row = LineModel_At(&compact, 0);
+    CHECK_ALL(LineModel_Count(&compact) == 1, RowHas(&a, row, "status.cpp"),
+              RowHas(&a, row, "\xe2\x80\xa6"), RowHas(&a, row, "+2 -1"),
+              TextEq(SpansWithFg(&a, row, 71), SVL("+2 ")),
+              TextEq(SpansWithFg(&a, row, 167), SVL("-1")));
+    bool fits = true;
+    for (u16 width = 1; width <= 100; width++) {
+      LineModel_SetWidth(&compact, width);
+      const SpanLine* header = LineModel_At(&compact, 0);
+      DisplayRowLayout layout = LineModel_LayoutDisplayRow(header, width);
+      StrView displayed = LineModel_ExtractDisplayRow(&a, &layout, 0, width);
+      fits = fits && LineModel_Count(&compact) == 1 && AllRowsFit(&compact, width) &&
+             TextWidth(displayed) <= width;
+      if (width >= 32) fits = fits && StrView_Contains(displayed, "+2 -1");
+    }
+    CHECK(fits);
+    LineModel_SetWidth(&compact, 100);
+    CHECK(LineModel_ToggleEntry(&compact, compact.Entries.Data[0].Id));
+    CHECK_ALL(AnyRowHas(&a, &compact, "src/a_very_long_directory/"),
+              TextEq(LineModel_At(&compact, 0)->Spans.Data[1].Text, SVL("\xe2\x96\xbe")),
+              AnyRowHas(&a, &compact, "+2 added"));
+    LineModel_Release(&compact);
+  }
+
+  {
+    LineModel failures;
+    LineModel_Init(&failures, &a, 72, 5000, false);
+    LineModel_AddTool(&failures, SVL("edit-fail"), SVL("edit"),
+                      SVL("{\"path\":\"a.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"));
+    CHECK(Finish(&failures, SVL("edit-fail"),
+                 SVL("Target text was not found.\nCheck the original text.\nMore details."), true));
+    CHECK_ALL(failures.Entries.Data[0].Collapsed, LineModel_Count(&failures) == 3,
+              AnyRowHas(&a, &failures, "Target text was not found."),
+              !AnyRowHas(&a, &failures, "More details."));
+    const SpanLine* excerpt = FindRow(&a, &failures, "Target text");
+    CHECK(excerpt && TextEq(SpansWithFg(&a, excerpt, COL_DEFAULT), RowText(&a, excerpt)));
+    CHECK(LineModel_ToggleEntry(&failures, failures.Entries.Data[0].Id));
+    CHECK(AnyRowHas(&a, &failures, "More details."));
+    CHECK(LineModel_ToggleEntry(&failures, failures.Entries.Data[0].Id));
+    CHECK(!AnyRowHas(&a, &failures, "More details."));
+
+    StrBuf result = StrBuf_Make(&a, 4096);
+    for (u32 i = 0; i < 200; i++) StrBuf_AppendCStr(&result, "compiling source\n");
+    StrBuf_AppendCStr(&result, "error C2065: unknown identifier\ncompilation stopped\n"
+                              "extra output\n\nCommand exited with code 1");
+    LineModel_AddTool(&failures, SVL("build-fail"), SVL("shell"),
+                      SVL("{\"command\":\"build\"}"), 1000);
+    CHECK(LineModel_FinishTool(&failures, SVL("build-fail"), StrBuf_View(&result),
+                               StrView{result.Data, 1500}, true, 4500));
+    CHECK_ALL(AnyRowHas(&a, &failures, "error C2065: unknown identifier"),
+              AnyRowHas(&a, &failures, "compilation stopped"),
+              !AnyRowHas(&a, &failures, "compiling source"),
+              !AnyRowHas(&a, &failures, "extra output"),
+              AnyRowHas(&a, &failures, "exit 1"),
+              failures.Entries.Data[1].Tool.ErrorExcerpt.Length <= 480);
+    CHECK(LineModel_ToggleEntry(&failures, failures.Entries.Data[1].Id));
+    CHECK_ALL(AnyRowHas(&a, &failures, "error C2065: unknown identifier"),
+              AnyRowHas(&a, &failures, "compiling source"));
+    LineModel_Release(&failures);
   }
 
   {
@@ -980,13 +1048,13 @@ void TestLineModel() {
         {SVL("grep"), SVL("grep"),
          SVL("{\"pattern\":\"needle\",\"path\":\"src\",\"glob\":\"*.cpp\"}"),
          SVL("a.cpp-1-before\na.cpp:2: one\na.cpp-3-after\nb.cpp:4: two"),
-         "Search \"needle\" in src (*.cpp)", "2 lines found"},
+         "Search \"needle\" in src (*.cpp)", "2 matching lines"},
         {SVL("find"), SVL("find"), SVL("{\"pattern\":\"*.h\",\"path\":\"src\"}"),
-         SVL("a.h\nb.h"), "2 files found", nullptr},
+         SVL("a.h\nb.h"), "2 files", nullptr},
         {SVL("ls"), SVL("ls"), SVL("{\"path\":\"src\"}"), SVL("agent/\nterm/"),
-         "2 entries found", nullptr},
+         "2 entries", nullptr},
         {SVL("write"), SVL("write"), SVL("{\"path\":\"out.txt\",\"content\":\"abc\"}"),
-         SVL("Successfully wrote 3 bytes to out.txt"), "3 bytes written", nullptr},
+         SVL("Successfully wrote 3 bytes to out.txt"), "3 bytes", nullptr},
         {SVL("edit"), SVL("edit"),
          SVL("{\"path\":\"a.cpp\",\"edits\":[{\"oldText\":\"a\",\"newText\":\"b\"},{\"oldText\":\"c\",\"newText\":\"d\"}]}"),
          SVL("Successfully replaced 2 block(s) in a.cpp.\n\n"
@@ -1011,7 +1079,19 @@ void TestLineModel() {
          SVL("{\"path\":\"e.cpp\",\"oldText\":\"a\",\"newText\":\"b\"}"),
          SVL("Successfully replaced 1 block(s) in e.cpp."), "1 block replaced", nullptr},
         {SVL("bracket-read"), SVL("read"), SVL("{\"path\":\"notes.txt\"}"),
-         SVL("first\n\n[section]\nlast"), "4 lines read", nullptr},
+         SVL("first\n\n[section]\nlast"), "4 lines", nullptr},
+        {SVL("grep-limited"), SVL("grep"), SVL("{\"pattern\":\"x\"}"),
+         SVL("a.cpp-1-context\na.cpp:2: x\nb.cpp:3: x\n\n"
+             "[2 matches limit reached. Use limit=4 for more]"),
+         "2 matching lines shown", nullptr},
+        {SVL("find-limited"), SVL("find"), SVL("{\"pattern\":\"*.h\"}"),
+         SVL("a.h\nb.h\n[2 results limit reached. Use limit=4 for more]"),
+         "2 files shown", nullptr},
+        {SVL("ls-limited"), SVL("ls"), SVL("{\"path\":\"src\"}"),
+         SVL("a.h\nb.h\n\n[50.0KB limit reached]"), "2 entries shown", nullptr},
+        {SVL("grep-line-truncated"), SVL("grep"), SVL("{\"pattern\":\"x\"}"),
+         SVL("a.cpp:1: x\n\n[Some lines truncated to 500 chars. Use read tool to see full lines]"),
+         "1 matching line", nullptr},
     };
     bool summariesMatch = true;
     for (u32 i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -1024,11 +1104,23 @@ void TestLineModel() {
     }
     CHECK(summariesMatch);
 
+    LineModel_AddTool(&summaries, SVL("grep-limit-text"), SVL("grep"),
+                      SVL("{\"pattern\":\"limit reached\"}"));
+    CHECK(Finish(&summaries, SVL("grep-limit-text"), SVL("a.cpp:1: limit reached")));
+    CHECK(TextEq(StrBuf_View(&summaries.Entries.Data[summaries.Entries.Count - 1].Tool.View.Outcome),
+                 SVL("1 matching line")));
+
+    LineModel_AddTool(&summaries, SVL("scaled-write"), SVL("write"),
+                      SVL("{\"path\":\"large.txt\",\"content\":\"\"}"));
+    summaries.Entries.Data[summaries.Entries.Count - 1].Tool.View.CountHint = 1234;
+    CHECK(Finish(&summaries, SVL("scaled-write"), SVL("Successfully wrote 1234 bytes")));
+    CHECK(AnyRowHas(&a, &summaries, "1.2 KiB"));
+
     LineModel_AddTool(&summaries, SVL("json-read"), SVL("read"),
                       SVL("{\"path\":\"config.json\"}"));
     CHECK_ALL(
         StrView_Eq(summaries.Entries.Data[summaries.Entries.Count - 1].Tool.View.Marker, SVL("J")),
-        AnyRowHas(&a, &summaries, " \xe2\x97\x8b  Read config.json"));
+        AnyRowHas(&a, &summaries, " \xe2\x96\xb8  Read config.json"));
 
     LineModel_AddTool(&summaries, SVL("unknown"), SVL("custom"), SVL("{\"value\":1}"));
     bool unknownFinished = Finish(&summaries, SVL("unknown"), SVL("done"));
@@ -1047,7 +1139,7 @@ void TestLineModel() {
                 TextEq(SpansWithFg(&a, statRow, 167, TOOL_TEXT_SPAN), SVL("-1")));
     }
 
-    const SpanLine* plainOutcome = FindRow(&a, &summaries, "3 bytes written");
+    const SpanLine* plainOutcome = FindRow(&a, &summaries, "3 bytes");
     CHECK(plainOutcome != nullptr);
     if (plainOutcome != nullptr) {
       CHECK_ALL(SpansWithFg(&a, plainOutcome, 71, TOOL_TEXT_SPAN).Length == 0,
@@ -1059,7 +1151,7 @@ void TestLineModel() {
     const SpanLine* failed = FindRow(&a, &summaries, "Shell false  exit 1");
     CHECK(failed != nullptr);
     if (failed != nullptr) {
-      CHECK_ALL(TextEq(failed->Spans.Data[1].Text, SVL("\xe2\x9c\x97")),
+      CHECK_ALL(TextEq(failed->Spans.Data[1].Text, SVL("\xe2\x96\xb8")),
                 failed->Spans.Data[1].St.Fg == 196);
     }
 
@@ -1097,7 +1189,7 @@ void TestLineModel() {
     CHECK(LineModel_At(&noColor, 0)->Spans.Data[1].St.Fg == COL_DEFAULT);
     LineModel_AddTool(&noColor, SVL("id"), SVL("shell"), SVL("{\"command\":\"echo\"}"));
     CHECK(Finish(&noColor, SVL("id"), SVL("ok")));
-    const SpanLine* row = FindRow(&a, &noColor, " \xe2\x9c\x93  Shell echo");
+    const SpanLine* row = FindRow(&a, &noColor, " \xe2\x96\xb8  Shell echo");
     CHECK(row != nullptr);
     CHECK(row->Spans.Data[1].St.Fg == COL_DEFAULT);
 
@@ -1126,8 +1218,8 @@ void TestLineModel() {
     CHECK_ALL(!bullets.Rounded,
               TextEq(ExtractRow(&a, LineModel_At(&bullets, 0), 40, 0, 6),
                      SVL(" \xe2\x97\xbc  hi")),
-              AnyRowHas(&a, &bullets, " \xe2\x9c\x93  Shell echo"),
-              AnyRowHas(&a, &bullets, " \xe2\x97\xbb  Shell sleep"),
+              AnyRowHas(&a, &bullets, " \xe2\x96\xb8  Shell echo"),
+              AnyRowHas(&a, &bullets, " \xe2\x96\xb8  Shell sleep"),
               !AnyRowHas(&a, &bullets, "\xe2\x97\x8f"),
               !AnyRowHas(&a, &bullets, "\xe2\x97\x8b"));
 
@@ -1141,8 +1233,8 @@ void TestLineModel() {
               LineModel_DisplayRevision(&bullets) != beforeRevision,
               TextEq(ExtractRow(&a, LineModel_At(&bullets, 0), 40, 0, 6),
                      SVL(" \xe2\x97\x8f  hi")),
-              AnyRowHas(&a, &bullets, " \xe2\x9c\x93  Shell echo"),
-              AnyRowHas(&a, &bullets, " \xe2\x97\x8b  Shell sleep"),
+              AnyRowHas(&a, &bullets, " \xe2\x96\xb8  Shell echo"),
+              AnyRowHas(&a, &bullets, " \xe2\x96\xb8  Shell sleep"),
               !AnyRowHas(&a, &bullets, "\xe2\x97\xbc"),
               !AnyRowHas(&a, &bullets, "\xe2\x97\xbb"));
     LineModel_Release(&bullets);
@@ -1203,14 +1295,23 @@ void TestLineModel() {
     u64 tailId = tail.Entries.Data[0].Id;
     CHECK_ALL(LineModel_Count(&tail) == 1, !LineModel_At(&tail, 0)->HasHiddenContent);
     CHECK(LineModel_UpdateTool(&tail, SVL("t"), SVL("l1\nl2\nl3\nl4\nl5\nl6\nl7\n")));
-    CHECK_ALL(LineModel_Count(&tail) == 1, LineModel_At(&tail, 0)->HasHiddenContent,
-              !AnyRowHas(&a, &tail, "l7"));
+    CHECK_ALL(LineModel_Count(&tail) == 3, !LineModel_At(&tail, 0)->HasHiddenContent,
+              !AnyRowHas(&a, &tail, "l5"), AnyRowHas(&a, &tail, "l6"),
+              AnyRowHas(&a, &tail, "l7"));
     CHECK(LineModel_ToggleEntry(&tail, tailId));
     CHECK_ALL(LineModel_Count(&tail) == 6, !AnyRowHas(&a, &tail, "l2"),
               AnyRowHas(&a, &tail, "l3"), AnyRowHas(&a, &tail, "l7"));
     CHECK(LineModel_UpdateTool(&tail, SVL("t"), SVL("l8\n")));
     CHECK_ALL(LineModel_Count(&tail) == 2, AnyRowHas(&a, &tail, "l8"),
               !AnyRowHas(&a, &tail, "l7"));
+    CHECK(LineModel_ToggleEntry(&tail, tailId));
+    CHECK(LineModel_UpdateTool(&tail, SVL("t"), SVL("l9\nl10\n")));
+    CHECK_ALL(LineModel_Count(&tail) == 3, AnyRowHas(&a, &tail, "l10"),
+              !AnyRowHas(&a, &tail, "l8"));
+    CHECK(LineModel_FinishTool(&tail, SVL("t"), SVL("l9\nl10\n"),
+                               SVL("l9\nl10\n"), false, 3000));
+    CHECK_ALL(LineModel_Count(&tail) == 1, !AnyRowHas(&a, &tail, "l10"),
+              AnyRowHas(&a, &tail, "exit 0"), !AnyRowHas(&a, &tail, "running"));
     LineModel_Release(&tail);
   }
 

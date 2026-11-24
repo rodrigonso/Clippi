@@ -91,6 +91,29 @@ StrView PayloadBeforeNotice(StrView text) {
   return text;
 }
 
+void AppendResultCount(StrBuf* out, u32 count, const char* singular,
+                       const char* plural, StrView result) {
+  AppendCount(out, count, singular, plural);
+  u32 start = result.Length;
+  while (start && result.Data[start - 1] != '\n') start--;
+  StrView notice{result.Data ? result.Data + start : nullptr, result.Length - start};
+  if (IsNoticeLine(notice) && StrView_Contains(notice, "limit reached"))
+    StrBuf_AppendCStr(out, " shown");
+}
+
+void AppendBytes(StrBuf* out, u32 bytes) {
+  if (bytes < 1024) {
+    AppendCount(out, bytes, "byte", "bytes");
+    return;
+  }
+  u64 divisor = bytes >= 1024 * 1024 ? 1024 * 1024 : 1024;
+  u64 tenths = ((u64)bytes * 10 + divisor / 2) / divisor;
+  StrBuf_AppendU64(out, tenths / 10);
+  StrBuf_AppendChar(out, '.');
+  StrBuf_AppendU64(out, tenths % 10);
+  StrBuf_AppendCStr(out, divisor == 1024 ? " KiB" : " MiB");
+}
+
 u32 CountLines(StrView text, bool skipEmpty, bool skipNotice) {
   if (text.Length == 0) return 0;
   u32 count = 0;
@@ -365,34 +388,34 @@ void ToolView_Finish(ToolView* view, StrView result, bool isError) {
         break;
       }
       u32 count = CountLines(PayloadBeforeNotice(result), false, false);
-      AppendCount(&view->Outcome, count, "line read", "lines read");
+      AppendCount(&view->Outcome, count, "line", "lines");
     } break;
     case ToolViewKind::Grep: {
       if (StrView_Contains(result, "No matches found")) {
         StrBuf_AppendCStr(&view->Outcome, "no matches");
         break;
       }
-      u32 count = CountGrepMatches(result);
-      AppendCount(&view->Outcome, count, "line found", "lines found");
+      u32 count = CountGrepMatches(PayloadBeforeNotice(result));
+      AppendResultCount(&view->Outcome, count, "matching line", "matching lines", result);
     } break;
     case ToolViewKind::Find: {
       if (StrView_Contains(result, "No files found matching pattern")) {
         StrBuf_AppendCStr(&view->Outcome, "no files found");
         break;
       }
-      u32 count = CountLines(result, true, true);
-      AppendCount(&view->Outcome, count, "file found", "files found");
+      u32 count = CountLines(PayloadBeforeNotice(result), true, true);
+      AppendResultCount(&view->Outcome, count, "file", "files", result);
     } break;
     case ToolViewKind::Ls: {
       if (StrView_Contains(result, "(empty directory)")) {
         StrBuf_AppendCStr(&view->Outcome, "empty");
         break;
       }
-      u32 count = CountLines(result, true, true);
-      AppendCount(&view->Outcome, count, "entry found", "entries found");
+      u32 count = CountLines(PayloadBeforeNotice(result), true, true);
+      AppendResultCount(&view->Outcome, count, "entry", "entries", result);
     } break;
     case ToolViewKind::Write:
-      AppendCount(&view->Outcome, view->CountHint, "byte written", "bytes written");
+      AppendBytes(&view->Outcome, view->CountHint);
       break;
     case ToolViewKind::Edit: {
       u32 added = 0;

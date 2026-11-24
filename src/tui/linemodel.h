@@ -77,6 +77,8 @@ struct ToolEntry {
   StrView Id;
   ToolView View;
   StrBuf Preview;
+  // Bounded separately so diagnostics beyond the retained preview remain visible.
+  StrView ErrorExcerpt;
   // Monotonic milliseconds; zero for calls replayed from a session log.
   u64 StartMs;
   u64 EndMs;

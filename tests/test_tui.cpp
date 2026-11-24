@@ -396,7 +396,7 @@ void TestToolPayloadOwnership(Arena* outer) {
     ToolEntry& tool = t.Model.Entries.Data[i].Tool;
     CHECK_ALL(tool.Done, !tool.Error,
               StrView_Eq(StrBuf_View(&tool.View.Detail), SVL("owned.txt")),
-              StrView_Eq(StrBuf_View(&tool.View.Outcome), SVL("65536 lines read")),
+              StrView_Eq(StrBuf_View(&tool.View.Outcome), SVL("65536 lines")),
               StrView_Eq(StrBuf_View(&tool.Preview), StrView{result.Data, 1500}));
   }
   CHECK_ALL(t.SessionMem.Used <= baseline + (128u << 10),
@@ -739,7 +739,7 @@ void TestHydrationPayloadOwnership(Arena* outer) {
       ToolEntry& tool = t.Model.Entries.Data[i].Tool;
       CHECK_ALL(t.Model.Entries.Data[i].Kind == EntryKind::Tool, tool.Done, !tool.Error,
                 StrView_Eq(StrBuf_View(&tool.View.Detail), SVL("owned.txt")),
-                StrView_Eq(StrBuf_View(&tool.View.Outcome), SVL("80001 lines read")),
+                StrView_Eq(StrBuf_View(&tool.View.Outcome), SVL("80001 lines")),
                 StrView_Eq(StrBuf_View(&tool.Preview), StrView{resultPart.Data, 1500}));
     }
     usize rowStorage = (usize)2 * t.Model.Lines.Capacity * sizeof(SpanLine);
@@ -1496,7 +1496,7 @@ void TestTui() {
   DrainDisplay(&t, 1048);
 
   CHECK_ALL(!AnyRow(&a, &t, "assistant"), AnyRow(&a, &t, "Hello world"),
-            AnyRow(&a, &t, " \xe2\x9c\x93  Shell ls"),
+            AnyRow(&a, &t, " \xe2\x96\xb8  Shell ls"),
             !AnyRow(&a, &t, "hello-from-shell"), t.State == TuiState::Idle,
             t.Use.Output == 7);
 

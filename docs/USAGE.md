@@ -140,6 +140,22 @@ to clear an idle composer or interrupt an active turn · hover or **left click**
 a turn's first row to highlight or collapse/expand it · **Ctrl+O** expands all
 tools when any is collapsed, otherwise collapses all · **Ctrl+D** quits ·
 **Ctrl+L** repaints.
+
+Tool calls start collapsed with a single-line action, target, and outcome.
+Disclosure arrows show whether retained details are collapsed or expanded;
+live calls use an accent-coloured spinner and a `running` label. Long paths
+shorten from the left to preserve the filename, while commands and search
+patterns shorten from the right. Outcomes take priority over long targets.
+Click the header to expand the retained target and output; edit previews show
+added and removed lines in green and red. Expanded previews retain the existing
+size and transcript-row limits, rather than loading unbounded output.
+Running shell calls show their last two preview lines even while collapsed and
+fold them away on success. Failures show up to two diagnostic lines automatically,
+with red status text; shell failures prefer an error/failure line, falling back
+to the output tail. Limited searches and directory listings report counts as
+`shown`, not as exact totals. Shell success reports `exit 0`, not inferred test
+results.
+
 A `Thinking…` row with elapsed seconds marks model waits in the transcript, and
 each run ends with a footer rule showing its duration, tool count, and token
 totals. Notices render as italic asides behind a dim grey dot. The user

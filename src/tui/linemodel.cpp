@@ -24,8 +24,8 @@ StrView FilledMarker(const LineModel* m) {
 StrView OutlineMarker(const LineModel* m) {
   return m->Rounded ? SVL("\xe2\x97\x8b") : SVL("\xe2\x97\xbb");
 }
-const StrView CHECK_MARKER = SVL("\xe2\x9c\x93");
-const StrView CROSS_MARKER = SVL("\xe2\x9c\x97");
+const StrView TOOL_CLOSED = SVL("\xe2\x96\xb8");
+const StrView TOOL_OPEN = SVL("\xe2\x96\xbe");
 const u8 NOTICE_FG = 242;
 const u8 MUTED_FG = 244;
 const u8 RULE_FG = 238;
@@ -295,62 +295,172 @@ StrView ToolTimer(Arena* arena, const ToolEntry& tool) {
   return FormatDuration(arena, tool.EndMs - tool.StartMs, true);
 }
 
+StrView ClipToolText(Arena* arena, StrView text, u32 cells, bool tail = false) {
+  u32 width = LineTextWidth(text);
+  if (width <= cells) return text;
+  if (!cells) return {};
+  StrBuf out = StrBuf_Make(arena, cells * 4 + 1);
+  u32 at = 0;
+  if (tail) {
+    while (at < text.Length && width > cells - 1)
+      width -= CharCellWidth(Utf8Decode(text, &at));
+    StrBuf_AppendCStr(&out, "\xe2\x80\xa6");
+    StrBuf_Append(&out, StrView{text.Data + at, text.Length - at});
+  } else {
+    u32 used = 0;
+    while (at < text.Length) {
+      u32 next = at;
+      u32 w = CharCellWidth(Utf8Decode(text, &next));
+      if (used + w > cells - 1) break;
+      used += w;
+      at = next;
+    }
+    StrBuf_Append(&out, StrView{text.Data, at});
+    StrBuf_AppendCStr(&out, "\xe2\x80\xa6");
+  }
+  return StrBuf_View(&out);
+}
+
+StrView ToolExcerptText(StrView text, ToolViewKind kind, bool error) {
+  while (text.Length && (text.Data[text.Length - 1] == '\n' ||
+                         text.Data[text.Length - 1] == '\r')) text.Length--;
+  if (!text.Length) return {};
+  if (kind == ToolViewKind::Shell) {
+    for (u32 i = 0; i + 2 < text.Length; i++) {
+      if (text.Data[i] == '\n' && text.Data[i + 1] == '\n' &&
+          StrView_StartsWith(StrView{text.Data + i + 2, text.Length - i - 2},
+                             SVL("Command "))) {
+        if (i) text.Length = i;
+        break;
+      }
+    }
+    u32 start = 0;
+    bool foundError = false;
+    if (error) {
+      for (u32 at = 0; at < text.Length;) {
+        u32 lineStart = at;
+        while (at < text.Length && text.Data[at] != '\n') at++;
+        StrView line{text.Data + lineStart, at - lineStart};
+        if (StrView_ContainsInsensitiveAscii(line, SVL("error")) ||
+            StrView_ContainsInsensitiveAscii(line, SVL("failed"))) {
+          start = lineStart;
+          foundError = true;
+          break;
+        }
+        at++;
+      }
+    }
+    if (!foundError) {
+      u32 lines = 0;
+      for (u32 i = text.Length; i > 0; i--) {
+        if (text.Data[i - 1] == '\n' && ++lines == 2) { start = i; break; }
+      }
+    }
+    text = StrView{text.Data + start, text.Length - start};
+  }
+  return text;
+}
+
+void AppendToolExcerpt(LineModel* m, const ToolEntry& tool, StrView indent) {
+  StrView text = tool.Error ? tool.ErrorExcerpt
+                           : ToolExcerptText(BufView(tool.Preview), tool.View.Kind, false);
+  if (!text.Length) return;
+  StrBuf prefix = StrBuf_Make(&m->RowsMem, indent.Length + 4);
+  StrBuf_Append(&prefix, indent);
+  StrBuf_AppendCStr(&prefix, "\xe2\x94\x82 ");
+  Style style = LStyle(m, tool.Error ? 196 : MUTED_FG, ATTR_NONE);
+  u32 prefixWidth = LineTextWidth(StrBuf_View(&prefix));
+  if (m->Width <= prefixWidth) return;
+  u32 at = 0;
+  for (u32 row = 0; row < 2 && at < text.Length; row++) {
+    u32 start = at;
+    while (at < text.Length && text.Data[at] != '\n') at++;
+    StrView line{text.Data + start, at - start};
+    if (line.Length && line.Data[line.Length - 1] == '\r') line.Length--;
+    SpanLine excerpt;
+    InitRow(&m->RowsMem, &excerpt, 2);
+    Array_Push(&excerpt.Spans, Span{StrBuf_View(&prefix), style, true});
+    Array_Push(&excerpt.Spans,
+               Span{ClipToolText(&m->RowsMem, line, m->Width - prefixWidth), style});
+    Array_Push(&m->Lines, excerpt);
+    at++;
+  }
+}
+
 void BuildTool(LineModel* m, const Entry* entry, bool expandPreview) {
   const ToolEntry& tool = entry->Tool;
-  StrView marker = OutlineMarker(m);
-  Style markerSt = LStyle(m, ASSISTANT_FG, ATTR_NONE);
-  if (tool.Done && tool.Error) {
-    marker = CROSS_MARKER;
-    markerSt = LStyle(m, 196, ATTR_BOLD);
-  } else if (tool.Done) {
-    marker = CHECK_MARKER;
-    markerSt = LStyle(m, DIFF_ADD_FG, ATTR_NONE);
-  } else if (tool.Live) {
-    markerSt = LStyle(m, m->Accent, ATTR_NONE);
-  }
-  Style label = tool.Error ? LStyle(m, 196, ATTR_BOLD) : LStyle(m, 252, ATTR_BOLD);
-  Style detail = tool.Error ? LStyle(m, 196, ATTR_NONE) : LStyle(m, 252, ATTR_NONE);
+  StrView marker = tool.Live ? OutlineMarker(m) : entry->Collapsed ? TOOL_CLOSED : TOOL_OPEN;
+  Style markerSt = LStyle(m, tool.Error ? 196 : tool.Live ? m->Accent : MUTED_FG, ATTR_NONE);
+  Style label = LStyle(m, MUTED_FG, ATTR_NONE);
+  Style detail = LStyle(m, 252, ATTR_NONE);
   StrView indent = IconIndent(&m->RowsMem, marker, MARKER_LEFT_PADDING);
+  StrView name = tool.View.Label;
+  StrView target = BufView(tool.View.Detail);
+  StrView outcome = tool.Live ? SVL("running") : BufView(tool.View.Outcome);
+  StrView timer = ToolTimer(&m->RowsMem, tool);
+  u32 split = tool.Live ? 0 : tool.View.OutcomeSplit;
 
   SpanLine logical;
-  InitRow(&m->RowsMem, &logical, 7);
+  InitRow(&m->RowsMem, &logical, 10);
   PushIcon(&m->RowsMem, &logical.Spans, marker, markerSt, MARKER_LEFT_PADDING, tool.Live);
-  if (tool.View.Label.Length) {
-    Array_Push(&logical.Spans, Span{tool.View.Label, label});
-    if (tool.View.Detail.Length) Array_Push(&logical.Spans, Span{SVL(" "), detail});
+  if (entry->Collapsed) {
+    if (m->Width < 4) {
+      logical.Spans.Count = 0;
+      Array_Push(&logical.Spans, Span{marker, markerSt, false, tool.Live});
+      Array_Push(&m->Lines, logical);
+      return;
+    }
+    u32 available = m->Width - 4;
+    u32 nameWidth = LineTextWidth(name);
+    u32 timerWidth = LineTextWidth(timer);
+    if (timerWidth && available >= nameWidth + timerWidth + 4)
+      available -= timerWidth + 1;
+    else timer = {};
+    name = ClipToolText(&m->RowsMem, name, available);
+    available -= LineTextWidth(name);
+    if (available) available--;
+    StrView clippedOutcome = ClipToolText(&m->RowsMem, outcome, available > 2 ? available - 2 : 0);
+    if (!StrView_Eq(clippedOutcome, outcome)) split = 0;
+    outcome = clippedOutcome;
+    u32 outcomeWidth = LineTextWidth(outcome);
+    u32 targetCells = available > outcomeWidth + 2 ? available - outcomeWidth - 2 : 0;
+    if (!outcomeWidth) targetCells = available;
+    bool path = tool.View.Kind == ToolViewKind::Read || tool.View.Kind == ToolViewKind::Edit ||
+                tool.View.Kind == ToolViewKind::Write || tool.View.Kind == ToolViewKind::Ls;
+    target = ClipToolText(&m->RowsMem, target, targetCells, path);
   }
-  if (tool.View.Detail.Length)
-    Array_Push(&logical.Spans, Span{BufView(tool.View.Detail), detail});
-  if (tool.View.Outcome.Length) {
+  if (name.Length) Array_Push(&logical.Spans, Span{name, label});
+  if (target.Length) {
+    Array_Push(&logical.Spans, Span{SVL(" "), detail});
+    Array_Push(&logical.Spans, Span{target, detail});
+  }
+  if (outcome.Length) {
     Array_Push(&logical.Spans, Span{SVL("  "), detail});
-    StrView outcome = BufView(tool.View.Outcome);
-    u32 split = tool.View.OutcomeSplit;
-    if (!tool.Error && split != 0 && split < outcome.Length) {
-      Array_Push(&logical.Spans,
-                 Span{StrView{outcome.Data, split},
-                      LStyle(m, DIFF_ADD_FG, ATTR_NONE)});
-      Array_Push(
-          &logical.Spans,
-          Span{StrView{outcome.Data + split, outcome.Length - split},
-               LStyle(m, DIFF_DEL_FG, ATTR_NONE)});
+    if (!tool.Error && split && split < outcome.Length) {
+      Array_Push(&logical.Spans, Span{StrView{outcome.Data, split},
+                                    LStyle(m, DIFF_ADD_FG, ATTR_NONE)});
+      Array_Push(&logical.Spans, Span{StrView{outcome.Data + split, outcome.Length - split},
+                                    LStyle(m, DIFF_DEL_FG, ATTR_NONE)});
     } else {
-      Array_Push(&logical.Spans,
-                 Span{outcome,
-                      tool.Error ? LStyle(m, 196, ATTR_NONE)
-                                 : LStyle(m, MUTED_FG, ATTR_NONE)});
+      Array_Push(&logical.Spans, Span{outcome, LStyle(m, tool.Error ? 196 : MUTED_FG, ATTR_NONE)});
     }
   }
-  StrView timer = ToolTimer(&m->RowsMem, tool);
   if (timer.Length) {
     logical.Right = Span{timer, LStyle(m, MUTED_FG, ATTR_NONE)};
     logical.HasRight = true;
   }
   logical.Continuation = Span{indent, StyleDefault(), true};
   logical.HasContinuation = true;
-  WrapAndAppend(m, &logical);
+  if (entry->Collapsed) Array_Push(&m->Lines, logical);
+  else WrapAndAppend(m, &logical);
 
-  if (expandPreview && tool.Preview.Length)
+  if (expandPreview && tool.Preview.Length) {
+    if (tool.Error && tool.ErrorExcerpt.Length &&
+        !StrView_ContainsInsensitiveAscii(BufView(tool.Preview), tool.ErrorExcerpt))
+      AppendToolExcerpt(m, tool, indent);
     AppendToolPreviewRows(m, &m->RowsMem, &m->Lines, entry, indent);
+  } else if (entry->Collapsed && (tool.Error || (tool.Live && tool.View.Kind == ToolViewKind::Shell)))
+    AppendToolExcerpt(m, tool, indent);
 }
 
 void BuildPlainTurn(LineModel* m, const Entry* entry, StrView marker, Style markerStyle,
@@ -467,7 +577,7 @@ void BuildEntryRows(LineModel* m, const Entry* entry, bool showPreview) {
     case EntryKind::Tool: {
       bool hasPreview = entry->Tool.Preview.Length != 0;
       BuildTool(m, entry, showPreview);
-      previewHidden = hasPreview && !showPreview;
+      previewHidden = hasPreview && !showPreview && !entry->Collapsed;
       break;
     }
     case EntryKind::Info:
@@ -488,7 +598,7 @@ void BuildEntryRows(LineModel* m, const Entry* entry, bool showPreview) {
 
   u32 rowCount = m->Lines.Count - rowStart;
   bool hidden = previewHidden;
-  if (entry->Collapsed && rowCount > 1) {
+  if (entry->Kind != EntryKind::Tool && entry->Collapsed && rowCount > 1) {
     hidden = true;
     m->Lines.Count = rowStart + 1;
     rowCount = 1;
@@ -1556,7 +1666,8 @@ bool LineModel_UpdateTool(LineModel* m, StrView toolId, StrView preview) {
     bool hadPreview = entry->Tool.Preview.Length != 0;
     StrBuf_Clear(&entry->Tool.Preview);
     StrBuf_Append(&entry->Tool.Preview, preview);
-    if (!entry->Collapsed || hadPreview != (preview.Length != 0)) InvalidateEntry(m, i - 1);
+    if (!entry->Collapsed || (entry->Tool.Live && entry->Tool.View.Kind == ToolViewKind::Shell) ||
+        hadPreview != (preview.Length != 0)) InvalidateEntry(m, i - 1);
     return true;
   }
   return false;
@@ -1580,6 +1691,16 @@ bool LineModel_FinishTool(LineModel* m, StrView toolId, StrView result, StrView 
     entry->PreviewRows = 0xffffffffu;
     StrBuf_Clear(&entry->Tool.Preview);
     StrBuf_Append(&entry->Tool.Preview, preview);
+    if (isError) {
+      StrView excerpt = ToolExcerptText(result, entry->Tool.View.Kind, true);
+      u32 end = 0;
+      for (u32 lines = 0; end < excerpt.Length && lines < 2; lines++) {
+        while (end < excerpt.Length && excerpt.Data[end] != '\n') end++;
+        if (end < excerpt.Length) end++;
+      }
+      entry->Tool.ErrorExcerpt = StrView_Dup(
+          m->Mem, StrView_ClampUtf8(StrView{excerpt.Data, end}, 480));
+    }
     ToolView_Finish(&entry->Tool.View, result, isError);
     if (!entry->Collapsed && preview.Length) m->PreviewBudgetDirty = true;
     AdvanceDisplayRevision(m);
