@@ -3,18 +3,9 @@ set(CLIPPI_PCRE2_ARCHIVE "" CACHE FILEPATH "Offline copy of the pinned PCRE2 rel
 set(pcre2_version 10.48)
 set(pcre2_hash ebcc25aadf2a51fa1fefa9b8bc9e7a79b3dae86870a0f1152a22e42befd46888)
 
-set(pcre2_url "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-${pcre2_version}/pcre2-${pcre2_version}.tar.gz")
-if(CLIPPI_PCRE2_ARCHIVE)
-  if(NOT EXISTS "${CLIPPI_PCRE2_ARCHIVE}")
-    message(FATAL_ERROR "PCRE2 archive does not exist: ${CLIPPI_PCRE2_ARCHIVE}")
-  endif()
-  # FetchContent does not recheck an archive once its sources are populated.
-  file(SHA256 "${CLIPPI_PCRE2_ARCHIVE}" archive_hash)
-  if(NOT archive_hash STREQUAL pcre2_hash)
-    message(FATAL_ERROR "PCRE2 archive SHA256 mismatch: ${CLIPPI_PCRE2_ARCHIVE}")
-  endif()
-  set(pcre2_url "${CLIPPI_PCRE2_ARCHIVE}")
-endif()
+clippi_pinned_url(pcre2_url PCRE2
+  "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-${pcre2_version}/pcre2-${pcre2_version}.tar.gz"
+  "${pcre2_hash}" "${CLIPPI_PCRE2_ARCHIVE}")
 
 block(SCOPE_FOR VARIABLES PROPAGATE pcre2_SOURCE_DIR)
   foreach(option

@@ -29,18 +29,8 @@ else()
   message(FATAL_ERROR "Clippi requires native Windows or macOS TLS.")
 endif()
 
-set(curl_url "https://curl.se/download/curl-${curl_version}.tar.xz")
-if(CLIPPI_CURL_ARCHIVE)
-  if(NOT EXISTS "${CLIPPI_CURL_ARCHIVE}")
-    message(FATAL_ERROR "Curl archive does not exist: ${CLIPPI_CURL_ARCHIVE}")
-  endif()
-  # Verify on every configure, even when FetchContent already populated sources.
-  file(SHA256 "${CLIPPI_CURL_ARCHIVE}" archive_hash)
-  if(NOT archive_hash STREQUAL curl_hash)
-    message(FATAL_ERROR "Curl archive SHA256 mismatch: ${CLIPPI_CURL_ARCHIVE}")
-  endif()
-  set(curl_url "${CLIPPI_CURL_ARCHIVE}")
-endif()
+clippi_pinned_url(curl_url curl "https://curl.se/download/curl-${curl_version}.tar.xz"
+  "${curl_hash}" "${CLIPPI_CURL_ARCHIVE}")
 FetchContent_Declare(curl URL "${curl_url}" URL_HASH "SHA256=${curl_hash}"
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(curl)

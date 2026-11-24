@@ -44,6 +44,22 @@ function(clippi_target target)
   endif()
 endfunction()
 
+# Resolves a pinned dependency's URL, preferring a verified offline archive.
+function(clippi_pinned_url out name url hash archive)
+  if(archive)
+    if(NOT EXISTS "${archive}")
+      message(FATAL_ERROR "${name} archive does not exist: ${archive}")
+    endif()
+    # FetchContent does not recheck an archive once its sources are populated.
+    file(SHA256 "${archive}" actual)
+    if(NOT actual STREQUAL hash)
+      message(FATAL_ERROR "${name} archive SHA256 mismatch: ${archive}")
+    endif()
+    set(url "${archive}")
+  endif()
+  set(${out} "${url}" PARENT_SCOPE)
+endfunction()
+
 add_library(clippi_core STATIC
   src/base/arena.cpp
   src/base/config_file.cpp
@@ -72,7 +88,6 @@ add_library(clippi_core STATIC
   src/agent/event_json.cpp)
 clippi_target(clippi_core)
 set_target_properties(clippi_core PROPERTIES DEBUG_POSTFIX d)
-target_compile_features(clippi_core PUBLIC cxx_std_23)
 target_include_directories(clippi_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(WIN32)
   target_sources(clippi_core PRIVATE src/base/thread_win.cpp)
@@ -181,9 +196,6 @@ if(CLIPPI_BUILD_CLI)
       OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/app/clippi.ico")
     target_sources(clippi PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/clippi.rc")
   endif()
-  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT clippi)
-  set_target_properties(clippi PROPERTIES
-    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   install(TARGETS clippi RUNTIME DESTINATION bin COMPONENT runtime)
   install(FILES "${curl_SOURCE_DIR}/COPYING"
     DESTINATION share/clippi/licenses/curl COMPONENT runtime)
