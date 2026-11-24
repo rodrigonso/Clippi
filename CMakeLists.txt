@@ -33,7 +33,8 @@ endif()
 
 function(clippi_target target)
   if(MSVC)
-    target_compile_options(${target} PRIVATE /GR- /EHs-c- /W4 /permissive- /Zc:__cplusplus /utf-8)
+    target_compile_options(${target} PRIVATE
+      "$<$<COMPILE_LANGUAGE:CXX>:/GR-;/EHs-c-;/W4;/permissive-;/Zc:__cplusplus;/utf-8>")
     target_compile_definitions(${target} PRIVATE
       _HAS_EXCEPTIONS=0 NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
   else()
@@ -174,6 +175,12 @@ if(CLIPPI_BUILD_CLI)
   add_executable(clippi src/app/main.cpp)
   clippi_target(clippi)
   target_link_libraries(clippi PRIVATE clippi_cli)
+  if(WIN32)
+    configure_file(src/app/clippi.rc.in generated/clippi.rc @ONLY)
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/generated/clippi.rc" PROPERTIES
+      OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/app/clippi.ico")
+    target_sources(clippi PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/clippi.rc")
+  endif()
   set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT clippi)
   set_target_properties(clippi PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
