@@ -2,7 +2,7 @@
 
 ## Build
 
-`build.bat` and `tools/build.sh` are thin wrappers around **CMake 3.24+**.
+`tools/build.ps1` (Windows) and `tools/build.sh` (macOS) are thin wrappers around **CMake 3.24+**.
 The root `CMakeLists.txt` owns source lists, compiler settings, targets, and SDK
 installation. `cmake/curl.cmake` and `cmake/pcre2.cmake` configure the CLI's
 pinned source dependencies; release packaging stays in separate scripts.
@@ -29,15 +29,17 @@ directory under `_deps/`. HTTPS uses native Schannel on Windows and
 SecureTransport on macOS, with the host certificate trust store.
 Core-only builds never fetch or build networking or regex dependencies.
 
-```bat
-build.bat                                  REM Release CLI
-build.bat -Config Debug                     REM Debug CLI
-build.bat -Test                             REM full offline sweep
-build.bat -Test -TestArgs session,tools      REM selected suites
-build.bat -CoreOnly -Examples -Test          REM dependency-free core
+```powershell
+.\tools\build.ps1                                # Release CLI
+.\tools\build.ps1 -Config Debug                  # Debug CLI
+.\tools\build.ps1 -Test                          # full offline sweep
+.\tools\build.ps1 -Test -TestArgs session,tools  # selected suites
+.\tools\build.ps1 -CoreOnly -Examples -Test      # dependency-free core
 ```
 
-The same options work with `.\tools\build.ps1` from PowerShell.
+The script runs in Windows PowerShell 5.1 or PowerShell 7. If script execution
+is disabled, run it as
+`powershell -ExecutionPolicy Bypass -File tools\build.ps1 <options>`.
 
 ```sh
 bash tools/build.sh              # macOS CLI
@@ -76,7 +78,7 @@ Put `--` before Clippi's short options: without it PowerShell binds `-c` to
 
 The checked-in `.vsconfig` declares the Desktop development with C++ workload
 and CMake tools. Open the folder in Visual Studio to use its CMake integration,
-or build with `build.bat -Config Debug` and launch or attach the debugger to
+or build with `.\tools\build.ps1 -Config Debug` and launch or attach the debugger to
 `build\clippi.exe`. There are no project-specific CMake presets to maintain.
 
 ## Test

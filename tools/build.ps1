@@ -3,8 +3,7 @@
 .SYNOPSIS
     Configures and builds Clippi with CMake and the Visual Studio toolchain.
 .DESCRIPTION
-    build.bat accepts the same options. Core-only builds never fetch networking
-    or regex dependencies. Tests remain offline unless explicitly selected otherwise.
+    Core-only builds never fetch networking or regex dependencies. Tests remain offline unless explicitly selected otherwise.
 #>
 [CmdletBinding(PositionalBinding = $false)]
 param(
@@ -29,7 +28,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($Help) {
     Write-Output @'
-usage: build.bat [-Config Release|Debug|RelWithDebInfo|MinSizeRel]
+usage: tools\build.ps1 [-Config Release|Debug|RelWithDebInfo|MinSizeRel]
        [-CoreOnly] [-Examples] [-Test] [-TestArgs session,tools]
        [-BuildDir path] [-Target name] [-Clean] [-InstallPrefix path]
        [-Package] [-CurlArchive path] [-Pcre2Archive path]

@@ -102,7 +102,7 @@ users as soon as they reach `main`.
 ## Local preview archives
 
 ```powershell
-.\build.bat -BuildDir out\release -Test -Package
+.\tools\build.ps1 -BuildDir out\release -Test -Package
 ```
 
 ```sh

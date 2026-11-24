@@ -113,7 +113,7 @@ Requires CMake 3.24+ and a C++23 toolchain: Visual Studio with the Desktop
 development with C++ workload on Windows, or Clang with Make or Ninja on macOS.
 
 ```powershell
-.\build.bat -Test            # Windows: build and run the offline test suite
+.\tools\build.ps1 -Test      # Windows: build and run the offline test suite
 ```
 
 ```sh

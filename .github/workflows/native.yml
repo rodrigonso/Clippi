@@ -45,11 +45,11 @@ jobs:
       - name: Build and test Windows core with examples
         if: runner.os == 'Windows'
         working-directory: source
-        run: .\build.bat -BuildDir out\ci-core -CoreOnly -Examples -Test
+        run: .\tools\build.ps1 -BuildDir out\ci-core -CoreOnly -Examples -Test
       - name: Build, test and package Windows CLI
         if: runner.os == 'Windows'
         working-directory: source
-        run: .\build.bat -BuildDir out\ci-cli -Test -Package
+        run: .\tools\build.ps1 -BuildDir out\ci-cli -Test -Package
       - name: Build and test macOS core with examples
         if: runner.os == 'macOS'
         working-directory: source

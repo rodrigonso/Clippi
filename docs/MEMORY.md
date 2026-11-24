@@ -21,10 +21,10 @@ others with `[[slug]]`, so the folder also opens as an Obsidian vault:
 ---
 title: Build and test
 type: feedback        # user | feedback | project | reference | topic
-summary: Always build with build.bat; it is the page's catalog entry
+summary: Always build with tools/build.ps1; it is the page's catalog entry
 pinned: false
 ---
-The user asked for build.bat over raw CMake.
+The user asked for tools/build.ps1 over raw CMake.
 ```
 
 When `read` is available, the system prompt gains a `<memory_wiki>` block after

@@ -9,12 +9,12 @@ allocates less and copies less.
 Build and test through the repo scripts. They are thin wrappers around CMake:
 
 ```powershell
-.\build.bat                                 # build clippi (Release)
-.\build.bat -Config Debug                   # debug build
-.\build.bat -Test -TestArgs session,tools    # build + run named suites
-.\build.bat -Test                           # full offline sweep
-.\build.bat -CoreOnly -Examples -Test        # no networking dependencies
-.\tools\run.ps1 -- -p "summarize README.md"  # build, then run; Clippi flags after --
+.\tools\build.ps1                                 # build clippi (Release)
+.\tools\build.ps1 -Config Debug                   # debug build
+.\tools\build.ps1 -Test -TestArgs session,tools    # build + run named suites
+.\tools\build.ps1 -Test                           # full offline sweep
+.\tools\build.ps1 -CoreOnly -Examples -Test        # no networking dependencies
+.\tools\run.ps1 -- -p "summarize README.md"        # build, then run; Clippi flags after --
 ```
 
 Only Windows and macOS are supported. On macOS use `bash tools/build.sh --test`, or
@@ -34,7 +34,7 @@ dependency policies live in `cmake/curl.cmake` and `cmake/pcre2.cmake`. HTTPS
 uses native Schannel on Windows and SecureTransport on macOS. Suites are
 registered in `tests/suites.txt` (`session`, `harness`, `compaction`,
 `tools`, `infra`, `prompt_context`, ...). Run the narrowest suite that covers
-your change; use `.\build.bat -Test` before declaring a change finished.
+your change; use `.\tools\build.ps1 -Test` before declaring a change finished.
 Network-tagged suites only run with `--all` and are not part of a normal pass.
 
 For ad-hoc scripts, `write` them to a temp file (e.g. the OS temp directory or

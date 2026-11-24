@@ -36,7 +36,7 @@ usage: bash tools/build.sh [--core-only] [--examples] [--test] [--clean]
        [-- suite...]
 
 Requires macOS, CMake 3.24+, a C/C++23-capable toolchain and Make or Ninja.
-CLI builds use native SecureTransport. On Windows, use build.bat instead.
+CLI builds use native SecureTransport. On Windows, use tools\build.ps1 instead.
 Core-only builds never fetch networking or regex dependencies.
 CC, CXX, CPPFLAGS, CFLAGS, CXXFLAGS, LDFLAGS and JOBS are honored. CMake caches
 toolchain settings; use a new build directory when changing compilers.
@@ -56,7 +56,7 @@ case "$config" in
   *) fail "invalid build configuration: $config" ;;
 esac
 os="$(uname -s)"; arch="$(uname -m)"
-[[ "$os" == Darwin ]] || fail "this script supports only macOS; use build.bat on Windows (host: $os)"
+[[ "$os" == Darwin ]] || fail "this script supports only macOS; use tools\build.ps1 on Windows (host: $os)"
 if [[ -z "$build_dir" ]]; then
   if ((core)); then build_dir=out/core; else build_dir=build; fi
 fi
