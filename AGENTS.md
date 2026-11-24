@@ -76,12 +76,14 @@ session switch.
 
 ## Behavioral parity with pi
 
-Prompt-visible strings (the default system prompt preamble, tool prompt
-snippets, guideline bullets, and the `<project_context>` framing) are aligned
-byte-for-byte with pi's `buildSystemPrompt`. Do not reword them casually; a
-reword is a parity change. The `<memory_wiki>` block is a deliberate
-divergence: it is appended only when memory is on, and with memory off the
-prompt must stay byte-identical.
+Prompt prose lives in `prompts/*.md`, embedded at build time as
+`PROMPT_<STEM>` (`prompts/prompt_text.h`); code fills in `{{placeholders}}`.
+Each tool's description, snippet, and guidelines stay with the tool. Prompt-visible strings
+(the default system prompt preamble, tool prompt snippets, guideline bullets,
+and the `<project_context>` framing) are aligned byte-for-byte with pi's
+`buildSystemPrompt`. Do not reword them casually; a reword is a parity change.
+The `<memory_wiki>` block is a deliberate divergence: it is appended only when
+memory is on, and with memory off the prompt must stay byte-identical.
 
 The provider layer is a deliberate divergence: Clippi speaks only OpenAI's
 Responses API (`src/llm/responses*`), not pi's per-vendor protocols. A provider

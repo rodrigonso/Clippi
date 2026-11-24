@@ -1,6 +1,7 @@
 #include "app/skills.h"
 
 #include "app/frontmatter.h"
+#include "prompts/prompts.h"
 #include "tools/fs.h"
 
 namespace {
@@ -11,16 +12,6 @@ constexpr u32 kMaxSkillDepth = 8;
 
 const StrView kIgnoreFiles[] = {SVL(".gitignore"), SVL(".ignore"),
                                 SVL(".fdignore")};
-constexpr StrView kPromptPrefix =
-    SVL("\n\nThe following skills provide specialized instructions for "
-        "specific tasks.\n"
-        "Use the read tool to load a skill's file when the task matches "
-        "its description.\n"
-        "When a skill file references a relative path, resolve it "
-        "against the skill directory (parent of SKILL.md / dirname of "
-        "the path) and use that absolute path in tool commands.\n"
-        "\n<available_skills>\n");
-constexpr StrView kPromptSuffix = SVL("</available_skills>");
 
 bool IsMarkdown(StrView name) {
   return name.Length > 3 &&
@@ -336,7 +327,12 @@ void Skills_Load(Arena* arena, const SkillLoadOptions* options, SkillSet* out) {
 bool Skills_AppendPromptBlock(StrBuf* out, const SkillSet* skills,
                               u32 maxBytes) {
   if (!out || !skills) return true;
-  u64 required = kPromptPrefix.Length + kPromptSuffix.Length;
+  StrView prefix = {};
+  StrView suffix = {};
+  bool framed = Prompt_Split(PROMPT_SKILLS, SVL("skills"), &prefix, &suffix);
+  FFI(!framed);
+  StrView separator = SVL("\n\n");
+  u64 required = separator.Length + prefix.Length + suffix.Length;
   u32 visible = 0;
   for (u32 i = 0; i < skills->Skills.Count; i++) {
     const Skill& skill = skills->Skills.Data[i];
@@ -353,7 +349,8 @@ bool Skills_AppendPromptBlock(StrBuf* out, const SkillSet* skills,
   if (!visible) return true;
   if ((u64)out->Length + required > maxBytes) return false;
 
-  StrBuf_Append(out, kPromptPrefix);
+  StrBuf_Append(out, separator);
+  StrBuf_Append(out, prefix);
   for (u32 i = 0; i < skills->Skills.Count; i++) {
     const Skill& skill = skills->Skills.Data[i];
     if (skill.DisableModelInvocation) continue;
@@ -365,7 +362,7 @@ bool Skills_AppendPromptBlock(StrBuf* out, const SkillSet* skills,
     StrBuf_AppendXmlEscaped(out, skill.FilePath);
     StrBuf_AppendCStr(out, "</location>\n  </skill>\n");
   }
-  StrBuf_Append(out, kPromptSuffix);
+  StrBuf_Append(out, suffix);
   return true;
 }
 

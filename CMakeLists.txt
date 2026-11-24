@@ -85,8 +85,11 @@ add_library(clippi_core STATIC
   src/agent/primitives.cpp
   src/agent/permissions.cpp
   src/agent/compaction.cpp
-  src/agent/event_json.cpp)
+  src/agent/event_json.cpp
+  src/prompts/prompts.cpp)
 clippi_target(clippi_core)
+include(cmake/prompts.cmake)
+clippi_embed_prompts(clippi_core)
 set_target_properties(clippi_core PROPERTIES DEBUG_POSTFIX d)
 target_include_directories(clippi_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(WIN32)

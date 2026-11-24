@@ -1,3 +1,4 @@
 *.sh text eol=lf
 VERSION text eol=lf
 tests/suites.txt text eol=lf
+prompts/*.md text eol=lf

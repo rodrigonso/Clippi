@@ -3,6 +3,7 @@
 #include "app/skills.h"
 #include "app/wiki.h"
 #include "base/config_file.h"
+#include "prompts/prompts.h"
 #include "tools/fs.h"
 
 namespace {
@@ -13,12 +14,6 @@ constexpr u32 kMaxSystemPromptBytes = (u32)16 << 20;
 const StrView kContextCandidates[] = {
     SVL("AGENTS.override.md"), SVL("AGENTS.md"), SVL("AGENTS.MD"),
     SVL("CLAUDE.md"), SVL("CLAUDE.MD")};
-
-// Mirrors pi's `buildSystemPrompt`.
-constexpr const char* kDefaultPromptPreamble =
-    "You are an expert coding assistant operating inside Clippi, a coding agent "
-    "harness. You help users by reading files, executing commands, editing "
-    "code, and writing new files.";
 
 StrView PathRoot(StrView path) {
   if (!path.Length) return {};
@@ -375,8 +370,7 @@ Array<StrView> CollectGuidelines(Arena* arena,
   Array<StrView> guidelines = Array_Make<StrView>(arena, 16);
   if (HasTool(options, SVL("shell")) && !HasTool(options, SVL("grep")) &&
       !HasTool(options, SVL("find")) && !HasTool(options, SVL("ls")))
-    AddGuideline(&guidelines,
-                 SVL("Use shell for file operations like ls, rg, find"));
+    AddGuideline(&guidelines, PROMPT_SYSTEM_SHELL_GUIDELINE);
 
   for (u32 i = 0; i < options->ToolCount; i++) {
     const Tool& tool = options->Tools[i];
@@ -384,28 +378,27 @@ Array<StrView> CollectGuidelines(Arena* arena,
       AddGuideline(&guidelines, tool.PromptGuidelines[j]);
   }
 
-  AddGuideline(&guidelines, SVL("Be concise in your responses"));
-  AddGuideline(&guidelines,
-               SVL("Show file paths clearly when working with files"));
+  StrView always[8] = {};
+  u32 alwaysCount = Prompt_Lines(PROMPT_SYSTEM_GUIDELINES, always, 8);
+  for (u32 i = 0; i < alwaysCount; i++) AddGuideline(&guidelines, always[i]);
   return guidelines;
 }
 
-// Mirrors pi's `buildSystemPrompt` default branch.
+// Mirrors pi's `buildSystemPrompt` default branch; the text is prompts/system.md.
 bool BuildDefaultPrompt(PromptContext* context,
                         const PromptContextOptions* options, StrBuf* prompt) {
-  if (!AppendCStrLimited(prompt, kDefaultPromptPreamble) ||
-      !AppendCStrLimited(prompt, "\n\nAvailable tools:\n") ||
-      !AppendToolList(options, prompt) ||
-      !AppendCStrLimited(prompt, "\nGuidelines:"))
-    return false;
-
+  StrBuf tools = StrBuf_Make(&context->Mem, 512);
+  if (!AppendToolList(options, &tools)) return false;
   Array<StrView> guidelines = CollectGuidelines(&context->Mem, options);
+  StrBuf bullets = StrBuf_Make(&context->Mem, 512);
   for (u32 i = 0; i < guidelines.Count; i++) {
-    if (!AppendCStrLimited(prompt, "\n- ") ||
-        !AppendLimited(prompt, guidelines.Data[i]))
+    if (!AppendCStrLimited(&bullets, "\n- ") ||
+        !AppendLimited(&bullets, guidelines.Data[i]))
       return false;
   }
-  return true;
+  PromptVar vars[] = {{SVL("tools"), StrBuf_View(&tools)},
+                      {SVL("guidelines"), StrBuf_View(&bullets)}};
+  return AppendLimited(prompt, Prompt_Expand(&context->Mem, PROMPT_SYSTEM, vars, 2));
 }
 
 bool BuildFinalPrompt(PromptContext* context,
@@ -426,10 +419,11 @@ bool BuildFinalPrompt(PromptContext* context,
   }
 
   if (context->ContextFiles.Count) {
-    if (!AppendCStrLimited(
-            &prompt,
-            "\n\n<project_context>\n\n"
-            "Project-specific instructions and guidelines:\n\n"))
+    StrView head = {};
+    StrView tail = {};
+    bool framed = Prompt_Split(PROMPT_PROJECT_CONTEXT, SVL("files"), &head, &tail);
+    FFI(!framed);
+    if (!AppendCStrLimited(&prompt, "\n\n") || !AppendLimited(&prompt, head))
       goto too_large;
     for (u32 i = 0; i < context->ContextFiles.Count; i++) {
       const PromptContextFile& file = context->ContextFiles.Data[i];
@@ -441,7 +435,7 @@ bool BuildFinalPrompt(PromptContext* context,
           !AppendCStrLimited(&prompt, "\n</project_instructions>\n\n"))
         goto too_large;
     }
-    if (!AppendCStrLimited(&prompt, "</project_context>\n")) goto too_large;
+    if (!AppendLimited(&prompt, tail) || !AppendCStrLimited(&prompt, "\n")) goto too_large;
   }
 
   if (context->MemoryBlock.Length &&

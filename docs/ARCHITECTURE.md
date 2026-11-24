@@ -27,6 +27,9 @@ src/
   app/     CLI entry + durable session startup + TUI/plain REPL + credential
            resolution + external lifecycle hooks (hooks.json config + dispatch
            runner)
+  prompts/ {{placeholder}} expansion for the embedded prompt text
+prompts/   every prompt's prose as Markdown, embedded at build time by
+           cmake/prompts.cmake (LF-normalized, one trailing newline dropped)
 tests/     single CLI test harness (suite selection via args; offline by default)
 ```
 

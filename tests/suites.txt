@@ -30,6 +30,7 @@ cli|permission_reviewer|TestPermissionReviewer|test_permission_reviewer|TagDefau
 cli|settings|TestSettings|test_settings|TagDefault|settings load/save
 cli|skills|TestSkills|test_skills|TagDefault|agent skills discovery and prompt block
 core|thread|TestThread|test_thread|TagDefault|threads and sync
+core|prompts|TestPrompts|test_prompts|TagDefault|embedded prompt files and expansion
 cli|keys|TestKeys|test_keys|TagDefault|key decoding
 cli|screen|TestScreen|test_screen|TagDefault|screen buffer and diffing
 cli|markdown|TestMarkdown|test_markdown|TagDefault|markdown rendering

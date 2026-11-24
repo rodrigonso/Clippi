@@ -2,6 +2,7 @@
 
 #include "base/thread.h"
 #include "json/json.h"
+#include "prompts/prompts.h"
 
 namespace {
 
@@ -694,26 +695,9 @@ StrView AgentPermission_AppendSystemPrompt(Arena* arena, StrView base,
                                            AgentPermissionMode mode) {
   StrView suffix = {};
   switch (mode) {
-    case AgentPermissionMode::Ask:
-      suffix = SVL(
-          "Permission mode: ask. Inspection tools run directly; unresolved "
-          "mutating actions require user approval. External PreToolUse policy "
-          "may still block any tool.");
-      break;
-    case AgentPermissionMode::Auto:
-      suffix = SVL(
-          "Permission mode: auto. Clippi reviews unresolved sensitive tool "
-          "calls once. A non-allow is a failed tool result for replanning. If "
-          "it contains permission_request_id, call ask_user with that exact "
-          "ID to open the real permission prompt; do not invent an ID or retry "
-          "unchanged before approval. External PreToolUse policy may still "
-          "block any tool.");
-      break;
-    case AgentPermissionMode::Yolo:
-      suffix = SVL(
-          "Permission mode: yolo. Clippi's built-in permission checks are "
-          "disabled, but external PreToolUse policy may still block tools.");
-      break;
+    case AgentPermissionMode::Ask: suffix = PROMPT_PERMISSION_MODE_ASK; break;
+    case AgentPermissionMode::Auto: suffix = PROMPT_PERMISSION_MODE_AUTO; break;
+    case AgentPermissionMode::Yolo: suffix = PROMPT_PERMISSION_MODE_YOLO; break;
   }
   StrBuf prompt = StrBuf_Make(arena, base.Length + suffix.Length + 48);
   StrBuf_Append(&prompt, base);

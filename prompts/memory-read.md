@@ -1,0 +1,1 @@
+This repository keeps a wiki of what earlier sessions learned, shared by every worktree of it. The catalog below lists each page with its summary, and pinned pages are included in full. Read a page before relying on it, and search the folder with grep when the catalog is not enough. A page can be wrong or out of date, so verify anything that matters before acting on it.

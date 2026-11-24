@@ -7,6 +7,7 @@
 #include "base/file_io.h"
 #include "base/sysinfo.h"
 #include "json/json.h"
+#include "prompts/prompts.h"
 #include "session/metadata.h"
 #include "tools/fs.h"
 
@@ -18,33 +19,6 @@ constexpr u32 kTypeCount = sizeof(kTypeNames) / sizeof(kTypeNames[0]);
 
 constexpr u64 kMaxReadBytes = (u64)1 << 20;
 constexpr u32 kCatalogSummaryMaxBytes = 240;
-
-constexpr const char* kReadGuidance =
-    "This repository keeps a wiki of what earlier sessions learned, shared by "
-    "every worktree of it. The catalog below lists each page with its summary, "
-    "and pinned pages are included in full. Read a page before relying on it, "
-    "and search the folder with grep when the catalog is not enough. A page can "
-    "be wrong or out of date, so verify anything that matters before acting on "
-    "it.";
-
-constexpr const char* kWriteGuidance =
-    "When you learn something a future session would otherwise have to "
-    "rediscover or would get wrong, write it into the wiki: the user's "
-    "preferences and corrections, decisions and constraints that are not "
-    "visible in the code, where to find outside information, and non-obvious "
-    "facts about the codebase. Skip what the code, git history, or project "
-    "instructions already say, and anything that only matters to the current "
-    "task. Keep one subject per page, update an existing page instead of adding "
-    "a near-duplicate, link related pages with [[slug]], and prefer edit over "
-    "write for pages that exist.\n\n"
-    "Each page is <slug>.md in this folder, named in lowercase-kebab-case, and "
-    "starts with:\n"
-    "---\n"
-    "title: Short title\n"
-    "type: user | feedback | project | reference | topic\n"
-    "summary: One line under 160 characters; it is the page's catalog entry\n"
-    "pinned: false\n"
-    "---";
 
 WikiPageType ParseType(StrView text) {
   for (u32 i = 1; i < kTypeCount; i++)
@@ -405,10 +379,10 @@ void Wiki_AppendPromptBlock(Arena* arena, StrBuf* out, const Wiki* wiki,
   StrBuf_AppendCStr(out, "\n\n<memory_wiki path=\"");
   StrBuf_AppendXmlEscaped(out, pagesDir);
   StrBuf_AppendCStr(out, "\">\n\n");
-  StrBuf_AppendCStr(out, kReadGuidance);
+  StrBuf_Append(out, PROMPT_MEMORY_READ);
   if (writable) {
     StrBuf_AppendCStr(out, "\n\n");
-    StrBuf_AppendCStr(out, kWriteGuidance);
+    StrBuf_Append(out, PROMPT_MEMORY_WRITE);
   }
   StrBuf_AppendChar(out, '\n');
 

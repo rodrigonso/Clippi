@@ -1,0 +1,1 @@
+Permission mode: auto. Clippi reviews unresolved sensitive tool calls once. A non-allow is a failed tool result for replanning. If it contains permission_request_id, call ask_user with that exact ID to open the real permission prompt; do not invent an ID or retry unchanged before approval. External PreToolUse policy may still block any tool.

@@ -4,6 +4,7 @@
 #include "base/thread.h"
 #include "json/json.h"
 #include "llm/retry.h"
+#include "prompts/prompts.h"
 
 namespace {
 
@@ -578,9 +579,7 @@ SessionResult PerformCompaction(AgentHarness* harness, DurableId head,
                                 CompactionTurnResult* out) {
   AgentHarness_PublishTurnStart(harness, AgentTurnKind::Compaction);
 
-  StrView summarizeText =
-      SVL("Summarize the conversation for future continuation. Preserve goals, "
-          "decisions, constraints, unresolved work, and important tool results.");
+  StrView summarizeText = PROMPT_COMPACTION;
   if (instructions.Length) {
     // pi's separator, byte for byte.
     StrBuf directed =
@@ -630,9 +629,10 @@ SessionResult PerformCompaction(AgentHarness* harness, DurableId head,
         AgentCompaction_BuildFileLists(&harness->Work, &ops, &files);
       }
 
-      StrBuf wrapped = StrBuf_Make(&harness->Work, summaryText.Length + 48);
-      StrBuf_AppendCStr(&wrapped, "Summary of previous conversation:\n");
-      StrBuf_Append(&wrapped, summaryText);
+      PromptVar vars[] = {{SVL("summary"), summaryText}};
+      StrView header = Prompt_Expand(&harness->Work, PROMPT_COMPACTION_SUMMARY, vars, 1);
+      StrBuf wrapped = StrBuf_Make(&harness->Work, header.Length + 48);
+      StrBuf_Append(&wrapped, header);
       AgentCompaction_AppendFileSections(&wrapped, &files);
       Message summary = Message_User(&harness->Work, StrBuf_View(&wrapped));
 
