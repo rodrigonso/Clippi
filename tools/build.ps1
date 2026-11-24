@@ -10,7 +10,7 @@ param(
     [ValidateSet('Release', 'Debug', 'RelWithDebInfo', 'MinSizeRel')]
     [string]$Config = 'Release',
     [string]$BuildDir,
-    [ValidateSet('clippi', 'clippi_core', 'clippi_agent', 'clippi_tests', 'clippi_core_example')]
+    [ValidateSet('clippi', 'clippi_core', 'clippi_tests', 'clippi_core_example')]
     [string]$Target,
     [switch]$Clean,
     [switch]$Test,
@@ -32,7 +32,7 @@ usage: tools\build.ps1 [-Config Release|Debug|RelWithDebInfo|MinSizeRel]
        [-CoreOnly] [-Examples] [-Test] [-TestArgs session,tools]
        [-BuildDir path] [-Target name] [-Clean] [-InstallPrefix path]
        [-Package] [-CurlArchive path] [-Pcre2Archive path]
-Requires Visual Studio C++ tools, CMake 3.24+ and Ninja (included with
+Requires Visual Studio C++ tools, CMake 3.28+ and Ninja (included with
 Visual Studio's C++ CMake tools). -Clean rebuilds without deleting the cache.
 '@
     return
@@ -50,7 +50,6 @@ if ($Package -and ($CoreOnly -or $Config -eq 'Debug')) {
 }
 if ($CoreOnly -and $Target -eq 'clippi') { throw '-CoreOnly cannot build the CLI.' }
 if (-not $Target) { $Target = if ($CoreOnly) { 'clippi_core' } else { 'clippi' } }
-if ($Target -eq 'clippi_agent') { $Target = 'clippi_core' }
 if ($Package -or ($InstallPrefix -and -not $CoreOnly)) { $Target = 'clippi' }
 if (-not $BuildDir) { $BuildDir = if ($CoreOnly) { 'out\core' } else { 'build' } }
 $root = Split-Path -Parent $PSScriptRoot
@@ -114,19 +113,6 @@ try {
     }
     if ($Examples) { Invoke-Checked (Join-Path $build 'examples\core\clippi_core_example.exe') @() }
     if ($InstallPrefix -or $Package) {
-        if (-not $CoreOnly) {
-            $curlInfo = [IO.File]::ReadAllLines((Join-Path $build 'clippi-curl.txt'))
-            $curlSource = $curlInfo[0]
-            $curlVersion = $curlInfo[1]
-            $pcre2Info = [IO.File]::ReadAllLines((Join-Path $build 'clippi-pcre2.txt'))
-            if ($pcre2Info.Count -ne 3 -or -not [IO.Path]::IsPathRooted($pcre2Info[0]) -or
-                [string]::IsNullOrWhiteSpace($pcre2Info[1]) -or $pcre2Info[2] -notmatch '^[0-9a-fA-F]{64}$') {
-                throw 'Invalid CMake PCRE2 metadata.'
-            }
-            $pcre2Source = $pcre2Info[0]
-            $pcre2Version = $pcre2Info[1]
-            $pcre2Hash = $pcre2Info[2]
-        }
         if ($InstallPrefix) {
             $prefix = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($InstallPrefix)) {
                 $InstallPrefix

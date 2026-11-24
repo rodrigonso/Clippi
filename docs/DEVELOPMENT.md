@@ -2,7 +2,7 @@
 
 ## Build
 
-`tools/build.ps1` (Windows) and `tools/build.sh` (macOS) are thin wrappers around **CMake 3.24+**.
+`tools/build.ps1` (Windows) and `tools/build.sh` (macOS) are thin wrappers around **CMake 3.28+**.
 The root `CMakeLists.txt` owns source lists, compiler settings, targets, and SDK
 installation. `cmake/curl.cmake` and `cmake/pcre2.cmake` configure the CLI's
 pinned source dependencies; release packaging stays in separate scripts.

@@ -109,7 +109,7 @@ clippi --help                                    # all options
 
 ## Building from source
 
-Requires CMake 3.24+ and a C++23 toolchain: Visual Studio with the Desktop
+Requires CMake 3.28+ and a C++23 toolchain: Visual Studio with the Desktop
 development with C++ workload on Windows, or Clang with Make or Ninja on macOS.
 
 ```powershell

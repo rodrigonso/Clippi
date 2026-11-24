@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" CLIPPI_VERSION LIMIT_COUNT 1)
 project(Clippi VERSION "${CLIPPI_VERSION}" LANGUAGES NONE)
 if(NOT CMAKE_HOST_SYSTEM_NAME MATCHES "^(Windows|Darwin)$" OR
@@ -189,6 +189,9 @@ if(CLIPPI_BUILD_CLI)
     DESTINATION share/clippi/licenses/curl COMPONENT runtime)
   install(FILES "${pcre2_SOURCE_DIR}/LICENCE.md"
     DESTINATION share/clippi/licenses/pcre2 COMPONENT runtime)
+  configure_file("cmake/DISTRIBUTION-${CMAKE_SYSTEM_NAME}.txt.in" generated/DISTRIBUTION.txt @ONLY)
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/DISTRIBUTION.txt"
+    DESTINATION share/clippi COMPONENT runtime)
 endif()
 
 if(CLIPPI_BUILD_TESTS)
@@ -231,11 +234,7 @@ if(CLIPPI_BUILD_TESTS)
   else()
     target_link_libraries(clippi_tests PRIVATE clippi_core)
   endif()
-  enable_testing()
-  add_test(NAME offline COMMAND clippi_tests)
   configure_file(tests/test_platform.cmake generated/test_platform.cmake @ONLY)
-  add_test(NAME platform_policy COMMAND "${CMAKE_COMMAND}"
-    -P "${CMAKE_CURRENT_BINARY_DIR}/generated/test_platform.cmake")
 endif()
 
 if(CLIPPI_BUILD_EXAMPLES)

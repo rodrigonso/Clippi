@@ -44,5 +44,3 @@ endif()
 FetchContent_Declare(curl URL "${curl_url}" URL_HASH "SHA256=${curl_hash}"
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(curl)
-file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/clippi-curl.txt"
-  CONTENT "${curl_SOURCE_DIR}\n${curl_version}\n${curl_hash}\n")

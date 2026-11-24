@@ -31,11 +31,11 @@ while (($#)); do
       cat <<'HELP'
 usage: bash tools/build.sh [--core-only] [--examples] [--test] [--clean]
        [--config Release|Debug|RelWithDebInfo|MinSizeRel] [--build-dir path]
-       [--target clippi|clippi_core|clippi_agent|clippi_tests|clippi_core_example]
+       [--target clippi|clippi_core|clippi_tests|clippi_core_example]
        [--install-prefix path] [--package] [--curl-archive path] [--pcre2-archive path]
        [-- suite...]
 
-Requires macOS, CMake 3.24+, a C/C++23-capable toolchain and Make or Ninja.
+Requires macOS, CMake 3.28+, a C/C++23-capable toolchain and Make or Ninja.
 CLI builds use native SecureTransport. On Windows, use tools\build.ps1 instead.
 Core-only builds never fetch networking or regex dependencies.
 CC, CXX, CPPFLAGS, CFLAGS, CXXFLAGS, LDFLAGS and JOBS are honored. CMake caches
@@ -68,7 +68,6 @@ fi
 want_tests=$run_tests; want_example=$examples
 case "$target" in
   clippi) ((core == 0)) || fail "clippi is unavailable with --core-only" ;;
-  clippi_agent) target=clippi_core ;;
   clippi_core) ;;
   clippi_tests) want_tests=1 ;;
   clippi_core_example) want_example=1 ;;
@@ -140,20 +139,6 @@ if ((run_tests)); then
   if ((${#test_args[@]} == 0)); then cmake -P "$build_dir/generated/test_platform.cmake"; fi
 fi
 if ((examples)); then "$build_dir/examples/core/clippi_core_example"; fi
-if ((core == 0)) && { [[ -n "$install_prefix" ]] || ((package)); }; then
-  curl_info=()
-  [[ -f "$build_dir/clippi-curl.txt" ]] || fail "CMake curl metadata is missing"
-  while IFS= read -r line || [[ -n "$line" ]]; do curl_info+=("$line"); done < "$build_dir/clippi-curl.txt"
-  [[ ${#curl_info[@]} == 3 && "${curl_info[0]}" == /* && -n "${curl_info[1]}" && "${curl_info[2]}" =~ ^[0-9a-fA-F]{64}$ ]] ||
-    fail "invalid CMake curl metadata"
-  curl_source="${curl_info[0]}"; curl_version="${curl_info[1]}"; curl_hash="${curl_info[2]}"
-  pcre2_info=()
-  [[ -f "$build_dir/clippi-pcre2.txt" ]] || fail "CMake PCRE2 metadata is missing"
-  while IFS= read -r line || [[ -n "$line" ]]; do pcre2_info+=("$line"); done < "$build_dir/clippi-pcre2.txt"
-  [[ ${#pcre2_info[@]} == 3 && "${pcre2_info[0]}" == /* && -n "${pcre2_info[1]}" && "${pcre2_info[2]}" =~ ^[0-9a-fA-F]{64}$ ]] ||
-    fail "invalid CMake PCRE2 metadata"
-  pcre2_source="${pcre2_info[0]}"; pcre2_version="${pcre2_info[1]}"; pcre2_hash="${pcre2_info[2]}"
-fi
 if [[ -n "$install_prefix" ]]; then install_clippi "$install_prefix"; fi
 if ((package)); then package_clippi; fi
 echo "Build complete: $build_dir ($config)"

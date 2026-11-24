@@ -10,61 +10,9 @@ function Hash-File([string]$Path) {
     try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
     finally { $stream.Dispose(); $sha.Dispose() }
 }
-function Require-File([string]$Path) {
-    if (-not [IO.Path]::IsPathRooted($Path) -or
-        -not (Test-Path -LiteralPath $Path -PathType Leaf) -or
-        (Get-Item -LiteralPath $Path).Length -eq 0) {
-        throw "Expected a nonempty absolute file path: $Path"
-    }
-}
-function Copy-Notice([string]$Prefix, [string]$Dependency, [string]$Path) {
-    Require-File $Path
-    $destination = Join-Path $Prefix "share\clippi\licenses\$Dependency"
-    New-Item -ItemType Directory -Force $destination | Out-Null
-    Copy-Item -LiteralPath $Path -Destination $destination -Force
-}
-
 function Install-Runtime([string]$Prefix) {
-    $bin = Join-Path $Prefix 'bin'
-    New-Item -ItemType Directory -Force $bin | Out-Null
-    Copy-Item -LiteralPath (Join-Path $build 'clippi.exe') -Destination $bin -Force
-    Copy-Notice $Prefix 'curl' (Join-Path $curlSource 'COPYING')
-    Copy-Notice $Prefix 'pcre2' (Join-Path $pcre2Source 'LICENCE.md')
-    Copy-Notice $Prefix 'clippi' (Join-Path $root 'LICENSE')
-    Copy-Notice $Prefix 'pi' (Join-Path $root 'licenses\pi\LICENSE')
-    $notices = Join-Path $root 'THIRD_PARTY_NOTICES.md'
-    Require-File $notices
-    Copy-Item -LiteralPath $notices -Destination (Join-Path $Prefix 'share\clippi') -Force
-
-    $version = [IO.File]::ReadAllText((Join-Path $root 'VERSION')).Trim()
-    Write-Changed (Join-Path $Prefix 'share\clippi\DISTRIBUTION.txt') @"
-Clippi $version - Windows x86_64
-
-tools/install/install.ps1 installs this archive after verifying its checksum,
-adds bin to your user PATH, and enables "clippi upgrade". You can instead
-extract it anywhere and run bin\clippi.exe directly. License notices
-accompany the executable. The core SDK is separate.
-
-The grep tool searches in-process and requires no external search executable.
-Normal use does not download or install helper tools, libraries, or runtimes.
-
-libcurl $curlVersion is statically linked; its license is in licenses/curl.
-PCRE2 $pcre2Version (8-bit) is statically linked; its license is in licenses/pcre2.
-PCRE2 source archive SHA256: $pcre2Hash
-HTTPS uses native Schannel and the Windows certificate store. Windows 10 or
-later is required. Clippi statically links the release CRT and needs no
-VC runtime DLLs. Debug runtimes are never packaged.
-Existing ANSI filesystem/process operations require ASCII workspace paths.
-No system trust store, user configuration, or session data is copied.
-
-This is an unsigned preview. Windows may show a publisher/security warning.
-The SHA256 file detects corruption, not publisher identity.
-Local packaging does not sign or publish archives.
-
-The project license is in licenses/clippi/LICENSE.
-Source attribution and dependency scope are in THIRD_PARTY_NOTICES.md.
-"@
-    if ($Config -ne 'Debug') { Audit-Runtime $bin }
+    Invoke-Checked $cmake @('--install', $build, '--config', $Config, '--prefix', $Prefix, '--component', 'runtime')
+    if ($Config -ne 'Debug') { Audit-Runtime (Join-Path $Prefix 'bin') }
 }
 
 function Audit-Runtime([string]$Bin) {

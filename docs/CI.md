@@ -18,7 +18,7 @@ and GitHub REST git refs on 2026-09-15:
 | macOS x86_64 | `macos-15-intel` | [Intel image](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md) |
 
 The Windows label explicitly selects Visual Studio 2026 for C++23 mode.
-The listed images supply CMake newer than the required 3.24. No dependency
+The listed images supply CMake newer than the required 3.28. No dependency
 installation actions, package-manager installs, caches, or Linux jobs are
 configured. macOS jobs set `MACOSX_DEPLOYMENT_TARGET=15.0`.
 

@@ -16,7 +16,7 @@ if(CLIPPI_PCRE2_ARCHIVE)
   set(pcre2_url "${CLIPPI_PCRE2_ARCHIVE}")
 endif()
 
-function(clippi_fetch_pcre2)
+block(SCOPE_FOR VARIABLES PROPAGATE pcre2_SOURCE_DIR)
   foreach(option
       BUILD_SHARED_LIBS PCRE2_BUILD_PCRE2_16 PCRE2_BUILD_PCRE2_32
       PCRE2_BUILD_PCRE2GREP PCRE2_BUILD_TESTS PCRE2_SUPPORT_JIT
@@ -38,26 +38,12 @@ function(clippi_fetch_pcre2)
     set(CMAKE_DISABLE_FIND_PACKAGE_${package} TRUE)
   endforeach()
   set(FETCHCONTENT_TRY_FIND_PACKAGE_MODE NEVER)
-  set(FETCHCONTENT_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
   set(FETCHCONTENT_SOURCE_DIR_PCRE2 "")
+  # EXCLUDE_FROM_ALL also keeps PCRE2's own install rules out of our packages.
   FetchContent_Declare(pcre2
     URL "${pcre2_url}" URL_HASH "SHA256=${pcre2_hash}"
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    SOURCE_DIR "${FETCHCONTENT_BASE_DIR}/pcre2-src"
-    BINARY_DIR "${FETCHCONTENT_BASE_DIR}/pcre2-build"
-    SUBBUILD_DIR "${FETCHCONTENT_BASE_DIR}/pcre2-subbuild"
-    SOURCE_SUBDIR clippi-populate-only)
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(pcre2)
+endblock()
 
-  # PCRE2 has no install-disable option: populate only, then add it EXCLUDE_FROM_ALL
-  # (works on CMake 3.24, before FetchContent's EXCLUDE_FROM_ALL).
-  add_subdirectory("${pcre2_SOURCE_DIR}" "${pcre2_BINARY_DIR}" EXCLUDE_FROM_ALL)
-  # Do not force a CRT switch: upstream inherits CMAKE_MSVC_RUNTIME_LIBRARY.
-  set(pcre2_SOURCE_DIR "${pcre2_SOURCE_DIR}" PARENT_SCOPE)
-  set(pcre2_BINARY_DIR "${pcre2_BINARY_DIR}" PARENT_SCOPE)
-endfunction()
-
-clippi_fetch_pcre2()
 set(CLIPPI_PCRE2_TARGET pcre2-8-static)
-file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/clippi-pcre2.txt"
-  CONTENT "${pcre2_SOURCE_DIR}\n${pcre2_version}\n${pcre2_hash}\n")

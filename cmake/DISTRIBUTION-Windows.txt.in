@@ -1,0 +1,26 @@
+Clippi @PROJECT_VERSION@ - Windows x86_64
+
+tools/install/install.ps1 installs this archive after verifying its checksum,
+adds bin to your user PATH, and enables "clippi upgrade". You can instead
+extract it anywhere and run bin\clippi.exe directly. License notices
+accompany the executable. The core SDK is separate.
+
+The grep tool searches in-process and requires no external search executable.
+Normal use does not download or install helper tools, libraries, or runtimes.
+
+libcurl @curl_version@ is statically linked; its license is in licenses/curl.
+Source archive SHA256: @curl_hash@
+PCRE2 @pcre2_version@ (8-bit) is statically linked; its license is in licenses/pcre2.
+PCRE2 source archive SHA256: @pcre2_hash@
+HTTPS uses native Schannel and the Windows certificate store. Windows 10 or
+later is required. Clippi statically links the release CRT and needs no
+VC runtime DLLs. Debug runtimes are never packaged.
+Existing ANSI filesystem/process operations require ASCII workspace paths.
+No system trust store, user configuration, or session data is copied.
+
+This is an unsigned preview. Windows may show a publisher/security warning.
+The SHA256 file detects corruption, not publisher identity.
+Local packaging does not sign or publish archives.
+
+The project license is in licenses/clippi/LICENSE.
+Source attribution and dependency scope are in THIRD_PARTY_NOTICES.md.
